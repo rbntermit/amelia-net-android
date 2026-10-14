@@ -15,9 +15,14 @@ android {
         applicationId = "com.ameliajustamelia.vpn"
         minSdk = 24
         targetSdk = 37
-        // Bump both on every release; the in-app updater (item 7) compares versionCode.
+        // Bump both on every release (see RELEASING.md); the in-app updater compares versionCode.
         versionCode = 2
-        versionName = "1.1.0"
+        versionName = "1.0.1"
+        // Oldest versionCode that still works with the servers: goes to version.json as
+        // minVersionCode. Older apps must update before they can connect. Raise it only when
+        // a server-side change breaks old versions.
+        val minVersionCode = 1
+        buildConfigField("int", "MIN_VERSION_CODE", minVersionCode.toString())
         buildConfigField("String", "UPSTREAM_VERSION", "\"2.3.11\"")
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')

@@ -58,6 +58,10 @@ data class AmeliaUiState(
 ) {
     val selectedName: String?
         get() = locations.firstOrNull { it.guid == selectedGuid }?.name
+
+    /** Installed version is below the server's minVersionCode: no connecting until updated. */
+    val updateRequired: Boolean
+        get() = AmeliaUpdater.isRequired(update)
 }
 
 class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
@@ -80,15 +84,22 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             if (_state.value.hasKey) refresh(silent = true)
         }
         updateGeoIfDue()
-        if (AmeliaUpdater.isCheckDue()) checkUpdate(manual = false)
+        viewModelScope.launch {
+            // A forced update found earlier must hold even when the server is unreachable now
+            val cached = withContext(Dispatchers.IO) { AmeliaUpdater.cached() }
+            if (cached != null) _state.update { it.copy(update = it.update ?: cached) }
+            if (AmeliaUpdater.isCheckDue()) checkUpdate(manual = false)
+        }
     }
 
     fun checkUpdate(manual: Boolean) {
         if (updateJob?.isActive == true) return
         updateJob = viewModelScope.launch {
             val v = withContext(Dispatchers.IO) { AmeliaUpdater.check() }
-            _state.update { it.copy(update = v ?: it.update) }
-            if (manual && v == null && _state.value.update == null) showMessage(R.string.amelia_update_none)
+            // check() refreshed the cache: null now means "up to date" or "no answer"
+            val current = v ?: withContext(Dispatchers.IO) { AmeliaUpdater.cached() }
+            _state.update { it.copy(update = current) }
+            if (manual && current == null) showMessage(R.string.amelia_update_none)
         }
     }
 

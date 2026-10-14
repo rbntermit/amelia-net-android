@@ -75,6 +75,13 @@
     <string name="amelia_update_install">Установить</string>
     <string name="amelia_update_none">Установлена последняя версия</string>
     <string name="amelia_update_failed">Не удалось скачать обновление. Попробуйте позже.</string>
+    <string name="amelia_update_later">Позже</string>
+    <string name="amelia_update_required_title">Нужно обновить приложение до версии %1$s</string>
+    <string name="amelia_update_required_text">Эта версия больше не работает с нашими серверами. Обновите приложение, чтобы подключиться.</string>
+    <string name="amelia_update_required_block">Сначала обновите приложение</string>
+    <string name="amelia_update_channel">Обновления приложения</string>
+    <string name="amelia_update_tap">Нажмите, чтобы обновить</string>
+    <string name="amelia_version">Версия %1$s (%2$d)</string>
     <string name="amelia_update_allow_install">Разрешите Amelia.Net устанавливать приложения и нажмите «Установить» ещё раз</string>
 
     <string name="amelia_unit_b">Б</string>

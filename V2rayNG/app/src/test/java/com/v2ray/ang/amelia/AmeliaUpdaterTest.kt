@@ -33,6 +33,30 @@ class AmeliaUpdaterTest {
         assertNull(AmeliaUpdater.parse("""{"versionCode":2,"url":"https://sub.ameliajustamelia.com/a.apk"}"""))
     }
 
+    private fun json(code: Int, min: Int?) =
+        """{"versionCode":$code,"versionName":"x","url":"https://sub.ameliajustamelia.com:9443/app/a.apk","sha256":"$sha"""" +
+            (min?.let { ""","minVersionCode":$it""" } ?: "") + "}"
+
+    @Test
+    fun minVersionCodeIsOptional() {
+        // version.json from before 1.0.1 has no minVersionCode
+        assertNull(AmeliaUpdater.parse(json(2, null))?.minVersionCode)
+        assertEquals(1, AmeliaUpdater.parse(json(2, 1))?.minVersionCode)
+        // nonsense values are dropped instead of locking users out
+        assertNull(AmeliaUpdater.parse(json(2, 0))?.minVersionCode)
+        assertNull(AmeliaUpdater.parse(json(2, 5))?.minVersionCode)
+    }
+
+    @Test
+    fun requiredOnlyBelowMinVersion() {
+        val v = AmeliaUpdater.parse(json(5, 3))
+        assertTrue(AmeliaUpdater.isRequired(v, installed = 2))
+        assertFalse(AmeliaUpdater.isRequired(v, installed = 3))
+        assertFalse(AmeliaUpdater.isRequired(v, installed = 5))
+        assertFalse(AmeliaUpdater.isRequired(AmeliaUpdater.parse(json(5, null)), installed = 1))
+        assertFalse(AmeliaUpdater.isRequired(null, installed = 1))
+    }
+
     @Test
     fun allowedHosts() {
         assertTrue(AmeliaUpdater.isAllowedUrl("https://github.com/o/r/releases/download/v1/a.apk"))

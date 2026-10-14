@@ -27,6 +27,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # Fails a tag build early: tag must be v<versionName>, versionCode must grow, and
+      # changelog/ru/<versionCode>.txt must exist. See RELEASING.md.
+      - name: Version and release checks
+        id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/release_check.sh
+
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
         with:
@@ -126,23 +134,27 @@ jobs:
           done
           (cd out && sha256sum *.apk > SHA256SUMS.txt && cat SHA256SUMS.txt)
 
-      # version.json for the in-app updater: put it and the universal APK on the subscription
-      # server under /app/ (base URL can be changed with the repository variable APK_BASE_URL).
+      # version.json for the in-app updater; the bot puts it and the universal APK on the
+      # subscription server under /app/ (base URL: repository variable APK_BASE_URL).
+      # Field names are fixed (bot and deploy script rely on them); new fields may only be added.
       - name: Generate version.json
         if: github.event_name != 'pull_request'
         env:
           APK_BASE_URL: ${{ vars.APK_BASE_URL || 'https://sub.ameliajustamelia.com:9443/app/' }}
-          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          CODE: ${{ steps.meta.outputs.code }}
+          NAME: ${{ steps.meta.outputs.name }}
+          MIN_CODE: ${{ steps.meta.outputs.min_code }}
+          NOTES_FILE: ${{ steps.meta.outputs.notes_file }}
         run: |
-          GRADLE=V2rayNG/app/build.gradle.kts
-          CODE=$(grep -oP '^\s*versionCode = \K[0-9]+' $GRADLE)
-          NAME=$(grep -oP '^\s*versionName = "\K[^"]+' $GRADLE)
           APK=$(ls out/*universal*.apk | head -n1)
           FILE=$(basename "$APK")
+          [ -s "$NOTES_FILE" ] || : > "$RUNNER_TEMP/empty.txt"
+          NOTES_SRC=$([ -s "$NOTES_FILE" ] && echo "$NOTES_FILE" || echo "$RUNNER_TEMP/empty.txt")
           jq -n --argjson code "$CODE" --arg name "$NAME" --arg url "${APK_BASE_URL%/}/$FILE" \
                 --arg sha "$(sha256sum "$APK" | cut -d' ' -f1)" --argjson size "$(stat -c%s "$APK")" \
-                --arg notes "$COMMIT_MSG" \
-                '{versionCode:$code, versionName:$name, url:$url, sha256:$sha, size:$size, notes:($notes|split("\n")[0])}' \
+                --rawfile notes "$NOTES_SRC" --argjson min "$MIN_CODE" \
+                '{versionCode:$code, versionName:$name, url:$url, sha256:$sha, size:$size,
+                  notes:($notes|gsub("\r";"")|sub("\\s+$";"")), minVersionCode:$min}' \
                 > out/version.json
           cat out/version.json
 
@@ -170,10 +182,12 @@ jobs:
           name: AmeliaNet-armeabi-v7a
           path: out/*armeabi-v7a*.apk
 
+      # Release description = the same Russian text as version.json notes
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
+          NOTES_FILE: ${{ steps.meta.outputs.notes_file }}
         run: |
           gh release create "$GITHUB_REF_NAME" out/*.apk out/SHA256SUMS.txt out/version.json \
-            --repo "$GITHUB_REPOSITORY" --title "Amelia.Net $GITHUB_REF_NAME" --generate-notes
+            --repo "$GITHUB_REPOSITORY" --title "Amelia.Net $GITHUB_REF_NAME" --notes-file "$NOTES_FILE"

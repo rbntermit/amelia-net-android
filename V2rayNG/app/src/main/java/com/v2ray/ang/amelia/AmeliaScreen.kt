@@ -175,7 +175,22 @@ fun AmeliaApp(
                     .padding(16.dp),
             )
         }
-        if (showAbout) AboutDialog(onOpenUrl, onDismiss = { showAbout = false })
+        // Offered once per version per app start; a required update cannot be put off.
+        var postponed by rememberSaveable { mutableStateOf(0) }
+        val update = state.update
+        if (update != null && (state.updateRequired || postponed != update.versionCode)) {
+            UpdateDialog(
+                state, updates,
+                onLater = if (state.updateRequired) null else ({ postponed = update.versionCode }),
+            )
+        }
+        if (showAbout) {
+            AboutDialog(
+                onOpenUrl,
+                onCheckUpdate = { showAbout = false; updates.onCheck() },
+                onDismiss = { showAbout = false },
+            )
+        }
     }
 }
 
@@ -808,6 +823,31 @@ private fun ActionGrid(
 
 // ---- Update and about ------------------------------------------------------------------------
 
+/** Download progress, then "Install"; or "Download" before that. */
+@Composable
+private fun UpdateActions(state: AmeliaUiState, updates: UpdateCallbacks) {
+    val progress = state.updateProgress
+    val apk = state.updateApkPath
+    val colors = ButtonDefaults.buttonColors(containerColor = Brand.Sky, contentColor = Brand.Night)
+    when {
+        progress != null -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (progress >= 0) {
+                LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
+                Text(stringResource(R.string.amelia_update_downloading, progress), color = Brand.Muted)
+            } else {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text(stringResource(R.string.amelia_update_downloading_unknown), color = Brand.Muted)
+            }
+        }
+        apk != null -> Button(onClick = { updates.onInstall(apk) }, colors = colors) {
+            Text(stringResource(R.string.amelia_update_install))
+        }
+        else -> Button(onClick = updates.onDownload, colors = colors) {
+            Text(stringResource(R.string.amelia_update_download))
+        }
+    }
+}
+
 @Composable
 private fun UpdateCard(state: AmeliaUiState, updates: UpdateCallbacks) {
     val v = state.update ?: return
@@ -819,58 +859,88 @@ private fun UpdateCard(state: AmeliaUiState, updates: UpdateCallbacks) {
                 style = MaterialTheme.typography.titleSmall,
             )
             v.notes?.takeIf { it.isNotBlank() }?.let { Text(it, color = Brand.Muted, style = MaterialTheme.typography.bodySmall) }
-            val progress = state.updateProgress
-            val apk = state.updateApkPath
-            when {
-                progress != null -> {
-                    if (progress >= 0) {
-                        LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
-                        Text(stringResource(R.string.amelia_update_downloading, progress), color = Brand.Muted)
-                    } else {
-                        LinearProgressIndicator(Modifier.fillMaxWidth())
-                        Text(stringResource(R.string.amelia_update_downloading_unknown), color = Brand.Muted)
-                    }
-                }
-                apk != null -> Button(
-                    onClick = { updates.onInstall(apk) },
-                    colors = ButtonDefaults.buttonColors(containerColor = Brand.Sky, contentColor = Brand.Night),
-                ) { Text(stringResource(R.string.amelia_update_install)) }
-                else -> Button(
-                    onClick = updates.onDownload,
-                    colors = ButtonDefaults.buttonColors(containerColor = Brand.Sky, contentColor = Brand.Night),
-                ) { Text(stringResource(R.string.amelia_update_download)) }
-            }
+            UpdateActions(state, updates)
         }
     }
 }
 
+/**
+ * New version window. With [onLater] == null (required update) it has no "Later" button and
+ * cannot be closed by back or a tap outside.
+ */
 @Composable
-private fun AboutDialog(onOpenUrl: (String) -> Unit, onDismiss: () -> Unit) {
+private fun UpdateDialog(state: AmeliaUiState, updates: UpdateCallbacks, onLater: (() -> Unit)?) {
+    val v = state.update ?: return
+    val name = v.versionName ?: v.versionCode.toString()
+    AlertDialog(
+        onDismissRequest = { onLater?.invoke() },
+        properties = androidx.compose.ui.window.DialogProperties(
+            dismissOnBackPress = onLater != null,
+            dismissOnClickOutside = onLater != null,
+        ),
+        icon = { AppMark(56) },
+        title = {
+            Text(
+                stringResource(
+                    if (onLater == null) R.string.amelia_update_required_title else R.string.amelia_update_available,
+                    name,
+                ),
+                textAlign = TextAlign.Center,
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (onLater == null) Text(stringResource(R.string.amelia_update_required_text))
+                v.notes?.takeIf { it.isNotBlank() }?.let { Text(it, color = Brand.Muted) }
+                UpdateActions(state, updates)
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            if (onLater != null) {
+                TextButton(onClick = onLater) { Text(stringResource(R.string.amelia_update_later)) }
+            }
+        },
+    )
+}
+
+@Composable
+private fun AboutDialog(onOpenUrl: (String) -> Unit, onCheckUpdate: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { AppMark(56) },
         title = { Text(stringResource(R.string.amelia_about_title)) },
         text = {
-            Text(
-                stringResource(
-                    R.string.amelia_about_text,
-                    BuildConfig.VERSION_NAME,
-                    BuildConfig.UPSTREAM_VERSION,
-                ) + "\n\n" + AmeliaConfig.SOURCE_CODE_URL
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    stringResource(R.string.amelia_version, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Button(
+                    onClick = onCheckUpdate,
+                    colors = ButtonDefaults.buttonColors(containerColor = Brand.Sky, contentColor = Brand.Night),
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(stringResource(R.string.amelia_menu_check_update)) }
+                Text(
+                    stringResource(
+                        R.string.amelia_about_text,
+                        BuildConfig.VERSION_NAME,
+                        BuildConfig.UPSTREAM_VERSION,
+                    ) + "\n\n" + AmeliaConfig.SOURCE_CODE_URL,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Row {
+                    TextButton(onClick = { onOpenUrl(AmeliaConfig.SOURCE_CODE_URL) }) {
+                        Text(stringResource(R.string.amelia_about_source))
+                    }
+                    TextButton(onClick = { onOpenUrl(AmeliaConfig.UPSTREAM_URL) }) {
+                        Text(stringResource(R.string.amelia_about_upstream))
+                    }
+                }
+            }
         },
         confirmButton = {
-            TextButton(onClick = { onOpenUrl(AmeliaConfig.SOURCE_CODE_URL) }) {
-                Text(stringResource(R.string.amelia_about_source))
-            }
-        },
-        dismissButton = {
-            Row {
-                TextButton(onClick = { onOpenUrl(AmeliaConfig.UPSTREAM_URL) }) {
-                    Text(stringResource(R.string.amelia_about_upstream))
-                }
-                TextButton(onClick = onDismiss) { Text(stringResource(R.string.amelia_close)) }
-            }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.amelia_close)) }
         },
     )
 }

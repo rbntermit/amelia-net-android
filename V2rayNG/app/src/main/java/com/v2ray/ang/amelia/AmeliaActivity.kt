@@ -48,6 +48,7 @@ class AmeliaActivity : HelperBaseComponentActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             AmeliaRouting.apply(applicationContext)
             AmeliaGeoUpdater.schedule(applicationContext)
+            AmeliaUpdateWorker.schedule(applicationContext)
         }
         checkAndRequestPermission(PermissionType.POST_NOTIFICATIONS) {}
         if (savedInstanceState == null) handleDeepLink(intent)
@@ -112,11 +113,19 @@ class AmeliaActivity : HelperBaseComponentActivity() {
             LauncherManager.stopService(this)
             return
         }
+        if (s.updateRequired) {
+            viewModel.showMessage(R.string.amelia_update_required_block)
+            return
+        }
         val prepare = VpnService.prepare(this)
         if (prepare == null) startVpn() else requestVpnPermission.launch(prepare)
     }
 
     private fun startVpn() {
+        if (viewModel.state.value.updateRequired) {
+            viewModel.showMessage(R.string.amelia_update_required_block)
+            return
+        }
         if (viewModel.state.value.selectedGuid.isNullOrEmpty()) {
             viewModel.showMessage(R.string.amelia_err_no_location)
             return
