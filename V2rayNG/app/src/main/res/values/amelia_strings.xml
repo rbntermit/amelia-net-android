@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Amelia.Net screens. The audience is Russian-speaking, so Russian is the default locale here. -->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
+    <string name="amelia_key_title">Вход по ключу</string>
+    <string name="amelia_key_prompt">Введите ключ из бота @amelianet_bot</string>
+    <string name="amelia_key_hint">Ключ</string>
+    <string name="amelia_key_submit">Войти</string>
+    <string name="amelia_open_bot">Получить ключ в @amelianet_bot</string>
+    <string name="amelia_based_on">Основано на v2rayNG · GPL-3.0</string>
+
+    <string name="amelia_err_invalid_format">Это не похоже на ключ. Скопируйте его из бота целиком.</string>
+    <string name="amelia_err_unknown_key">Ключ не найден. Проверьте его в боте @amelianet_bot.</string>
+    <string name="amelia_err_network">Нет связи с сервером. Проверьте интернет и попробуйте ещё раз.</string>
+    <string name="amelia_err_empty">В подписке нет доступных локаций. Напишите в @amelianet_bot.</string>
+    <string name="amelia_err_no_location">Выберите локацию</string>
+    <string name="amelia_updated">Локации обновлены</string>
+
+    <string name="amelia_connect">Подключить</string>
+    <string name="amelia_disconnect">Отключить</string>
+    <string name="amelia_status_connected">Подключено: %1$s</string>
+    <string name="amelia_status_disconnected">Не подключено</string>
+    <string name="amelia_locations">Локации</string>
+    <string name="amelia_no_locations">Локаций пока нет. Обновите список.</string>
+
+    <string name="amelia_traffic_left">Осталось %1$s из %2$s</string>
+    <string name="amelia_traffic_unlimited">Трафик без ограничений</string>
+    <string name="amelia_traffic_used">Израсходовано %1$s</string>
+    <string name="amelia_expire_until">Действует до %1$s</string>
+    <string name="amelia_expire_never">Бессрочно</string>
+    <string name="amelia_expired">Подписка закончилась %1$s</string>
+
+    <string name="amelia_menu">Меню</string>
+    <string name="amelia_menu_refresh">Обновить локации</string>
+    <string name="amelia_menu_change_key">Сменить ключ</string>
+    <string name="amelia_menu_about">О приложении</string>
+
+    <string name="amelia_logout_title">Сменить ключ?</string>
+    <string name="amelia_logout_text">VPN отключится, список локаций будет удалён. Новый ключ можно взять в @amelianet_bot.</string>
+    <string name="amelia_logout_confirm">Сменить</string>
+    <string name="amelia_cancel">Отмена</string>
+
+    <string name="amelia_about_title">О приложении</string>
+    <string name="amelia_about_text">Amelia.Net %1$s\n\nПриложение основано на v2rayNG %2$s (© 2dust и участники проекта) и ядре Xray. Распространяется по лицензии GNU GPL v3: вы можете получить, изменять и распространять его исходный код на тех же условиях.</string>
+    <string name="amelia_about_source">Исходный код</string>
+    <string name="amelia_about_upstream">v2rayNG</string>
+    <string name="amelia_close">Закрыть</string>
+
+    <string name="amelia_menu_check_update">Проверить обновления</string>
+    <string name="amelia_update_available">Доступна новая версия %1$s</string>
+    <string name="amelia_update_download">Скачать</string>
+    <string name="amelia_update_downloading">Загрузка… %1$d%%</string>
+    <string name="amelia_update_downloading_unknown">Загрузка…</string>
+    <string name="amelia_update_install">Установить</string>
+    <string name="amelia_update_none">Установлена последняя версия</string>
+    <string name="amelia_update_failed">Не удалось скачать обновление. Попробуйте позже.</string>
+    <string name="amelia_update_allow_install">Разрешите Amelia.Net устанавливать приложения и нажмите «Установить» ещё раз</string>
+
+    <string name="amelia_unit_b">Б</string>
+    <string name="amelia_unit_kb">КБ</string>
+    <string name="amelia_unit_mb">МБ</string>
+    <string name="amelia_unit_gb">ГБ</string>
+    <string name="amelia_unit_tb">ТБ</string>
+</resources>

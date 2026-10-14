@@ -1,0 +1,179 @@
+name: Build APK
+
+# Amelia.Net: signed release APKs.
+# Push to main → artifacts; push a tag v* → also a GitHub Release with the APKs.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: write
+
+env:
+  # Xray core for Android (github.com/2dust/AndroidLibXrayLite). v26.10.10 = Xray-core v26.10.10.
+  LIBV2RAY_TAG: v26.10.10
+  # Same revision upstream v2rayNG 2.3.11 pins as a submodule.
+  HEV_REPO: https://github.com/heiher/hev-socks5-tunnel
+  HEV_COMMIT: d9dca26c7ad0e494492244f0309e80ee583e739e
+  NDK_VERSION: 30.0.16248370
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          log-accepted-android-sdk-licenses: false
+          cmdline-tools-version: '14742923'
+          packages: 'platforms;android-37.0 build-tools;37.0.0 platform-tools'
+
+      - name: Install NDK
+        run: |
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --channel=0 --install "ndk;$NDK_VERSION"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> $GITHUB_ENV
+          # Lets AGP strip the prebuilt .so files with the same NDK
+          sed -i "s/^    compileSdk = 37$/    compileSdk = 37\n    ndkVersion = \"$NDK_VERSION\"/" V2rayNG/app/build.gradle.kts
+
+      - name: Restore libhevtun
+        id: hev-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: libs
+          key: libhevtun-${{ runner.os }}-${{ env.NDK_VERSION }}-${{ env.HEV_COMMIT }}-${{ hashFiles('compile-hevtun.sh') }}
+
+      - name: Build libhevtun
+        if: steps.hev-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --quiet "$HEV_REPO" hev-socks5-tunnel
+          git -C hev-socks5-tunnel checkout --quiet "$HEV_COMMIT"
+          git -C hev-socks5-tunnel submodule update --init --recursive --quiet
+          bash compile-hevtun.sh
+
+      - name: Save libhevtun
+        if: steps.hev-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: libs
+          key: libhevtun-${{ runner.os }}-${{ env.NDK_VERSION }}-${{ env.HEV_COMMIT }}-${{ hashFiles('compile-hevtun.sh') }}
+
+      - name: Add native libraries
+        run: |
+          cp -r libs V2rayNG/app
+          mkdir -p V2rayNG/app/libs
+          curl -fsSL -o V2rayNG/app/libs/libv2ray.aar \
+            "https://github.com/2dust/AndroidLibXrayLite/releases/download/$LIBV2RAY_TAG/libv2ray.aar"
+          sha256sum V2rayNG/app/libs/libv2ray.aar
+
+      - name: Setup Java
+        uses: actions/setup-java@v6.0.1
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Unit tests (Amelia)
+        working-directory: V2rayNG
+        run: |
+          chmod 755 gradlew
+          ./gradlew --no-daemon :app:testPlaystoreDebugUnitTest --tests 'com.v2ray.ang.amelia.*'
+
+      - name: Decode keystore
+        if: github.event_name != 'pull_request'
+        env:
+          APP_KEYSTORE_BASE64: ${{ secrets.APP_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$APP_KEYSTORE_BASE64" ]; then
+            echo "::error::Secret APP_KEYSTORE_BASE64 is not set (see README, 'Подпись')"; exit 1
+          fi
+          echo "$APP_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+
+      - name: Build signed release APK
+        if: github.event_name != 'pull_request'
+        working-directory: V2rayNG
+        env:
+          KS_PASS: ${{ secrets.APP_KEYSTORE_PASSWORD }}
+          KS_ALIAS: ${{ secrets.APP_KEYSTORE_ALIAS }}
+          KEY_PASS: ${{ secrets.APP_KEY_PASSWORD }}
+        run: |
+          echo "sdk.dir=${ANDROID_HOME}" > local.properties
+          ./gradlew --no-daemon licensePlaystoreReleaseReport assemblePlaystoreRelease \
+            -Pandroid.injected.signing.store.file="$RUNNER_TEMP/release.jks" \
+            -Pandroid.injected.signing.store.password="$KS_PASS" \
+            -Pandroid.injected.signing.key.alias="$KS_ALIAS" \
+            -Pandroid.injected.signing.key.password="$KEY_PASS"
+
+      - name: Build unsigned APK (pull requests)
+        if: github.event_name == 'pull_request'
+        working-directory: V2rayNG
+        run: |
+          echo "sdk.dir=${ANDROID_HOME}" > local.properties
+          ./gradlew --no-daemon assemblePlaystoreDebug
+
+      - name: Verify signature and checksums
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p out
+          cp V2rayNG/app/build/outputs/apk/playstore/release/*.apk out/
+          for apk in out/*.apk; do
+            "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs "$apk" | head -n 3
+          done
+          (cd out && sha256sum *.apk > SHA256SUMS.txt && cat SHA256SUMS.txt)
+
+      # version.json for the in-app updater: put it and the universal APK on the subscription
+      # server under /app/ (base URL can be changed with the repository variable APK_BASE_URL).
+      - name: Generate version.json
+        if: github.event_name != 'pull_request'
+        env:
+          APK_BASE_URL: ${{ vars.APK_BASE_URL || 'https://sub.ameliajustamelia.com:9443/app/' }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          GRADLE=V2rayNG/app/build.gradle.kts
+          CODE=$(grep -oP '^\s*versionCode = \K[0-9]+' $GRADLE)
+          NAME=$(grep -oP '^\s*versionName = "\K[^"]+' $GRADLE)
+          APK=$(ls out/*universal*.apk | head -n1)
+          FILE=$(basename "$APK")
+          jq -n --argjson code "$CODE" --arg name "$NAME" --arg url "${APK_BASE_URL%/}/$FILE" \
+                --arg sha "$(sha256sum "$APK" | cut -d' ' -f1)" --argjson size "$(stat -c%s "$APK")" \
+                --arg notes "$COMMIT_MSG" \
+                '{versionCode:$code, versionName:$name, url:$url, sha256:$sha, size:$size, notes:($notes|split("\n")[0])}' \
+                > out/version.json
+          cat out/version.json
+
+      - name: Upload universal APK
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: AmeliaNet-universal
+          path: |
+            out/*universal*.apk
+            out/SHA256SUMS.txt
+            out/version.json
+
+      - name: Upload arm64-v8a APK
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: AmeliaNet-arm64-v8a
+          path: out/*arm64-v8a*.apk
+
+      - name: Upload armeabi-v7a APK
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: AmeliaNet-armeabi-v7a
+          path: out/*armeabi-v7a*.apk
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" out/*.apk out/SHA256SUMS.txt out/version.json \
+            --repo "$GITHUB_REPOSITORY" --title "Amelia.Net $GITHUB_REF_NAME" --generate-notes
