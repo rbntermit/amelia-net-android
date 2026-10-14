@@ -16,8 +16,8 @@ android {
         minSdk = 24
         targetSdk = 37
         // Bump both on every release; the in-app updater (item 7) compares versionCode.
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
         buildConfigField("String", "UPSTREAM_VERSION", "\"2.3.11\"")
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')

@@ -26,6 +26,16 @@ class AmeliaFormatAndRoutingTest {
     }
 
     @Test
+    fun daysLeft() {
+        val day = 24L * 60 * 60 * 1000
+        val now = 1_000_000_000_000L
+        assertEquals(10, AmeliaFormat.daysLeft(AmeliaSubInfo(expire = (now + 10 * day + 5) / 1000), now))
+        assertEquals(0, AmeliaFormat.daysLeft(AmeliaSubInfo(expire = (now + day / 2) / 1000), now))
+        assertEquals(null, AmeliaFormat.daysLeft(AmeliaSubInfo(expire = (now - day) / 1000), now))
+        assertEquals(null, AmeliaFormat.daysLeft(AmeliaSubInfo(expire = 0), now))
+    }
+
+    @Test
     fun routingOrderProxyBeforeDirect() {
         val rules = AmeliaRouting.buildRulesets(withGeo = false)
         assertEquals(listOf(AppConfig.TAG_PROXY, AppConfig.TAG_DIRECT, AppConfig.TAG_DIRECT), rules.map { it.outboundTag })

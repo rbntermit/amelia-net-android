@@ -30,4 +30,12 @@ object AmeliaFormat {
 
     fun isExpired(info: AmeliaSubInfo, nowMillis: Long): Boolean =
         info.hasExpire && (info.expire ?: 0L) * 1000 < nowMillis
+
+    /** Whole days until expiry (0 on the last day), or null when there is no end date or it passed. */
+    fun daysLeft(info: AmeliaSubInfo, nowMillis: Long): Int? {
+        if (!info.hasExpire) return null
+        val left = (info.expire ?: 0L) * 1000 - nowMillis
+        if (left < 0) return null
+        return (left / (24L * 60 * 60 * 1000)).toInt()
+    }
 }

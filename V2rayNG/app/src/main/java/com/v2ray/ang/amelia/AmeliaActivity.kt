@@ -4,7 +4,9 @@ import android.content.Intent
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.runtime.Composable
@@ -38,6 +40,11 @@ class AmeliaActivity : HelperBaseComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // The brand screen is always dark: light status/navigation bar icons in any system theme.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+        )
         lifecycleScope.launch(Dispatchers.IO) {
             AmeliaRouting.apply(applicationContext)
             AmeliaGeoUpdater.schedule(applicationContext)
@@ -71,6 +78,7 @@ class AmeliaActivity : HelperBaseComponentActivity() {
             onToggle = ::toggle,
             onSelect = viewModel::select,
             onRefresh = { viewModel.refresh() },
+            onRecheck = viewModel::recheck,
             onLogout = viewModel::logout,
             onOpenUrl = { Utils.openUri(this, it) },
             onMessageShown = viewModel::messageShown,
@@ -97,7 +105,10 @@ class AmeliaActivity : HelperBaseComponentActivity() {
     }
 
     private fun toggle() {
-        if (viewModel.state.value.isRunning) {
+        val s = viewModel.state.value
+        // During a switch the daemon is briefly stopped; the button still means "disconnect".
+        if (s.isRunning || s.phase != ConnPhase.OFF) {
+            viewModel.onUserDisconnect()
             LauncherManager.stopService(this)
             return
         }
@@ -114,6 +125,7 @@ class AmeliaActivity : HelperBaseComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.CINNAMON_BUN) {
             checkAndRequestPermission(PermissionType.ACCESS_LOCAL_NETWORK) {}
         }
+        viewModel.onUserConnect()
         LauncherManager.startService(this)
     }
 }

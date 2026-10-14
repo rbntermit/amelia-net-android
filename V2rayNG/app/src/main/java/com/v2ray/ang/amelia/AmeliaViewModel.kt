@@ -8,6 +8,7 @@ import com.v2ray.ang.R
 import com.v2ray.ang.core.LauncherManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,11 +16,32 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** What the big button shows. */
+enum class ConnPhase {
+    OFF,
+    /** VPN is starting on the chosen location. */
+    STARTING,
+    /** VPN is up, internet through it is being checked. */
+    CHECKING,
+    /** The location did not pass the check; moving to the next one. */
+    SWITCHING,
+    CONNECTED,
+    /** VPN is up but the phone has no internet at all. */
+    NO_INTERNET,
+    /** Every location failed the check. */
+    ALL_FAILED,
+    /** VPN started outside the app (tile, boot) and its location fails; no automatic switching. */
+    LOCATION_FAILED,
+}
+
 data class AmeliaUiState(
     val loaded: Boolean = false,
     val hasKey: Boolean = false,
     val busy: Boolean = false,
     val isRunning: Boolean = false,
+    val phase: ConnPhase = ConnPhase.OFF,
+    /** Delay through the tunnel from the last successful check. */
+    val pingMs: Long? = null,
     val locations: List<AmeliaManager.Location> = emptyList(),
     val selectedGuid: String? = null,
     val info: AmeliaSubInfo? = null,
@@ -104,14 +126,116 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) { AmeliaManager.select(guid) }
             _state.update { it.copy(selectedGuid = guid) }
-            // Restart only acts when the daemon is running; a stopped VPN stays stopped.
-            LauncherManager.restartService(getApplication())
+            if (_state.value.isRunning) {
+                // A manual choice starts a fresh round of checks from this location.
+                beginConnect(guid)
+                expectRestart = true
+                _state.update { it.copy(phase = ConnPhase.STARTING, pingMs = null) }
+                LauncherManager.restartService(getApplication())
+            }
         }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Connect, check internet, switch to the next location on failure (see AmeliaFailover)
+    // ---------------------------------------------------------------------------------------
+
+    /** Locations already checked in this connect attempt. */
+    private val tried = mutableSetOf<String>()
+    /** Failover only for connects the user started in the app, not for tile/boot starts. */
+    private var failoverEnabled = false
+    /** A restart is in flight: its "stopped" event must not reset the phase. */
+    private var expectRestart = false
+    private var probeJob: Job? = null
+    private var pendingProbeId: String? = null
+
+    private fun beginConnect(guid: String?) {
+        tried.clear()
+        guid?.let { tried += it }
+        failoverEnabled = true
+        probeJob?.cancel()
+        pendingProbeId = null
+    }
+
+    /** Called by the activity right before it starts the VPN. */
+    fun onUserConnect() {
+        beginConnect(_state.value.selectedGuid)
+        _state.update { it.copy(phase = ConnPhase.STARTING, pingMs = null) }
+    }
+
+    /** Called by the activity right before it stops the VPN. */
+    fun onUserDisconnect() {
+        failoverEnabled = false
+        expectRestart = false
+        probeJob?.cancel()
+        pendingProbeId = null
+        _state.update { it.copy(phase = ConnPhase.OFF, pingMs = null) }
+    }
+
+    /** "Проверить соединение" — re-run the check (and failover) on the running VPN. */
+    fun recheck() {
+        if (!_state.value.isRunning) return
+        beginConnect(_state.value.selectedGuid)
+        startProbe()
+    }
+
+    private fun startProbe() {
+        probeJob?.cancel()
+        _state.update { it.copy(phase = ConnPhase.CHECKING) }
+        val id = java.util.UUID.randomUUID().toString()
+        pendingProbeId = id
+        probeJob = viewModelScope.launch {
+            delay(AmeliaFailover.PROBE_DELAY_MS)
+            serviceEvents.requestTunnelProbe(id)
+            delay(AmeliaFailover.PROBE_TIMEOUT_MS)
+            // No answer from the core in time: count as a failed check
+            if (pendingProbeId == id) onProbe(id, -1L)
+        }
+    }
+
+    private fun onProbe(requestId: String, delayMs: Long) {
+        if (requestId != pendingProbeId) return
+        pendingProbeId = null
+        probeJob?.cancel()
+        if (delayMs >= 0) {
+            _state.update { it.copy(phase = ConnPhase.CONNECTED, pingMs = delayMs) }
+            return
+        }
+        viewModelScope.launch {
+            val directOk = withContext(Dispatchers.IO) { AmeliaFailover.directInternetOk() }
+            when (AmeliaFailover.verdict(delayMs, directOk)) {
+                AmeliaFailover.Verdict.CONNECTED -> Unit
+                AmeliaFailover.Verdict.NO_INTERNET ->
+                    _state.update { it.copy(phase = ConnPhase.NO_INTERNET, pingMs = null) }
+                AmeliaFailover.Verdict.SWITCH -> switchToNext()
+            }
+        }
+    }
+
+    private suspend fun switchToNext() {
+        val s = _state.value
+        if (!failoverEnabled) {
+            // VPN was already on when the app opened: report, but don't move the user around
+            _state.update { it.copy(phase = ConnPhase.LOCATION_FAILED, pingMs = null) }
+            return
+        }
+        val next = AmeliaFailover.next(s.locations.map { it.guid }, s.selectedGuid, tried)
+        if (next == null) {
+            failoverEnabled = false
+            _state.update { it.copy(phase = ConnPhase.ALL_FAILED, pingMs = null) }
+            return
+        }
+        tried += next
+        withContext(Dispatchers.IO) { AmeliaManager.select(next) }
+        expectRestart = true
+        _state.update { it.copy(selectedGuid = next, phase = ConnPhase.SWITCHING, pingMs = null) }
+        LauncherManager.restartService(getApplication())
     }
 
     fun logout() {
         loadJob?.cancel()
         viewModelScope.launch {
+            onUserDisconnect()
             if (_state.value.isRunning) LauncherManager.stopService(getApplication())
             withContext(Dispatchers.IO) { AmeliaManager.logout() }
             reload()
@@ -164,10 +288,37 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun onServiceEvent(event: AmeliaServiceEvents.Event) {
         when (event) {
-            AmeliaServiceEvents.Event.Running -> _state.update { it.copy(isRunning = true) }
-            AmeliaServiceEvents.Event.Stopped -> _state.update { it.copy(isRunning = false) }
-            is AmeliaServiceEvents.Event.StartFailed ->
-                _state.update { it.copy(isRunning = false, messageText = event.message) }
+            AmeliaServiceEvents.Event.Running -> {
+                val wasRunning = _state.value.isRunning
+                expectRestart = false
+                _state.update { it.copy(isRunning = true) }
+                val phase = _state.value.phase
+                when {
+                    // our own start or switch: check it
+                    phase == ConnPhase.STARTING || phase == ConnPhase.SWITCHING -> startProbe()
+                    // VPN was already on when the app opened (tile, boot): show its state
+                    !wasRunning && phase == ConnPhase.OFF -> startProbe()
+                }
+            }
+
+            AmeliaServiceEvents.Event.Stopped -> {
+                _state.update { it.copy(isRunning = false) }
+                if (!expectRestart) {
+                    failoverEnabled = false
+                    probeJob?.cancel()
+                    pendingProbeId = null
+                    _state.update { it.copy(phase = ConnPhase.OFF, pingMs = null) }
+                }
+            }
+
+            is AmeliaServiceEvents.Event.StartFailed -> {
+                expectRestart = false
+                _state.update {
+                    it.copy(isRunning = false, phase = ConnPhase.OFF, pingMs = null, messageText = event.message)
+                }
+            }
+
+            is AmeliaServiceEvents.Event.Probe -> onProbe(event.requestId, event.delayMs)
         }
     }
 

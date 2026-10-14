@@ -24,6 +24,19 @@ object AmeliaConfig {
 
     const val BOT_USERNAME = "@amelianet_bot"
     const val BOT_URL = "https://t.me/amelianet_bot"
+    const val GROUP_URL = "https://t.me/amelia_net"
+
+    /**
+     * Bot screens opened from the app via /start <payload>. The bot already handles "pay";
+     * the others need the small bot.py patch from docs/BOT_DEEPLINKS.md, until then they open
+     * the bot's main menu.
+     */
+    enum class BotScreen(val payload: String) {
+        PAY("pay"), STATUS("status"), HELP("help"), SUPPORT("support"), REFERRAL("referral"), MY_SUB("mysub"),
+    }
+
+    fun botUrl(screen: BotScreen? = null): String =
+        if (screen == null) BOT_URL else "$BOT_URL?start=${screen.payload}"
 
     /** GPL-3.0 §6: where recipients of the APK get the corresponding source. */
     const val SOURCE_CODE_URL = "https://github.com/rbntermit/amelia-net-android"

@@ -6,6 +6,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import androidx.core.content.ContextCompat
 import com.v2ray.ang.AppConfig
+import com.v2ray.ang.dto.ConnectionTestResult
+import com.v2ray.ang.extension.serializable
 import com.v2ray.ang.helper.MessageHelper
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
@@ -25,6 +27,18 @@ class AmeliaServiceEvents(private val context: Context) : Closeable {
         data object Running : Event()
         data object Stopped : Event()
         data class StartFailed(val message: String?) : Event()
+        /** Result of [requestTunnelProbe]: delay in ms, or -1 when the probe failed or was cancelled. */
+        data class Probe(val requestId: String, val delayMs: Long) : Event()
+    }
+
+    /**
+     * Asks the running core to fetch Google through the tunnel (upstream MSG_MEASURE_DELAY).
+     * The answer arrives as [Event.Probe] with the same request id.
+     */
+    fun requestTunnelProbe(requestId: String) {
+        MessageHelper.sendMsg2ServiceForResult(context, AppConfig.MSG_MEASURE_DELAY, requestId) { handled ->
+            if (!handled) channel.trySend(Event.Probe(requestId, -1L))
+        }
     }
 
     private val closed = AtomicBoolean(false)
@@ -37,6 +51,12 @@ class AmeliaServiceEvents(private val context: Context) : Closeable {
                 AppConfig.MSG_STATE_RUNNING, AppConfig.MSG_STATE_START_SUCCESS -> Event.Running
                 AppConfig.MSG_STATE_NOT_RUNNING, AppConfig.MSG_STATE_STOP_SUCCESS -> Event.Stopped
                 AppConfig.MSG_STATE_START_FAILURE -> Event.StartFailed(intent.getStringExtra("content"))
+                AppConfig.MSG_MEASURE_DELAY_RESULT -> Event.Probe(
+                    intent.getStringExtra(MessageHelper.EXTRA_REQUEST_ID).orEmpty(),
+                    intent.serializable<ConnectionTestResult>("content")?.delayMillis ?: -1L,
+                )
+                AppConfig.MSG_MEASURE_DELAY_CANCEL ->
+                    Event.Probe(intent.getStringExtra(MessageHelper.EXTRA_REQUEST_ID).orEmpty(), -1L)
                 else -> null
             }
             event?.let { channel.trySend(it) }

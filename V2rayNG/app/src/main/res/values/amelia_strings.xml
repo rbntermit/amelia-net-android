@@ -17,10 +17,31 @@
 
     <string name="amelia_connect">Подключить</string>
     <string name="amelia_disconnect">Отключить</string>
-    <string name="amelia_status_connected">Подключено: %1$s</string>
-    <string name="amelia_status_disconnected">Не подключено</string>
     <string name="amelia_locations">Локации</string>
+    <string name="amelia_location">Локация</string>
+    <string name="amelia_choose_location">Выбрать локацию</string>
     <string name="amelia_no_locations">Локаций пока нет. Обновите список.</string>
+
+    <!-- connection phases, see ConnPhase -->
+    <string name="amelia_phase_off">Не подключено</string>
+    <string name="amelia_phase_starting">Подключаюсь…</string>
+    <string name="amelia_phase_checking">Проверяю интернет…</string>
+    <string name="amelia_phase_switching">Локация не отвечает, пробую следующую</string>
+    <string name="amelia_phase_connected">Подключено</string>
+    <string name="amelia_phase_connected_ping">Подключено · %1$d мс</string>
+    <string name="amelia_phase_no_internet">Нет интернета на телефоне. Проверьте Wi-Fi или мобильную сеть.</string>
+    <string name="amelia_phase_all_failed">Ни одна локация не отвечает. Попробуйте позже или напишите в поддержку.</string>
+    <string name="amelia_phase_location_failed">Эта локация не отвечает. Нажмите «Не работает?» — подберу рабочую.</string>
+
+    <!-- action tiles: same items as the bot's main menu -->
+    <string name="amelia_act_pay">Тарифы и оплата</string>
+    <string name="amelia_act_referral">Пригласить друга</string>
+    <string name="amelia_act_not_working">Не работает?</string>
+    <string name="amelia_act_support">Поддержка</string>
+    <string name="amelia_act_help">Помощь</string>
+    <string name="amelia_act_group">Наша группа</string>
+    <string name="amelia_days_left">осталось %1$d дн.</string>
+    <string name="amelia_renew">Продлить</string>
 
     <string name="amelia_traffic_left">Осталось %1$s из %2$s</string>
     <string name="amelia_traffic_unlimited">Трафик без ограничений</string>
@@ -31,6 +52,7 @@
 
     <string name="amelia_menu">Меню</string>
     <string name="amelia_menu_refresh">Обновить локации</string>
+    <string name="amelia_menu_recheck">Проверить соединение</string>
     <string name="amelia_menu_change_key">Сменить ключ</string>
     <string name="amelia_menu_about">О приложении</string>
 
