@@ -117,5 +117,11 @@ $font = New-Object Drawing.Font 'Segoe UI', 30, ([Drawing.FontStyle]::Bold), ([D
 $g.DrawString('Amelia.Net', $font, [Drawing.Brushes]::White, 150, 68)
 $g.Dispose(); Save $ban "$Res\mipmap-xhdpi\ic_banner.png"
 
+# App background watermark (1.0.2): the full-resolution artwork without its background,
+# cropped to the ring, so the screen can show the avatar large and crisp.
+$ringPx = [int]($W * 495 / 640); $o = [int](($W - $ringPx) / 2)
+$wm = $fg.Clone((New-Object Drawing.Rectangle $o, $o, $ringPx, $ringPx), [Drawing.Imaging.PixelFormat]::Format32bppArgb)
+Save $wm "$Res\drawable-nodpi\amelia_watermark.png"
+
 $fg.Dispose(); $stat.Dispose(); $img.Dispose()
 "done"

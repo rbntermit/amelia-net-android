@@ -194,25 +194,35 @@ fun AmeliaApp(
     }
 }
 
-/** Gradient from the logo with the logo itself, faded, as a watermark. */
+/**
+ * The avatar as the screen background (1.0.2): its exact top-to-bottom gradient, and the
+ * artwork itself (ring, "A", ".Net") large and faded in the middle.
+ */
 @Composable
 private fun BrandBackground(content: @Composable BoxScope.() -> Unit) {
     Box(
         Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Brand.Night, Brand.Navy, Brand.Indigo))),
+            .background(Brush.verticalGradient(listOf(Avatar.Top, Avatar.Middle, Avatar.Bottom))),
     ) {
         Image(
-            painter = painterResource(R.mipmap.ic_launcher_foreground),
+            painter = painterResource(R.drawable.amelia_watermark),
             contentDescription = null,
             modifier = Modifier
                 .align(Alignment.Center)
-                .fillMaxWidth(1.3f)
+                .fillMaxWidth(0.92f)
                 .aspectRatio(1f)
-                .alpha(0.07f),
+                .alpha(0.11f),
         )
         content()
     }
+}
+
+/** Colors sampled from the avatar (docs/brand/icon-source.jpg). */
+private object Avatar {
+    val Top = Color(0xFF111C49)
+    val Middle = Color(0xFF2D2D91)
+    val Bottom = Color(0xFF483ED5)
 }
 
 @Composable
