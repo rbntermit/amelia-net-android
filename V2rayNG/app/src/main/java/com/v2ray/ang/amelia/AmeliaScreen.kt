@@ -1,7 +1,6 @@
 package com.v2ray.ang.amelia
 
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -54,7 +53,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -146,21 +145,14 @@ private fun UpdateCard(state: AmeliaUiState, updates: UpdateCallbacks) {
     }
 }
 
+/** Brand logo (round artwork from drawable-nodpi). */
 @Composable
 private fun AppMark(size: Int) {
-    Box(
-        modifier = Modifier
-            .size(size.dp)
-            .background(MaterialTheme.colorScheme.primary, CircleShape),
-        contentAlignment = Alignment.Center,
-    ) {
-        Image(
-            painter = painterResource(R.drawable.ic_amelia_foreground),
-            contentDescription = null,
-            colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.onPrimary),
-            modifier = Modifier.size((size * 1.4).dp),
-        )
-    }
+    Image(
+        painter = painterResource(R.drawable.ic_amelia_logo),
+        contentDescription = null,
+        modifier = Modifier.size(size.dp).clip(CircleShape),
+    )
 }
 
 @Composable
