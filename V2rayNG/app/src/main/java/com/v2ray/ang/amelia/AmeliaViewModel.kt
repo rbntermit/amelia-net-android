@@ -16,6 +16,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** Upper bound for a "ping all" round; the core gives up on each location after ~12 s. */
+private const val PING_ALL_TIMEOUT_MS = 120_000L
+
 /** What the big button shows. */
 enum class ConnPhase {
     OFF,
@@ -42,6 +45,10 @@ data class AmeliaUiState(
     val phase: ConnPhase = ConnPhase.OFF,
     /** Delay through the tunnel from the last successful check. */
     val pingMs: Long? = null,
+    /** "Ping all" results per location guid: ms, or -1 = no answer. */
+    val pings: Map<String, Long> = emptyMap(),
+    /** "Ping all" is running. */
+    val pinging: Boolean = false,
     val locations: List<AmeliaManager.Location> = emptyList(),
     val selectedGuid: String? = null,
     val info: AmeliaSubInfo? = null,
@@ -168,6 +175,42 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         pendingProbeId = null
     }
 
+    // ---------------------------------------------------------------------------------------
+    // Ping all locations (like Happ)
+    // ---------------------------------------------------------------------------------------
+
+    private var pingRequestId: String? = null
+    private var pingTimeoutJob: Job? = null
+
+    /** Starts measuring every location; a second tap cancels. */
+    fun pingAll() {
+        if (_state.value.pinging) {
+            serviceEvents.cancelPingAll()
+            finishPing()
+            return
+        }
+        if (_state.value.locations.isEmpty()) return
+        val id = java.util.UUID.randomUUID().toString()
+        pingRequestId = id
+        _state.update { it.copy(pinging = true, pings = emptyMap()) }
+        serviceEvents.requestPingAll(id, AmeliaConfig.SUBSCRIPTION_ID)
+        pingTimeoutJob?.cancel()
+        pingTimeoutJob = viewModelScope.launch {
+            // safety net if the test service never reports back
+            delay(PING_ALL_TIMEOUT_MS)
+            if (pingRequestId == id) {
+                serviceEvents.cancelPingAll()
+                finishPing()
+            }
+        }
+    }
+
+    private fun finishPing() {
+        pingRequestId = null
+        pingTimeoutJob?.cancel()
+        _state.update { it.copy(pinging = false) }
+    }
+
     /** Called by the activity right before it starts the VPN. */
     fun onUserConnect() {
         beginConnect(_state.value.selectedGuid)
@@ -284,6 +327,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 locations = AmeliaManager.getLocations(),
                 selectedGuid = AmeliaManager.getSelectedGuid(),
                 info = AmeliaManager.getSubInfo(),
+                pings = AmeliaManager.getPings(),
             )
         }
         _state.update {
@@ -293,6 +337,8 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 locations = snapshot.locations,
                 selectedGuid = snapshot.selectedGuid,
                 info = snapshot.info,
+                // keep live results while a ping round is running
+                pings = if (it.pinging) it.pings else snapshot.pings,
             )
         }
     }
@@ -330,6 +376,12 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             }
 
             is AmeliaServiceEvents.Event.Probe -> onProbe(event.requestId, event.delayMs)
+
+            is AmeliaServiceEvents.Event.Ping -> if (event.requestId == pingRequestId) {
+                _state.update { it.copy(pings = it.pings + (event.guid to event.delayMs)) }
+            }
+
+            is AmeliaServiceEvents.Event.PingDone -> if (event.requestId == pingRequestId) finishPing()
         }
     }
 

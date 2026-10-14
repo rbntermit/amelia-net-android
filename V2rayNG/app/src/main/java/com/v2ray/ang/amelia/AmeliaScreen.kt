@@ -139,6 +139,7 @@ fun AmeliaApp(
     onSelect: (String) -> Unit,
     onRefresh: () -> Unit,
     onRecheck: () -> Unit,
+    onPingAll: () -> Unit,
     onLogout: () -> Unit,
     onOpenUrl: (String) -> Unit,
     onMessageShown: () -> Unit,
@@ -163,7 +164,7 @@ fun AmeliaApp(
                 !state.loaded -> Unit
                 !state.hasKey -> KeyScreen(state.busy, onSubmitKey, onOpenUrl, onAbout = { showAbout = true })
                 else -> HomeScreen(
-                    state, onToggle, onSelect, onRefresh, onRecheck, onLogout, onOpenUrl, updates,
+                    state, onToggle, onSelect, onRefresh, onRecheck, onPingAll, onLogout, onOpenUrl, updates,
                     onAbout = { showAbout = true },
                 )
             }
@@ -358,6 +359,7 @@ private fun HomeScreen(
     onSelect: (String) -> Unit,
     onRefresh: () -> Unit,
     onRecheck: () -> Unit,
+    onPingAll: () -> Unit,
     onLogout: () -> Unit,
     onOpenUrl: (String) -> Unit,
     updates: UpdateCallbacks,
@@ -424,6 +426,7 @@ private fun HomeScreen(
             state,
             onSelect = { onSelect(it); showLocations = false },
             onRefresh = onRefresh,
+            onPingAll = onPingAll,
             onDismiss = { showLocations = false },
         )
     }
@@ -706,6 +709,22 @@ private fun PhaseText(state: AmeliaUiState) {
 
 // ---- Locations -------------------------------------------------------------------------------
 
+/** Ping value with Happ-like colours; "…" while a round is running and this one has no result yet. */
+@Composable
+private fun PingBadge(ms: Long?, pinging: Boolean) {
+    if (ms == null) {
+        if (pinging) Text("…", color = Brand.Muted, style = MaterialTheme.typography.labelLarge)
+        return
+    }
+    val (text, color) = when (AmeliaFormat.pingLevel(ms)) {
+        AmeliaFormat.PingLevel.GOOD -> stringResource(R.string.amelia_ping_ms, ms.toInt()) to Brand.Green
+        AmeliaFormat.PingLevel.MEDIUM -> stringResource(R.string.amelia_ping_ms, ms.toInt()) to Brand.Amber
+        AmeliaFormat.PingLevel.BAD -> stringResource(R.string.amelia_ping_ms, ms.toInt()) to Brand.Red
+        AmeliaFormat.PingLevel.FAILED -> stringResource(R.string.amelia_ping_fail) to Brand.Red
+    }
+    Text(text, color = color, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+}
+
 @Composable
 private fun LocationSelector(state: AmeliaUiState, onClick: () -> Unit) {
     Glass(Modifier.fillMaxWidth(), onClick = onClick) {
@@ -720,6 +739,8 @@ private fun LocationSelector(state: AmeliaUiState, onClick: () -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            PingBadge(state.selectedGuid?.let { state.pings[it] }, pinging = false)
+            Spacer(Modifier.width(8.dp))
             Text("›", color = Brand.Sky, fontSize = 28.sp, fontWeight = FontWeight.Light)
         }
     }
@@ -731,6 +752,7 @@ private fun LocationsSheet(
     state: AmeliaUiState,
     onSelect: (String) -> Unit,
     onRefresh: () -> Unit,
+    onPingAll: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(
@@ -745,9 +767,28 @@ private fun LocationsSheet(
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.weight(1f),
             )
-            TextButton(onClick = onRefresh, enabled = !state.busy) {
-                Text(stringResource(R.string.amelia_menu_refresh), color = Brand.Sky)
+            TextButton(onClick = onRefresh, enabled = !state.busy && !state.pinging) {
+                Text(stringResource(R.string.amelia_menu_refresh), color = Brand.Muted)
             }
+        }
+        // Happ-style "ping all": measures every location through its own core instance
+        Box(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+            GradientButton(
+                text = "⚡ " + stringResource(if (state.pinging) R.string.amelia_ping_stop else R.string.amelia_ping_all),
+                enabled = state.locations.isNotEmpty(),
+                onClick = onPingAll,
+            )
+        }
+        if (state.pinging) {
+            LinearProgressIndicator(
+                progress = {
+                    if (state.locations.isEmpty()) 0f
+                    else state.pings.size.toFloat() / state.locations.size
+                },
+                color = Brand.Sky,
+                trackColor = Brand.Glass,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp),
+            )
         }
         if (state.locations.isEmpty()) {
             Text(
@@ -757,7 +798,7 @@ private fun LocationsSheet(
             )
         }
         LazyColumn(
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 12.dp, end = 12.dp, bottom = 24.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             items(state.locations, key = { it.guid }) { location ->
@@ -769,7 +810,7 @@ private fun LocationsSheet(
                         .clip(shape)
                         .background(if (selected) Color(0x3359ABFF) else Brand.Glass, shape)
                         .selectable(selected = selected, role = Role.RadioButton, onClick = { onSelect(location.guid) })
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                        .padding(start = 8.dp, end = 16.dp, top = 6.dp, bottom = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     RadioButton(
@@ -778,13 +819,18 @@ private fun LocationsSheet(
                         colors = RadioButtonDefaults.colors(selectedColor = Brand.Sky, unselectedColor = Brand.Muted),
                         modifier = Modifier.padding(8.dp),
                     )
-                    Text(location.name, color = Brand.Text, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        location.name,
+                        color = Brand.Text,
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.weight(1f),
+                    )
+                    PingBadge(state.pings[location.guid], state.pinging)
                 }
             }
         }
     }
 }
-
 // ---- Bot actions -----------------------------------------------------------------------------
 
 private class ActionItem(val emoji: String, val label: Int, val onClick: () -> Unit)

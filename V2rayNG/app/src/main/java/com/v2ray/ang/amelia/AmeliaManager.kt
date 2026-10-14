@@ -35,6 +35,12 @@ object AmeliaManager {
 
     fun getSelectedGuid(): String? = MmkvManager.getSelectServer()
 
+    /** Last "ping all" results kept by upstream: ms, or -1 for no answer; untested ones are absent. */
+    fun getPings(): Map<String, Long> =
+        MmkvManager.decodeServerList(AmeliaConfig.SUBSCRIPTION_ID).mapNotNull { guid ->
+            MmkvManager.decodeServerAffiliationInfo(guid)?.testDelayMillis?.takeIf { it != 0L }?.let { guid to it }
+        }.toMap()
+
     fun select(guid: String) = MmkvManager.setSelectServer(guid)
 
     /** Checks the key against the server and, on success, makes it the active one. */

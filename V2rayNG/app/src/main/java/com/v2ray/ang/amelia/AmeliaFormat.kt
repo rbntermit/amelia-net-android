@@ -31,6 +31,16 @@ object AmeliaFormat {
     fun isExpired(info: AmeliaSubInfo, nowMillis: Long): Boolean =
         info.hasExpire && (info.expire ?: 0L) * 1000 < nowMillis
 
+    enum class PingLevel { GOOD, MEDIUM, BAD, FAILED }
+
+    /** Colour bucket for a ping like Happ: green under 300 ms, amber under 800 ms. */
+    fun pingLevel(ms: Long): PingLevel = when {
+        ms < 0 -> PingLevel.FAILED
+        ms < 300 -> PingLevel.GOOD
+        ms < 800 -> PingLevel.MEDIUM
+        else -> PingLevel.BAD
+    }
+
     /** Whole days until expiry (0 on the last day), or null when there is no end date or it passed. */
     fun daysLeft(info: AmeliaSubInfo, nowMillis: Long): Int? {
         if (!info.hasExpire) return null

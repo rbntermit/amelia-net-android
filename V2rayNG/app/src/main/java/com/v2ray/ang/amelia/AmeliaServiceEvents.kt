@@ -7,6 +7,8 @@ import android.content.IntentFilter
 import androidx.core.content.ContextCompat
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.dto.ConnectionTestResult
+import com.v2ray.ang.dto.RealPingResult
+import com.v2ray.ang.dto.TestServiceMessage
 import com.v2ray.ang.extension.serializable
 import com.v2ray.ang.helper.MessageHelper
 import com.v2ray.ang.util.LogUtil
@@ -29,6 +31,26 @@ class AmeliaServiceEvents(private val context: Context) : Closeable {
         data class StartFailed(val message: String?) : Event()
         /** Result of [requestTunnelProbe]: delay in ms, or -1 when the probe failed or was cancelled. */
         data class Probe(val requestId: String, val delayMs: Long) : Event()
+        /** "Ping all": one location measured (delay in ms, -1 = no answer). */
+        data class Ping(val requestId: String, val guid: String, val delayMs: Long) : Event()
+        /** "Ping all" finished or was cancelled. */
+        data class PingDone(val requestId: String) : Event()
+    }
+
+    /**
+     * Measures every location of [subscriptionId] through its own core instance
+     * (upstream CoreTestService, the same real-delay test v2rayNG uses). Works with the VPN on or off.
+     */
+    fun requestPingAll(requestId: String, subscriptionId: String) {
+        MessageHelper.sendMsg2TestService(
+            context,
+            TestServiceMessage(key = AppConfig.MSG_MEASURE_CONFIG_START, subscriptionId = subscriptionId),
+            requestId,
+        )
+    }
+
+    fun cancelPingAll() {
+        MessageHelper.sendMsg2TestService(context, TestServiceMessage(key = AppConfig.MSG_MEASURE_CONFIG_CANCEL))
     }
 
     /**
@@ -57,6 +79,11 @@ class AmeliaServiceEvents(private val context: Context) : Closeable {
                 )
                 AppConfig.MSG_MEASURE_DELAY_CANCEL ->
                     Event.Probe(intent.getStringExtra(MessageHelper.EXTRA_REQUEST_ID).orEmpty(), -1L)
+                AppConfig.MSG_MEASURE_CONFIG_SUCCESS -> intent.serializable<RealPingResult>("content")?.let {
+                    Event.Ping(intent.getStringExtra(MessageHelper.EXTRA_REQUEST_ID).orEmpty(), it.guid, it.delayMillis)
+                }
+                AppConfig.MSG_MEASURE_CONFIG_FINISH, AppConfig.MSG_MEASURE_CONFIG_CANCEL ->
+                    Event.PingDone(intent.getStringExtra(MessageHelper.EXTRA_REQUEST_ID).orEmpty())
                 else -> null
             }
             event?.let { channel.trySend(it) }

@@ -92,5 +92,8 @@ object AmeliaRouting {
         MmkvManager.encodeSettings(AppConfig.PREF_FAKE_DNS_ENABLED, false)
         MmkvManager.encodeSettings(AppConfig.PREF_LOCAL_DNS_ENABLED, false)
         MmkvManager.encodeSettings(AppConfig.PREF_MODE, AppConfig.VPN)
+        // "Ping all" must only measure: never delete or reorder the user's locations
+        MmkvManager.encodeSettings(AppConfig.PREF_AUTO_REMOVE_INVALID_AFTER_TEST, false)
+        MmkvManager.encodeSettings(AppConfig.PREF_AUTO_SORT_AFTER_TEST, false)
     }
 }

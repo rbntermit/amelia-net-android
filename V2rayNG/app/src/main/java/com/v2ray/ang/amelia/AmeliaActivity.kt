@@ -80,6 +80,7 @@ class AmeliaActivity : HelperBaseComponentActivity() {
             onSelect = viewModel::select,
             onRefresh = { viewModel.refresh() },
             onRecheck = viewModel::recheck,
+            onPingAll = viewModel::pingAll,
             onLogout = viewModel::logout,
             onOpenUrl = { Utils.openUri(this, it) },
             onMessageShown = viewModel::messageShown,
@@ -97,8 +98,23 @@ class AmeliaActivity : HelperBaseComponentActivity() {
             startActivity(AmeliaUpdater.unknownSourcesSettingsIntent(this))
             return
         }
+        val apk = File(apkPath)
+        val vpnRunning = viewModel.state.value.isRunning
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                // Android 12+: installs without the confirmation screen; the app restarts updated
+                AmeliaInstaller.install(applicationContext, apk, vpnRunning)
+            } catch (e: Exception) {
+                LogUtil.e(AppConfig.TAG, "Amelia: session install failed, falling back to the system installer", e)
+                kotlinx.coroutines.withContext(Dispatchers.Main) { installViaSystemScreen(apk) }
+            }
+        }
+    }
+
+    /** Fallback: the classic "Install?" screen of the system package installer. */
+    private fun installViaSystemScreen(apk: File) {
         try {
-            startActivity(AmeliaUpdater.installIntent(this, File(apkPath)))
+            startActivity(AmeliaUpdater.installIntent(this, apk))
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "Amelia: cannot start package installer", e)
             viewModel.showMessage(R.string.amelia_update_failed)

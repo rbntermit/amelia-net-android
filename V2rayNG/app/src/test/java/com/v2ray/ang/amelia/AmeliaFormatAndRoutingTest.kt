@@ -26,6 +26,16 @@ class AmeliaFormatAndRoutingTest {
     }
 
     @Test
+    fun pingLevels() {
+        assertEquals(AmeliaFormat.PingLevel.FAILED, AmeliaFormat.pingLevel(-1))
+        assertEquals(AmeliaFormat.PingLevel.GOOD, AmeliaFormat.pingLevel(0))
+        assertEquals(AmeliaFormat.PingLevel.GOOD, AmeliaFormat.pingLevel(299))
+        assertEquals(AmeliaFormat.PingLevel.MEDIUM, AmeliaFormat.pingLevel(300))
+        assertEquals(AmeliaFormat.PingLevel.MEDIUM, AmeliaFormat.pingLevel(799))
+        assertEquals(AmeliaFormat.PingLevel.BAD, AmeliaFormat.pingLevel(800))
+    }
+
+    @Test
     fun daysLeft() {
         val day = 24L * 60 * 60 * 1000
         val now = 1_000_000_000_000L

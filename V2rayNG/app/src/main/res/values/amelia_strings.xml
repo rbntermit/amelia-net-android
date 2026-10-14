@@ -20,6 +20,10 @@
     <string name="amelia_locations">Локации</string>
     <string name="amelia_location">Локация</string>
     <string name="amelia_choose_location">Выбрать локацию</string>
+    <string name="amelia_ping_all">Проверить пинг</string>
+    <string name="amelia_ping_stop">Остановить</string>
+    <string name="amelia_ping_ms">%1$d мс</string>
+    <string name="amelia_ping_fail">нет ответа</string>
     <string name="amelia_no_locations">Локаций пока нет. Обновите список.</string>
 
     <!-- connection phases, see ConnPhase -->

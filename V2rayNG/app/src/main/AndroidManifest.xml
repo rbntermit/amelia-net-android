@@ -23,10 +23,11 @@
         android:name="android.hardware.touchscreen"
         android:required="false" />
 
-    <!-- https://developer.android.com/about/versions/11/privacy/package-visibility -->
+    <!-- Amelia.Net: no per-app proxy or app picker, so no need to list installed apps.
+         This sensitive permission also counts against the app in Play Protect checks. -->
     <uses-permission
         android:name="android.permission.QUERY_ALL_PACKAGES"
-        tools:ignore="PackageVisibilityPolicy,QueryAllPackagesPermission" />
+        tools:node="remove" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
@@ -45,6 +46,8 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Amelia.Net: in-app updates -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Android 12+: the app updates itself without the system confirmation screen -->
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
 
     <application
         android:name=".AngApplication"
@@ -197,6 +200,19 @@
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Amelia.Net: in-app update install status (explicit intent from PackageInstaller) -->
+        <receiver
+            android:name=".amelia.AmeliaInstaller$StatusReceiver"
+            android:exported="false" />
+        <!-- Amelia.Net: turn the VPN back on after an in-app update -->
+        <receiver
+            android:name=".amelia.AmeliaInstaller$PackageReplacedReceiver"
+            android:exported="true">
+            <intent-filter>
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
