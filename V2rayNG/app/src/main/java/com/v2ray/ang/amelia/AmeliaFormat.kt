@@ -42,6 +42,10 @@ object AmeliaFormat {
     fun date(epochSeconds: Long): String =
         SimpleDateFormat("dd.MM.yyyy", Locale.US).format(Date(epochSeconds * 1000))
 
+    /** "12.11" for the subscription line on the main screen. */
+    fun dayMonth(epochSeconds: Long): String =
+        SimpleDateFormat("dd.MM", Locale.US).format(Date(epochSeconds * 1000))
+
     fun isExpired(info: AmeliaSubInfo, nowMillis: Long): Boolean =
         info.hasExpire && (info.expire ?: 0L) * 1000 < nowMillis
 

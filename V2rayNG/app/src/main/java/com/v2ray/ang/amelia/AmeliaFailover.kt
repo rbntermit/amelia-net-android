@@ -1,6 +1,9 @@
 package com.v2ray.ang.amelia
 
 import com.v2ray.ang.AppConfig
+import com.v2ray.ang.enums.EConfigType
+import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.handler.SpeedtestManager
 import com.v2ray.ang.util.LogUtil
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -62,6 +65,19 @@ object AmeliaFailover {
             LogUtil.w(AppConfig.TAG, "Amelia: direct reach check failed", e)
             -1L
         }
+    }
+
+    /**
+     * Blocking. For a location that does not pass data through the tunnel: does it at least
+     * accept a TCP connection (then "data" is cut), or not even that ("connect")?
+     * hysteria2 runs over UDP, where a TCP connect says nothing: "data".
+     */
+    fun failureStage(guid: String?): String {
+        val config = guid?.let { MmkvManager.decodeServerConfig(it) } ?: return AmeliaPingStage.DATA
+        val port = config.serverPort?.toIntOrNull()
+        val host = config.server
+        if (config.configType == EConfigType.HYSTERIA2 || port == null || host.isNullOrBlank()) return AmeliaPingStage.DATA
+        return if (SpeedtestManager.socketConnectTime(host, port, 3000) >= 0) AmeliaPingStage.DATA else AmeliaPingStage.CONNECT
     }
 
     /** Blocking. True if the device itself can reach Yandex (or Google) without the VPN. */

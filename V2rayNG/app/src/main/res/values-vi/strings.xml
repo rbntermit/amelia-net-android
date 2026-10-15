@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name" translatable="false">Amelia.Net</string>
-    <string name="app_widget_name">Kết nối ngay</string>
-    <string name="app_tile_name">Kết nối ngay</string>
+    <string name="app_widget_name">Amelia.Net</string>
+    <string name="app_tile_name">Amelia</string>
     <string name="app_tile_first_use">Vui lòng thêm một cấu hình vào Amelia.Net để sử dụng!</string>
     <string name="navigation_drawer_open">Mở Menu ứng dụng</string>
     <string name="navigation_drawer_close">Đóng Menu ứng dụng</string>

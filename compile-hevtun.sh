@@ -51,6 +51,8 @@ ifeq ($(filter $(modules-get-list),lwip),)
     include $(TOP_PATH)/third-part/lwip/Android.mk
 endif
 ifeq ($(filter $(modules-get-list),hev-task-system),)
+    # Same as hev's own Android.mk since 2.19.0
+    ENABLE_MEMALLOC_SLICE := 0
     include $(TOP_PATH)/third-part/hev-task-system/Android.mk
 endif
 
@@ -70,7 +72,7 @@ LOCAL_C_INCLUDES := \
 	$(LOCAL_PATH)/third-part/lwip/src/ports/include \
 	$(LOCAL_PATH)/third-part/hev-task-system/include
 LOCAL_CFLAGS += -DFD_SET_DEFINED -DSOCKLEN_T_DEFINED
-LOCAL_CFLAGS += $(VERSION_CFLAGS)
+LOCAL_CFLAGS += -fno-stack-clash-protection $(VERSION_CFLAGS)
 ifeq ($(TARGET_ARCH_ABI),armeabi-v7a)
 LOCAL_CFLAGS += -mfpu=neon
 endif

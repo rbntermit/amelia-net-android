@@ -13,7 +13,12 @@ import java.util.concurrent.TimeUnit
 object AmeliaSubscriptionClient {
 
     sealed class Result {
-        data class Ok(val body: String, val info: AmeliaSubInfo, val baseUrl: String) : Result()
+        data class Ok(
+            val body: String,
+            val info: AmeliaSubInfo,
+            val baseUrl: String,
+            val route: AmeliaHttp.Route = AmeliaHttp.Route.DIRECT,
+        ) : Result()
         /** A server answered 404 and none answered with a subscription: no such key. */
         data object UnknownKey : Result()
         /** No server could be reached or all returned errors. */
@@ -38,7 +43,7 @@ object AmeliaSubscriptionClient {
         var sawNotFound = false
         for (a in plan) {
             when (val r = attempt(a)) {
-                is Attempt.Ok -> return Result.Ok(r.body, r.info, a.base)
+                is Attempt.Ok -> return Result.Ok(r.body, r.info, a.base, a.route)
                 Attempt.NotFound -> sawNotFound = true
                 Attempt.Failed -> Unit
             }

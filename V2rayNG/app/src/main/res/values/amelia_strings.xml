@@ -43,15 +43,11 @@
     <string name="amelia_act_support">Поддержка</string>
     <string name="amelia_act_help">Помощь</string>
     <string name="amelia_act_group">Наша группа</string>
-    <string name="amelia_days_left">осталось %1$d дн.</string>
     <string name="amelia_renew">Продлить</string>
 
     <string name="amelia_traffic_left">Осталось %1$s из %2$s</string>
     <string name="amelia_traffic_unlimited">Трафик без ограничений</string>
     <string name="amelia_traffic_used">Израсходовано %1$s</string>
-    <string name="amelia_expire_until">Действует до %1$s</string>
-    <string name="amelia_expire_never">Бессрочно</string>
-    <string name="amelia_expired">Подписка закончилась %1$s</string>
 
     <string name="amelia_menu">Меню</string>
     <string name="amelia_menu_refresh">Обновить локации</string>
@@ -65,7 +61,6 @@
     <string name="amelia_cancel">Отмена</string>
 
     <string name="amelia_about_title">О приложении</string>
-    <string name="amelia_about_text">Amelia.Net %1$s\n\nПриложение основано на v2rayNG %2$s (© 2dust и участники проекта) и ядре Xray. Распространяется по лицензии GNU GPL v3: вы можете получить, изменять и распространять его исходный код на тех же условиях.</string>
     <string name="amelia_about_source">Исходный код</string>
     <string name="amelia_about_upstream">v2rayNG</string>
     <string name="amelia_close">Закрыть</string>
@@ -134,4 +129,91 @@
     <string name="amelia_unit_mb">МБ</string>
     <string name="amelia_unit_gb">ГБ</string>
     <string name="amelia_unit_tb">ТБ</string>
+
+    <!-- 1.1.0: about -->
+    <string name="amelia_version_full">Amelia.Net %1$s (код версии %2$d)</string>
+    <string name="amelia_about_versions">Версии</string>
+    <string name="amelia_about_data">Данные</string>
+    <string name="amelia_about_xray">Xray-core %1$s</string>
+    <string name="amelia_about_xray_build">по данным сборки</string>
+    <string name="amelia_about_hy2">Hysteria2: встроен в Xray-core %1$s</string>
+    <string name="amelia_about_hev">hev-socks5-tunnel %1$s</string>
+    <string name="amelia_about_android">Android %1$s · %2$s</string>
+    <string name="amelia_about_geoip">База адресов (geoip): %1$s</string>
+    <string name="amelia_about_geosite">База сайтов (geosite): %1$s</string>
+    <string name="amelia_about_sub_direct">Подписка обновлена %1$s с сервера %2$s</string>
+    <string name="amelia_about_sub_tunnel">Подписка обновлена %1$s с сервера %2$s (через VPN)</string>
+    <string name="amelia_about_backup">запасной</string>
+    <string name="amelia_about_update_never">Обновления приложения ещё не проверялись</string>
+    <string name="amelia_about_update_no_answer">Проверка обновлений %1$s: сервер не ответил</string>
+    <string name="amelia_about_update_bad">Проверка обновлений %1$s: сервер прислал неверный ответ</string>
+    <string name="amelia_about_update_answer">Проверка обновлений %1$s: на сервере версия %2$s (%3$d), ответил %4$s</string>
+    <string name="amelia_about_network">Сеть: %1$s</string>
+    <string name="amelia_about_bypass_on">Российские приложения мимо VPN: да (%1$d в списке)</string>
+    <string name="amelia_about_bypass_off">Российские приложения мимо VPN: нет</string>
+    <string name="amelia_about_probe_on">Помогать находить блокировки: да</string>
+    <string name="amelia_about_probe_off">Помогать находить блокировки: нет</string>
+    <string name="amelia_about_copy">Скопировать для поддержки</string>
+    <string name="amelia_about_copied">Скопировано. Вставьте в чат с @amelianet_bot</string>
+    <string name="amelia_about_loading">Собираю данные…</string>
+    <string name="amelia_about_license">Приложение основано на v2rayNG %1$s (© 2dust и участники проекта) и ядре Xray. Лицензия GNU GPL v3: исходный код открыт, его можно получить, изменять и распространять на тех же условиях.</string>
+    <string name="amelia_clip_label">Amelia.Net</string>
+
+    <!-- 1.1.0: blocking map -->
+    <string name="amelia_probe_title">Помогать находить блокировки</string>
+    <string name="amelia_probe_text">Иногда приложение сообщает нам, какие наши серверы открываются в вашей сети. Отправляется: случайный номер установки (не связан с подпиской), версия приложения, тип сети (Wi-Fi или мобильная), название оператора и по каждому серверу — адрес, порт, работает ли он и задержка. Ключ, номер телефона, названия локаций и сайты, которые вы открываете, не отправляются.</string>
+
+    <!-- 1.1.0: Russian apps around the VPN -->
+    <string name="amelia_apps_title">Российские приложения — мимо VPN</string>
+    <string name="amelia_apps_text">Приложения из списка работают без VPN, как обычно: банки, Госуслуги и маркетплейсы не видят, что VPN включён.</string>
+    <string name="amelia_apps_choose">Выбрать приложения (%1$d в списке)</string>
+    <string name="amelia_apps_screen_title">Мимо VPN</string>
+    <string name="amelia_apps_hint">Отмеченные приложения работают без VPN. Если VPN включён, он переподключится, когда вы закроете этот список.</string>
+    <string name="amelia_apps_builtin">из нашего списка</string>
+    <string name="amelia_apps_search">Найти приложение</string>
+
+    <!-- 1.1.0: problem report -->
+    <string name="amelia_menu_report">Не работает — сообщить</string>
+    <string name="amelia_report_button">Не работает — сообщить</string>
+    <string name="amelia_report_title">Проверка локаций</string>
+    <string name="amelia_report_testing">Проверяю все локации… %1$d из %2$d</string>
+    <string name="amelia_report_working">Работают: %1$s</string>
+    <string name="amelia_report_failing">Не работают: %1$s</string>
+    <string name="amelia_report_none_working">Ни одна локация не ответила.</string>
+    <string name="amelia_report_all_working">Все локации работают.</string>
+    <string name="amelia_report_no_connect">не соединяется</string>
+    <string name="amelia_report_no_data">соединяется, но данные не идут</string>
+    <string name="amelia_report_comment">Что случилось? (необязательно)</string>
+    <string name="amelia_report_send">Отправить в поддержку</string>
+    <string name="amelia_report_sending">Отправляю…</string>
+    <string name="amelia_report_sent">Отчёт №%1$s отправлен, ответ придёт в боте @amelianet_bot</string>
+    <string name="amelia_report_failed">Не получилось отправить отчёт. Мы скопировали его — вставьте в чат с ботом.</string>
+    <string name="amelia_report_open_bot">Открыть @amelianet_bot</string>
+    <string name="amelia_report_retry">Попробовать ещё раз</string>
+
+    <!-- 1.1.0: subscription end -->
+    <string name="amelia_sub_until">Подписка до %1$s · %2$s</string>
+    <string name="amelia_sub_last_day">Подписка до %1$s · последний день</string>
+    <string name="amelia_sub_ended">Подписка закончилась</string>
+    <plurals name="amelia_days_left_plural">
+        <item quantity="one">остался %1$d день</item>
+        <item quantity="few">осталось %1$d дня</item>
+        <item quantity="many">осталось %1$d дней</item>
+        <item quantity="other">осталось %1$d дня</item>
+    </plurals>
+    <string name="amelia_expiry_channel">Подписка</string>
+    <string name="amelia_expiry_3_days">Подписка закончится через 3 дня</string>
+    <string name="amelia_expiry_1_day">Подписка закончится завтра</string>
+    <string name="amelia_expiry_today">Подписка заканчивается сегодня</string>
+    <string name="amelia_expiry_ended">Подписка закончилась</string>
+    <string name="amelia_expiry_text">Действует до %1$s. Продлить можно в @amelianet_bot.</string>
+
+    <!-- 1.1.0: announcement, always-on VPN -->
+    <string name="amelia_announce_close">Закрыть объявление</string>
+    <string name="amelia_alwayson_title">Чтобы VPN не выключался сам</string>
+    <string name="amelia_alwayson_text">Включите «Постоянный VPN» для Amelia.Net в настройках Android. Тогда система сама включит VPN после перезагрузки или сбоя.</string>
+    <string name="amelia_alwayson_open">Открыть настройки</string>
+    <string name="amelia_alwayson_later">Не сейчас</string>
+    <string name="amelia_alwayson_setting">Постоянный VPN</string>
+    <string name="amelia_alwayson_setting_text">Чтобы VPN не выключался сам — включите «Постоянный VPN» в настройках Android.</string>
 </resources>

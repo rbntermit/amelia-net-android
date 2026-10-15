@@ -1,9 +1,12 @@
 package com.v2ray.ang.amelia
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.enableEdgeToEdge
@@ -49,6 +52,7 @@ class AmeliaActivity : HelperBaseComponentActivity() {
             AmeliaRouting.apply(applicationContext)
             AmeliaGeoUpdater.schedule(applicationContext)
             AmeliaUpdateWorker.schedule(applicationContext)
+            AmeliaProbe.schedule(applicationContext)
         }
         checkAndRequestPermission(PermissionType.POST_NOTIFICATIONS) {}
         if (savedInstanceState == null) handleDeepLink(intent)
@@ -94,7 +98,45 @@ class AmeliaActivity : HelperBaseComponentActivity() {
                 onCheckRoute = viewModel::checkRoute,
                 onRefreshSubscription = { viewModel.refresh() },
             ),
+            extra = ExtraCallbacks(
+                onOpenAbout = viewModel::loadAbout,
+                onCopySupport = { viewModel.supportText()?.let { copy(it) } },
+                onCopyText = ::copy,
+                onStartReport = viewModel::startReport,
+                onSendReport = viewModel::sendReport,
+                onCloseReport = viewModel::closeReport,
+                onBypassRu = viewModel::setBypassRu,
+                onOpenApps = viewModel::loadApps,
+                onAppBypass = viewModel::setAppBypass,
+                onAppsClosed = viewModel::appsClosed,
+                onProbe = viewModel::setProbeEnabled,
+                onDismissAnnounce = viewModel::dismissAnnounce,
+                onAlwaysOnSettings = ::openVpnSettings,
+                onAlwaysOnHintDone = viewModel::alwaysOnHintDone,
+            ),
         )
+    }
+
+    override fun onResume() {
+        super.onResume()
+        viewModel.onResume()
+    }
+
+    /** Puts [text] on the clipboard and says so (support text, or a report the server did not take). */
+    private fun copy(text: String) {
+        val cm = getSystemService(ClipboardManager::class.java) ?: return
+        cm.setPrimaryClip(ClipData.newPlainText(getString(R.string.amelia_clip_label), text))
+        viewModel.showMessage(R.string.amelia_about_copied)
+    }
+
+    /** System VPN settings, where "Always-on VPN" is switched on for this app. */
+    private fun openVpnSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_VPN_SETTINGS))
+        } catch (e: Exception) {
+            LogUtil.e(AppConfig.TAG, "Amelia: cannot open the VPN settings", e)
+            startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS))
+        }
     }
 
     private fun installUpdate(apkPath: String) {

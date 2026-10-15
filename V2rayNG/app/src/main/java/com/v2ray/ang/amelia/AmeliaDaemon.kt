@@ -108,6 +108,8 @@ object AmeliaDaemon {
         if (startedAt == 0L) startedAt = System.currentTimeMillis()
         lastTraffic = Traffic(totalUp, totalDown, 0, 0, startedAt)
         startWatch(service, FIRST_CHECK_DELAY_MS)
+        // The native library is loaded here anyway: cache the core's own version for the app
+        scope.launch { AmeliaVersions.xray() }
     }
 
     fun onCoreStopped() {
@@ -182,6 +184,7 @@ object AmeliaDaemon {
             }
             persist()
             report(service, Health(Phase.CONNECTED.name, ms, MmkvManager.getSelectServer()))
+            AmeliaProbe.recordDaemon(service, MmkvManager.getSelectServer(), ms, AmeliaPingStage.OK)
             return CHECK_INTERVAL_MS
         }
 
@@ -192,7 +195,12 @@ object AmeliaDaemon {
                 report(service, Health(Phase.NO_INTERNET.name, guid = MmkvManager.getSelectServer()))
                 NO_INTERNET_RETRY_MS
             }
-            AmeliaFailover.Verdict.SWITCH -> switchToNext(service)
+            AmeliaFailover.Verdict.SWITCH -> {
+                // the phone is online, so this location is what fails: note it for the blocking map
+                val guid = MmkvManager.getSelectServer()
+                AmeliaProbe.recordDaemon(service, guid, -1L, AmeliaFailover.failureStage(guid))
+                switchToNext(service)
+            }
         }
     }
 

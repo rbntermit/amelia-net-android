@@ -88,6 +88,27 @@ object AmeliaUpdater {
         return ALLOWED_HOSTS.any { host == it || host.endsWith(".$it") }
     }
 
+    private const val PREF_LAST_ANSWER = "amelia_update_last_answer"
+
+    /**
+     * What the last check got, for "О программе": [ok] = false when no server answered;
+     * otherwise the newest version the server offers (null when its version.json was invalid).
+     */
+    data class CheckAnswer(
+        val at: Long = 0L,
+        val ok: Boolean = false,
+        val versionName: String? = null,
+        val versionCode: Int? = null,
+        val base: String? = null,
+        val route: String? = null,
+    )
+
+    fun lastAnswer(): CheckAnswer? =
+        MmkvManager.decodeSettingsString(PREF_LAST_ANSWER)?.takeIf { it.isNotBlank() }
+            ?.let { JsonUtil.fromJsonSafe(it, CheckAnswer::class.java) }
+
+    private fun saveAnswer(a: CheckAnswer) = MmkvManager.encodeSettings(PREF_LAST_ANSWER, JsonUtil.toJson(a))
+
     /** Epoch millis of the last successful check, 0 if never. */
     fun lastCheck(): Long = MmkvManager.decodeSettingsString(PREF_LAST_CHECK)?.toLongOrNull() ?: 0L
 
@@ -106,9 +127,12 @@ object AmeliaUpdater {
             try {
                 AmeliaHttp.clientFor(a.route).newCall(AmeliaHttp.get(a.base + VERSION_PATH)).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
-                    MmkvManager.encodeSettings(PREF_LAST_CHECK, System.currentTimeMillis().toString())
+                    val now = System.currentTimeMillis()
+                    MmkvManager.encodeSettings(PREF_LAST_CHECK, now.toString())
                     AmeliaHttp.rememberBase(a.base)
-                    val v = parse(resp.body.string())?.takeIf { it.versionCode > BuildConfig.VERSION_CODE }
+                    val latest = parse(resp.body.string())
+                    saveAnswer(CheckAnswer(now, true, latest?.versionName, latest?.versionCode, a.base, a.route.name))
+                    val v = latest?.takeIf { it.versionCode > BuildConfig.VERSION_CODE }
                     MmkvManager.encodeSettings(PREF_CACHED, v?.let { JsonUtil.toJson(it) } ?: "")
                     return v
                 }
@@ -116,6 +140,7 @@ object AmeliaUpdater {
                 LogUtil.w(AppConfig.TAG, "Amelia: update check failed at ${a.base} (${a.route})", e)
             }
         }
+        saveAnswer(CheckAnswer(System.currentTimeMillis(), false))
         return null
     }
 

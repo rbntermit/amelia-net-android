@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.v2ray.ang.R
 import com.v2ray.ang.core.LauncherManager
+import com.v2ray.ang.handler.MmkvManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -15,6 +16,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+/** Set once the always-on VPN hint was shown (or dismissed). */
+private const val PREF_ALWAYS_ON_HINT = "amelia_always_on_hint"
 
 /** Upper bound for a "ping all" round; the core gives up on each location after ~12 s. */
 private const val PING_ALL_TIMEOUT_MS = 120_000L
@@ -76,6 +80,23 @@ data class AmeliaUiState(
     val updateProgress: Int? = null,
     /** Verified APK ready to install. */
     val updateApkPath: String? = null,
+    // ---- 1.1.0 ----
+    /** "О программе" facts, loaded when the screen opens. */
+    val about: AmeliaAbout.Info? = null,
+    /** "Не работает — сообщить" flow; null when closed. */
+    val report: ReportUi? = null,
+    /** The last start failed (shown until the next connect). */
+    val startFailed: Boolean = false,
+    val bypassRu: Boolean = true,
+    /** Installed apps for the picker; null until loaded. */
+    val apps: List<AppRow>? = null,
+    val probeEnabled: Boolean = true,
+    /** Fingerprint of the announcement the person closed. */
+    val announceDismissed: String? = null,
+    /** Once after the first connection: how to keep the VPN on (always-on VPN). */
+    val showAlwaysOnHint: Boolean = false,
+    /** How many packages go around the VPN (built-in list with the person's changes). */
+    val bypassCount: Int = 0,
 ) {
     val selectedName: String?
         get() = locations.firstOrNull { it.guid == selectedGuid }?.name
@@ -83,7 +104,50 @@ data class AmeliaUiState(
     /** Installed version is below the server's minVersionCode: no connecting until updated. */
     val updateRequired: Boolean
         get() = AmeliaUpdater.isRequired(update)
+
+    /** Our announcement to show above the locations, unless the person closed this text. */
+    val announce: String?
+        get() = AmeliaAnnounce.visible(info?.announce, announceDismissed)
+
+    /**
+     * "Не работает — сообщить" on the main screen: the connection failed, or it is up but no
+     * data has come through it for [NO_TRAFFIC_MS]. The menu always has it.
+     */
+    val showReportButton: Boolean
+        get() = startFailed || phase == ConnPhase.NO_INTERNET || phase == ConnPhase.ALL_FAILED ||
+            (isRunning && traffic != null && traffic.down == 0L &&
+                System.currentTimeMillis() - traffic.startedAt > NO_TRAFFIC_MS)
 }
+
+/** Connected this long without a single byte down counts as "no traffic". */
+const val NO_TRAFFIC_MS = 20_000L
+
+enum class ReportPhase {
+    /** Every location is being checked. */
+    TESTING,
+    /** Results shown, waiting for "Отправить в поддержку". */
+    RESULT,
+    SENDING,
+    SENT,
+    /** No server took the report: copy it and open the bot. */
+    FAILED,
+}
+
+data class ReportUi(
+    val phase: ReportPhase = ReportPhase.TESTING,
+    val total: Int = 0,
+    val checks: Map<String, AmeliaReport.Check> = emptyMap(),
+    val servers: List<AmeliaReport.Server> = emptyList(),
+    val reportId: String? = null,
+    /** Report as text for the bot, when sending failed. */
+    val fallbackText: String? = null,
+) {
+    val working: List<String> get() = AmeliaReport.split(servers).first
+    val failing: List<String> get() = AmeliaReport.split(servers).second
+}
+
+/** One installed app in the "мимо VPN" picker. */
+data class AppRow(val pkg: String, val label: String, val bypass: Boolean, val builtIn: Boolean)
 
 class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -129,6 +193,197 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 showMessage(if (answered) R.string.amelia_update_none else R.string.amelia_update_check_failed)
             }
         }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // "О программе"
+    // ---------------------------------------------------------------------------------------
+
+    fun loadAbout() {
+        viewModelScope.launch {
+            val info = withContext(Dispatchers.IO) { AmeliaAbout.load(getApplication()) }
+            _state.update { it.copy(about = info) }
+        }
+    }
+
+    fun supportText(): String? = _state.value.about?.let { AmeliaAbout.supportText(getApplication(), it) }
+
+    // ---------------------------------------------------------------------------------------
+    // "Не работает — сообщить"
+    // ---------------------------------------------------------------------------------------
+
+    private var reportRequestId: String? = null
+    private var reportJob: Job? = null
+
+    /** Checks every location with a real request through it, at most [AmeliaReport.TEST_TIMEOUT_MS]. */
+    fun startReport() {
+        val locations = _state.value.locations
+        if (_state.value.pinging) {
+            serviceEvents.cancelPingAll()
+            finishPing()
+        }
+        val id = java.util.UUID.randomUUID().toString()
+        reportRequestId = id
+        _state.update { it.copy(report = ReportUi(ReportPhase.TESTING, total = locations.size)) }
+        if (locations.isEmpty()) {
+            finishReportTest(id)
+            return
+        }
+        serviceEvents.requestPingAll(id, AmeliaConfig.SUBSCRIPTION_ID)
+        reportJob?.cancel()
+        reportJob = viewModelScope.launch {
+            delay(AmeliaReport.TEST_TIMEOUT_MS)
+            if (reportRequestId == id) {
+                serviceEvents.cancelPingAll()
+                finishReportTest(id)
+            }
+        }
+    }
+
+    private fun onReportPing(e: AmeliaServiceEvents.Event.Ping) {
+        val check = AmeliaReport.Check(e.guid, e.delayMs, e.stage ?: AmeliaPingStage.classify(e.delayMs, null, e.error), e.error)
+        _state.update { s ->
+            val r = s.report ?: return@update s
+            s.copy(report = r.copy(checks = r.checks + (e.guid to check)), pings = s.pings + (e.guid to e.delayMs))
+        }
+        val r = _state.value.report ?: return
+        if (r.checks.size >= r.total) finishReportTest(e.requestId)
+    }
+
+    private fun finishReportTest(id: String) {
+        if (reportRequestId != id) return
+        reportRequestId = null
+        reportJob?.cancel()
+        viewModelScope.launch {
+            val servers = withContext(Dispatchers.IO) {
+                AmeliaReport.servers(AmeliaReport.locations(), _state.value.report?.checks.orEmpty())
+            }
+            _state.update { s -> s.copy(report = s.report?.copy(phase = ReportPhase.RESULT, servers = servers)) }
+            // With the VPN on, let the daemon move to a location that works
+            val s = _state.value
+            if (s.isRunning && s.phase != ConnPhase.CONNECTED && servers.any { it.ok }) recheck()
+        }
+    }
+
+    fun sendReport(comment: String) {
+        val r = _state.value.report ?: return
+        if (r.phase != ReportPhase.RESULT && r.phase != ReportPhase.FAILED) return
+        _state.update { it.copy(report = r.copy(phase = ReportPhase.SENDING)) }
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            val key = AmeliaManager.getKey().orEmpty()
+            val active = _state.value.selectedName
+            val id = withContext(Dispatchers.IO) { AmeliaReport.send(app, key, r.servers, active, comment) }
+            if (id != null) {
+                _state.update { it.copy(report = it.report?.copy(phase = ReportPhase.SENT, reportId = id)) }
+            } else {
+                val text = withContext(Dispatchers.IO) {
+                    AmeliaReport.plainText(
+                        AmeliaReport.body(app, key, r.servers, active, comment, AmeliaNetwork.info(app), AmeliaNetwork.PATH_DIRECT),
+                    )
+                }
+                _state.update { it.copy(report = it.report?.copy(phase = ReportPhase.FAILED, fallbackText = text)) }
+            }
+        }
+    }
+
+    fun closeReport() {
+        if (reportRequestId != null) {
+            reportRequestId = null
+            reportJob?.cancel()
+            serviceEvents.cancelPingAll()
+        }
+        _state.update { it.copy(report = null) }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Russian apps around the VPN, blocking map, hints
+    // ---------------------------------------------------------------------------------------
+
+    /** Turning the list on or off applies when the VPN starts, so a running VPN is restarted. */
+    fun setBypassRu(enabled: Boolean) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { AmeliaApps.setEnabled(enabled) }
+            _state.update { it.copy(bypassRu = enabled) }
+            restartIfRunning()
+        }
+    }
+
+    private var appsChanged = false
+
+    fun loadApps() {
+        viewModelScope.launch {
+            val rows = withContext(Dispatchers.IO) { installedApps() }
+            _state.update { it.copy(apps = rows) }
+        }
+    }
+
+    fun setAppBypass(pkg: String, bypass: Boolean) {
+        appsChanged = true
+        _state.update { s -> s.copy(apps = s.apps?.map { if (it.pkg == pkg) it.copy(bypass = bypass) else it }) }
+        viewModelScope.launch {
+            val count = withContext(Dispatchers.IO) {
+                AmeliaApps.setBypass(pkg, bypass)
+                AmeliaApps.bypassed().size
+            }
+            _state.update { it.copy(bypassCount = count) }
+        }
+    }
+
+    /** The picker was closed: changes reach a running VPN with one restart. */
+    fun appsClosed() {
+        if (!appsChanged) return
+        appsChanged = false
+        restartIfRunning()
+    }
+
+    private fun restartIfRunning() {
+        if (!_state.value.isRunning) return
+        expectRestart = true
+        _state.update { it.copy(phase = ConnPhase.STARTING, pingMs = null) }
+        LauncherManager.restartService(getApplication())
+    }
+
+    private fun installedApps(): List<AppRow> {
+        val app = getApplication<Application>()
+        val pm = app.packageManager
+        val bypassed = AmeliaApps.bypassed()
+        val intent = android.content.Intent(android.content.Intent.ACTION_MAIN)
+            .addCategory(android.content.Intent.CATEGORY_LAUNCHER)
+        return AmeliaPackages.launcherActivities(pm, intent)
+            .map { it.activityInfo.packageName to it.loadLabel(pm).toString() }
+            .filter { it.first != app.packageName }
+            .distinctBy { it.first }
+            .map { (pkg, label) -> AppRow(pkg, label, pkg in bypassed, pkg in AmeliaApps.BUILT_IN_PACKAGES) }
+            .sortedWith(compareByDescending<AppRow> { it.bypass }.thenBy { it.label.lowercase() })
+    }
+
+    fun setProbeEnabled(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) { AmeliaProbe.setEnabled(enabled) }
+        _state.update { it.copy(probeEnabled = enabled) }
+    }
+
+    fun dismissAnnounce() {
+        val text = _state.value.announce ?: return
+        viewModelScope.launch(Dispatchers.IO) { AmeliaAnnounce.dismiss(text) }
+        _state.update { it.copy(announceDismissed = AmeliaAnnounce.fingerprint(text)) }
+    }
+
+    fun alwaysOnHintDone() {
+        viewModelScope.launch(Dispatchers.IO) { MmkvManager.encodeSettings(PREF_ALWAYS_ON_HINT, true) }
+        _state.update { it.copy(showAlwaysOnHint = false) }
+    }
+
+    private var lastResumeRefresh = 0L
+
+    /** Back from the bot after paying: if the end was near, see whether it moved. */
+    fun onResume() {
+        val s = _state.value
+        val now = System.currentTimeMillis()
+        if (!s.hasKey || s.busy || now - lastResumeRefresh < 60_000L) return
+        if (!AmeliaExpiry.needsRefresh(s.info, now)) return
+        lastResumeRefresh = now
+        refresh(silent = true)
     }
 
     // ---------------------------------------------------------------------------------------
@@ -270,7 +525,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Called by the activity right before it starts the VPN. */
     fun onUserConnect() {
-        _state.update { it.copy(phase = ConnPhase.STARTING, pingMs = null) }
+        _state.update { it.copy(phase = ConnPhase.STARTING, pingMs = null, startFailed = false) }
     }
 
     /** Called by the activity right before it stops the VPN. */
@@ -286,6 +541,8 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         serviceEvents.requestRecheck()
     }
 
+    private var alwaysOnHintChecked = false
+
     private fun onHealth(h: AmeliaDaemon.Health) {
         val phase = when (h.phase) {
             AmeliaDaemon.Phase.CHECKING.name -> ConnPhase.CHECKING
@@ -296,6 +553,13 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             else -> return
         }
         if (phase == ConnPhase.SWITCHING) expectRestart = true
+        if (phase == ConnPhase.CONNECTED && !alwaysOnHintChecked) {
+            alwaysOnHintChecked = true
+            viewModelScope.launch {
+                val shown = withContext(Dispatchers.IO) { MmkvManager.decodeSettingsBool(PREF_ALWAYS_ON_HINT, false) }
+                if (!shown) _state.update { it.copy(showAlwaysOnHint = true) }
+            }
+        }
         _state.update {
             it.copy(
                 phase = phase,
@@ -349,7 +613,11 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 info = AmeliaManager.getSubInfo(),
                 subUpdatedAt = AmeliaManager.lastSubscriptionUpdate(),
                 pings = AmeliaManager.getPings(),
-            )
+                bypassRu = AmeliaApps.isEnabled(),
+                bypassCount = AmeliaApps.bypassed().size,
+                probeEnabled = AmeliaProbe.isEnabled(),
+                announceDismissed = AmeliaAnnounce.dismissed(),
+            ).also { AmeliaExpiry.check(getApplication(), it.info) }
         }
         _state.update {
             it.copy(
@@ -361,6 +629,10 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 subUpdatedAt = snapshot.subUpdatedAt,
                 // keep live results while a ping round is running
                 pings = if (it.pinging) it.pings else snapshot.pings,
+                bypassRu = snapshot.bypassRu,
+                bypassCount = snapshot.bypassCount,
+                probeEnabled = snapshot.probeEnabled,
+                announceDismissed = snapshot.announceDismissed,
             )
         }
     }
@@ -385,7 +657,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             is AmeliaServiceEvents.Event.StartFailed -> {
                 expectRestart = false
                 _state.update {
-                    it.copy(isRunning = false, phase = ConnPhase.OFF, pingMs = null, messageText = event.message)
+                    it.copy(isRunning = false, phase = ConnPhase.OFF, pingMs = null, messageText = event.message, startFailed = true)
                 }
             }
 
@@ -393,11 +665,15 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
 
             is AmeliaServiceEvents.Event.Traffic -> _state.update { it.copy(traffic = event.traffic) }
 
-            is AmeliaServiceEvents.Event.Ping -> if (event.requestId == pingRequestId) {
-                _state.update { it.copy(pings = it.pings + (event.guid to event.delayMs)) }
+            is AmeliaServiceEvents.Event.Ping -> when (event.requestId) {
+                pingRequestId -> _state.update { it.copy(pings = it.pings + (event.guid to event.delayMs)) }
+                reportRequestId -> onReportPing(event)
             }
 
-            is AmeliaServiceEvents.Event.PingDone -> if (event.requestId == pingRequestId) finishPing()
+            is AmeliaServiceEvents.Event.PingDone -> when (event.requestId) {
+                pingRequestId -> finishPing()
+                reportRequestId -> finishReportTest(event.requestId)
+            }
         }
     }
 

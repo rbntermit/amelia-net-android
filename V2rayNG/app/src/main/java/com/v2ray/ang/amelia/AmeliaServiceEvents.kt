@@ -33,7 +33,14 @@ class AmeliaServiceEvents(private val context: Context) : Closeable {
         /** Session traffic from the daemon, every few seconds while the screen is on. */
         data class Traffic(val traffic: AmeliaDaemon.Traffic) : Event()
         /** "Ping all": one location measured (delay in ms, -1 = no answer). */
-        data class Ping(val requestId: String, val guid: String, val delayMs: Long) : Event()
+        data class Ping(
+            val requestId: String,
+            val guid: String,
+            val delayMs: Long,
+            /** See AmeliaPingStage; null from an older test service. */
+            val stage: String? = null,
+            val error: String? = null,
+        ) : Event()
         /** "Ping all" finished or was cancelled. */
         data class PingDone(val requestId: String) : Event()
     }
@@ -74,7 +81,9 @@ class AmeliaServiceEvents(private val context: Context) : Closeable {
                 AmeliaConfig.MSG_TRAFFIC ->
                     intent.serializable<AmeliaDaemon.Traffic>("content")?.let { Event.Traffic(it) }
                 AppConfig.MSG_MEASURE_CONFIG_SUCCESS -> intent.serializable<RealPingResult>("content")?.let {
-                    Event.Ping(intent.getStringExtra(MessageHelper.EXTRA_REQUEST_ID).orEmpty(), it.guid, it.delayMillis)
+                    Event.Ping(
+                        intent.getStringExtra(MessageHelper.EXTRA_REQUEST_ID).orEmpty(), it.guid, it.delayMillis, it.stage, it.error,
+                    )
                 }
                 AppConfig.MSG_MEASURE_CONFIG_FINISH, AppConfig.MSG_MEASURE_CONFIG_CANCEL ->
                     Event.PingDone(intent.getStringExtra(MessageHelper.EXTRA_REQUEST_ID).orEmpty())

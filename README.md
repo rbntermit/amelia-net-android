@@ -62,8 +62,60 @@ keytool -genkeypair -v -keystore amelia-release.jks -alias amelia -keyalg RSA -k
 ### Версии
 
 - `versionCode` / `versionName` — в `V2rayNG/app/build.gradle.kts`, поднимать при каждом релизе.
-- Ядро Xray — `LIBV2RAY_TAG` в workflow (релизы [AndroidLibXrayLite](https://github.com/2dust/AndroidLibXrayLite/releases)).
+- Ядра — в `deps.env`: `LIBV2RAY_TAG` (Xray-core, релизы [AndroidLibXrayLite](https://github.com/2dust/AndroidLibXrayLite/releases))
+  и `HEV_TAG` ([hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel/releases)). Их читают и сборка в CI, и
+  `build.gradle.kts` (версии видны в «О программе»). hysteria2 отдельно не собирается: его реализует Xray-core.
+- Раз в неделю workflow `deps-check` сравнивает их с последними релизами и, если есть новее, открывает
+  pull request с новыми версиями и запускает на его ветке сборку APK (если pull request открыть нельзя — issue).
+  Релиз он не выпускает.
 - `applicationId = com.ameliajustamelia.vpn` менять нельзя после первого выпуска.
+
+## Правила для ядер
+
+- **Ядро в приложении не старше серверного.** Версия Xray-core в `deps.env` не ниже, чем на серверах
+  (`xray version` на каждом сервере). Сначала выходит приложение с новым ядром, потом обновляются серверы.
+- **Новую функцию протокола на серверах включаем только после того, как вышла версия приложения с
+  ядром, которое её понимает** (и люди успели обновиться: смотрите версии в User-Agent у бота).
+- **Старые версии отсекаются через `minVersionCode`** в `version.json` на сервере: приложение ниже этой
+  версии не подключается и сразу предлагает обновиться (см. RELEASING.md).
+- **Контракт report/probe** — ниже; меняется только по согласованию с серверной частью.
+
+## Контракт report/probe
+
+Приложение отправляет POST на те же адреса, что и подписка, по порядку:
+`https://msk1.ameliajustamelia.com:9443`, `https://msk2.ameliajustamelia.com:9443`,
+`https://sub.ameliajustamelia.com:9443`. Тело — JSON, `Content-Type: application/json`, не больше 64 КБ.
+Сначала через обычную сеть телефона мимо VPN (`"path": "direct"`), если не вышло — через туннель
+(`"path": "tunnel"`). User-Agent: `AmeliaNet/<versionName> v2rayNG/<upstream> Xray/<версия ядра>`
+(начало `AmeliaNet/<версия>` не меняется: по нему бот считает установки).
+
+**POST /app/report** — кнопка «Не работает — сообщить»:
+
+```json
+{"key": "<sub_id подписки>", "ts": 1700000000, "app": "1.1.0", "code": 7, "xray": "26.10.10",
+ "hy2": "xray-26.10.10", "android": "14", "device": "Xiaomi 23053RN02Y", "tv": false,
+ "net": "mobile", "op": "MTS RUS", "path": "direct", "active": "<имя сервера, на котором был>",
+ "bypass_ru": true, "comment": "<до 500 символов>",
+ "servers": [{"name": "Нидерланды 1", "host": "79.137.192.178", "port": 2079, "ok": false, "ms": null,
+              "stage": "connect", "err": "<до 200 символов>"}]}
+```
+
+Ответ: `{"ok": true, "id": "R1234"}`. `net`: `mobile` | `wifi` | `other`. `stage`: `connect` — к
+серверу не соединиться; `data` — соединение есть, но запрос через сервер не проходит; `ok`.
+`hy2`: hysteria2 встроен в Xray-core, поэтому здесь `xray-<версия Xray-core>`.
+
+**POST /app/probe** — фоновые проверки для карты блокировок (переключатель «Помогать находить
+блокировки», включён по умолчанию):
+
+```json
+{"iid": "<случайный id установки>", "ts": 1700000000, "app": "1.1.0", "net": "mobile",
+ "op": "MTS RUS", "path": "direct",
+ "servers": [{"host": "79.137.192.178", "port": 2079, "ok": true, "ms": 230, "stage": "ok"}]}
+```
+
+Ответ: `{"ok": true}`, ошибки не показываются. Без имён серверов, ключа, UUID, номера телефона и
+сайтов. Отправка: не чаще раза в 6 часов на одну сеть; через 10 минут, если сервер, который работал,
+перестал (не чаще раза в час); один раз при смене сети (Wi-Fi ↔ мобильная, другой оператор).
 
 ## Локальная сборка
 

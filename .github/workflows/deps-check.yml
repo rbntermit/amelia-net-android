@@ -1,0 +1,130 @@
+name: Dependency check
+
+# Weekly (and on demand): are there newer Xray-core (AndroidLibXrayLite) or hev-socks5-tunnel
+# releases than deps.env pins? If so, a pull request with the new versions, and the Build APK
+# workflow is started on its branch. If a pull request cannot be made, an issue instead.
+# Never releases anything: a release is still a tag made by a person (RELEASING.md).
+# hysteria2 is built into Xray-core in this app; the latest apernet/hysteria release is only
+# listed for comparison with the servers.
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: write
+
+concurrency:
+  group: deps-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Compare with the latest releases
+        id: cmp
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cur_xray=$(grep -E '^LIBV2RAY_TAG=' deps.env | cut -d= -f2)
+          cur_hev=$(grep -E '^HEV_TAG=' deps.env | cut -d= -f2)
+          # "latest" = newest non-prerelease, non-draft release
+          new_xray=$(gh api repos/2dust/AndroidLibXrayLite/releases/latest --jq .tag_name)
+          new_hev=$(gh api repos/heiher/hev-socks5-tunnel/releases/latest --jq .tag_name)
+          hy=$(gh api repos/apernet/hysteria/releases/latest --jq .tag_name || echo "?")
+          xray_core=$(gh api 'repos/XTLS/Xray-core/releases?per_page=1' --jq '.[0].tag_name' || echo "?")
+          upstream=$(gh api 'repos/2dust/v2rayNG/releases?per_page=1' --jq '.[0].tag_name' || echo "?")
+
+          newer() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "${1#v}" "${2#v}" | sort -V | tail -n1)" = "${2#v}" ]; }
+          bump_xray=$(newer "$cur_xray" "$new_xray" && echo yes || echo no)
+          bump_hev=$(newer "$cur_hev" "$new_hev" && echo yes || echo no)
+          {
+            echo "cur_xray=$cur_xray"; echo "new_xray=$new_xray"; echo "bump_xray=$bump_xray"
+            echo "cur_hev=$cur_hev"; echo "new_hev=$new_hev"; echo "bump_hev=$bump_hev"
+            echo "hy=$hy"; echo "xray_core=$xray_core"; echo "upstream=$upstream"
+          } | tee -a "$GITHUB_OUTPUT"
+
+      - name: Pull request with the new versions (issue if that fails)
+        if: steps.cmp.outputs.bump_xray == 'yes' || steps.cmp.outputs.bump_hev == 'yes'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CUR_XRAY: ${{ steps.cmp.outputs.cur_xray }}
+          NEW_XRAY: ${{ steps.cmp.outputs.new_xray }}
+          BUMP_XRAY: ${{ steps.cmp.outputs.bump_xray }}
+          CUR_HEV: ${{ steps.cmp.outputs.cur_hev }}
+          NEW_HEV: ${{ steps.cmp.outputs.new_hev }}
+          BUMP_HEV: ${{ steps.cmp.outputs.bump_hev }}
+          HY: ${{ steps.cmp.outputs.hy }}
+          XRAY_CORE: ${{ steps.cmp.outputs.xray_core }}
+          UPSTREAM: ${{ steps.cmp.outputs.upstream }}
+        run: |
+          set -euo pipefail
+          to_xray=$([ "$BUMP_XRAY" = yes ] && echo "$NEW_XRAY" || echo "$CUR_XRAY")
+          to_hev=$([ "$BUMP_HEV" = yes ] && echo "$NEW_HEV" || echo "$CUR_HEV")
+          branch="deps/xray-${to_xray}-hev-${to_hev}"
+          title="Ядра: Xray-core ${to_xray}, hev-socks5-tunnel ${to_hev}"
+
+          if [ -n "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then
+            echo "A pull request for $branch is already open"; exit 0
+          fi
+          if [ -n "$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[].number')" ]; then
+            echo "An issue for these versions is already open"; exit 0
+          fi
+
+          body=$(mktemp)
+          cat > "$body" <<EOF
+          Найдены новые версии ядер (проверка deps-check).
+
+          | | было | стало |
+          |---|---|---|
+          | Xray-core (AndroidLibXrayLite) | ${CUR_XRAY} | ${to_xray} |
+          | hev-socks5-tunnel | ${CUR_HEV} | ${to_hev} |
+
+          Для сравнения: последний Xray-core — ${XRAY_CORE}, apernet/hysteria — ${HY} (в приложении hysteria2 встроен в Xray-core), upstream v2rayNG — ${UPSTREAM}.
+
+          Перед слиянием:
+          - сборка APK на ветке прошла (запущена автоматически, см. Actions);
+          - ядро в приложении не старше, чем на серверах (README, «Правила для ядер»);
+          - релиз сам не выпускается: тег ставится вручную по RELEASING.md.
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          sed -i "s/^LIBV2RAY_TAG=.*/LIBV2RAY_TAG=${to_xray}/; s/^HEV_TAG=.*/HEV_TAG=${to_hev}/" deps.env
+          git add deps.env
+          git commit -m "$title"
+
+          if git push --force origin "$branch" &&
+             gh pr create --head "$branch" --base "${{ github.event.repository.default_branch }}" \
+               --title "$title" --body-file "$body"; then
+            # Pull requests opened with GITHUB_TOKEN do not start workflows; a dispatch does.
+            gh workflow run build.yml --ref "$branch" || echo "::warning::Could not start Build APK on $branch"
+          else
+            echo "::warning::Could not open a pull request, opening an issue instead"
+            {
+              cat "$body"
+              echo
+              echo "Pull request создать не получилось (в настройках репозитория: Settings → Actions → General →"
+              echo "«Allow GitHub Actions to create and approve pull requests»). Изменение — две строки в deps.env:"
+              echo
+              echo '```'
+              echo "LIBV2RAY_TAG=${to_xray}"
+              echo "HEV_TAG=${to_hev}"
+              echo '```'
+              if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+                echo
+                echo "Ветка уже есть: ${{ github.server_url }}/${{ github.repository }}/compare/${branch}?expand=1"
+                gh workflow run build.yml --ref "$branch" || true
+              fi
+            } > "$body.issue"
+            gh issue create --title "$title" --body-file "$body.issue"
+          fi

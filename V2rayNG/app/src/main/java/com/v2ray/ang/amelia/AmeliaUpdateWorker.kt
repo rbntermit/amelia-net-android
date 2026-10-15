@@ -23,13 +23,30 @@ import java.util.concurrent.TimeUnit
 /**
  * Background update check every 6 hours (the app also checks on start, see AmeliaViewModel).
  * A new version is cached for the app and announced once with a notification.
+ * The same run reminds about the end of the subscription (AmeliaExpiry).
  */
 class AmeliaUpdateWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
+        checkSubscriptionEnd()
         val v = AmeliaUpdater.check() ?: return Result.success()
         if (AmeliaUpdater.markNotified(v)) notify(applicationContext, v)
         return Result.success()
+    }
+
+    /**
+     * Subscription reminders (AmeliaExpiry). Near or after the end the subscription is fetched
+     * again first, so a renewal made in the bot clears the reminder.
+     */
+    private fun checkSubscriptionEnd() {
+        try {
+            if (AmeliaManager.hasKey() && AmeliaExpiry.needsRefresh(AmeliaManager.getSubInfo(), System.currentTimeMillis())) {
+                AmeliaManager.refresh()
+            }
+            AmeliaExpiry.check(applicationContext, AmeliaManager.getSubInfo())
+        } catch (e: Exception) {
+            LogUtil.w(AppConfig.TAG, "Amelia: subscription end check failed", e)
+        }
     }
 
     companion object {

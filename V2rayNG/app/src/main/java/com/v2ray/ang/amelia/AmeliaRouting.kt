@@ -100,5 +100,7 @@ object AmeliaRouting {
         // "Ping all" must only measure: never delete or reorder the user's locations
         MmkvManager.encodeSettings(AppConfig.PREF_AUTO_REMOVE_INVALID_AFTER_TEST, false)
         MmkvManager.encodeSettings(AppConfig.PREF_AUTO_SORT_AFTER_TEST, false)
+        // Russian apps around the VPN (per-app exclusion), kept in sync with the person's list
+        AmeliaApps.apply()
     }
 }

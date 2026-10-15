@@ -84,6 +84,21 @@ object CoreNativeManager {
     }
 
     /**
+     * Amelia.Net: like [measureOutboundDelay], but keeps the core's error text, so the problem
+     * report can tell "does not connect" from "connects, but no data".
+     *
+     * @return delay in ms (or -1) and the error message when the test failed
+     */
+    fun measureOutboundDelayDetailed(config: String, testUrl: String): Pair<Long, String?> {
+        return try {
+            Libv2ray.measureOutboundDelay(config, testUrl) to null
+        } catch (e: Exception) {
+            LogUtil.w(AppConfig.TAG, "Failed to measure outbound delay: ${e.message}")
+            -1L to (e.message ?: e.javaClass.simpleName)
+        }
+    }
+
+    /**
      * Create a new core controller instance.
      *
      * @param handler The callback handler for core events

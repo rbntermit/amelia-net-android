@@ -1,6 +1,7 @@
 package com.v2ray.ang.service
 
 import android.content.Context
+import com.v2ray.ang.amelia.AmeliaPingStage
 import com.v2ray.ang.core.CoreConfigManager
 import com.v2ray.ang.core.CoreNativeManager
 import com.v2ray.ang.dto.RealPingEvent
@@ -62,9 +63,9 @@ class RealPingWorkerService(
             scope.launch {
                 runningCount.incrementAndGet()
                 try {
-                    val result = if (onlyTcp) startTcping(guid) else startRealPing(guid)
+                    val result = if (onlyTcp) RealPingEvent.Result(guid, startTcping(guid)) else startRealPing(guid)
                     if (scope.isActive) {
-                        onEvent(RealPingEvent.Result(guid, result))
+                        onEvent(result)
                     }
                 } catch (_: Throwable) {
                     // ignore
@@ -104,10 +105,15 @@ class RealPingWorkerService(
         }
     }
 
-    private suspend fun startRealPing(guid: String): Long {
-        val retFailure = -1L
+    /**
+     * Amelia.Net: also says at which stage a failed server stopped (see AmeliaPingStage):
+     * "connect" when the TCP handshake fails, otherwise from the core's error text.
+     */
+    private suspend fun startRealPing(guid: String): RealPingEvent.Result {
+        val retFailure = RealPingEvent.Result(guid, -1L, AmeliaPingStage.CONNECT, "no config")
 
         val config = MmkvManager.decodeServerConfig(guid) ?: return retFailure
+        var tcpOk: Boolean? = null
         if (!config.configType.isComplexType()
             && config.configType != EConfigType.HYSTERIA2
             && config.configType != EConfigType.WIREGUARD
@@ -119,17 +125,21 @@ class RealPingWorkerService(
             val port = config.serverPort.orEmpty().toInt()
             val tcpTime = SpeedtestManager.socketConnectTime(url, port, 1000)
             if (tcpTime <= -1L) {
-                return retFailure
+                return RealPingEvent.Result(guid, -1L, AmeliaPingStage.CONNECT, AmeliaPingStage.TCP_FAILED)
             }
+            tcpOk = true
         }
 
         val configResult = CoreConfigManager.getV2rayConfig4Speedtest(context, guid)
         if (!configResult.status) {
             return retFailure
         }
-        return RealPingExecutionLimiter.run(config.configType) {
-            CoreNativeManager.measureOutboundDelay(configResult.content, SettingsManager.getDelayTestUrl())
+        val (delay, error) = RealPingExecutionLimiter.run(config.configType) {
+            CoreNativeManager.measureOutboundDelayDetailed(configResult.content, SettingsManager.getDelayTestUrl())
         }
+        return RealPingEvent.Result(
+            guid, delay, AmeliaPingStage.classify(delay, tcpOk, error), error?.take(AmeliaPingStage.MAX_ERROR),
+        )
     }
 
     private fun startTcping(guid: String): Long {

@@ -72,6 +72,11 @@ class TProxyService(
             appendLine("tunnel:")
             appendLine("  mtu: ${SettingsManager.getVpnMtu()}")
             appendLine("  ipv4: ${vpnConfig.ipv4Client}")
+            // Amelia.Net, hev-socks5-tunnel 2.19.0+: "jumbo" sends TCP segments larger than the MTU
+            // into the tun and is meant for local delivery only. Keep packets within the MTU the
+            // VpnService was built with; TSO/USO stay on (hev uses them only if the kernel can).
+            appendLine("  offload:")
+            appendLine("    jumbo: false")
 
             if (MmkvManager.decodeSettingsBool(AppConfig.PREF_IPV6_ENABLED)) {
                 appendLine("  ipv6: '${vpnConfig.ipv6Client}'")

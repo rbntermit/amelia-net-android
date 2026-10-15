@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name" translatable="false">Amelia.Net</string>
     <string name="app_widget_name">Amelia.Net</string>
-    <string name="app_tile_name">Amelia.Net</string>
+    <string name="app_tile_name">Amelia</string>
     <string name="app_tile_first_use">Добавьте профиль в приложении перед использованием этой функции.</string>
     <string name="navigation_drawer_open">Открыть панель навигации</string>
     <string name="navigation_drawer_close">Закрыть панель навигации</string>

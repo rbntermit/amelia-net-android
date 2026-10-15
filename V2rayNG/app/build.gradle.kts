@@ -16,14 +16,20 @@ android {
         minSdk = 24
         targetSdk = 37
         // Bump both on every release (see RELEASING.md); the in-app updater compares versionCode.
-        versionCode = 6
-        versionName = "1.0.5"
+        versionCode = 7
+        versionName = "1.1.0"
         // Oldest versionCode that still works with the servers: goes to version.json as
         // minVersionCode. Older apps must update before they can connect. Raise it only when
         // a server-side change breaks old versions.
         val minVersionCode = 1
         buildConfigField("int", "MIN_VERSION_CODE", minVersionCode.toString())
         buildConfigField("String", "UPSTREAM_VERSION", "\"2.3.11\"")
+        // Native dependency versions from deps.env at the repository root (CI builds exactly these)
+        val deps = rootProject.file("../deps.env").takeIf { it.isFile }?.readLines().orEmpty()
+            .mapNotNull { line -> line.trim().takeIf { !it.startsWith("#") && "=" in it }?.split("=", limit = 2) }
+            .associate { (k, v) -> k.trim() to v.trim() }
+        buildConfigField("String", "XRAY_TAG", "\"${deps["LIBV2RAY_TAG"] ?: "unknown"}\"")
+        buildConfigField("String", "HEV_VERSION", "\"${deps["HEV_TAG"] ?: "unknown"}\"")
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
         splits {

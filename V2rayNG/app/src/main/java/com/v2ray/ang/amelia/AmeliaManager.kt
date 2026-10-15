@@ -55,6 +55,15 @@ object AmeliaManager {
         return load(key, AmeliaHttp.lastBase(), saveKeyOnSuccess = false)
     }
 
+    private const val PREF_SUB_SOURCE = "amelia_sub_source"
+
+    /** Address and route (TUNNEL / DIRECT) of the last successful subscription update. */
+    fun lastSubscriptionSource(): Pair<String, AmeliaHttp.Route>? {
+        val parts = MmkvManager.decodeSettingsString(PREF_SUB_SOURCE)?.split(' ') ?: return null
+        val route = parts.getOrNull(1)?.let { runCatching { AmeliaHttp.Route.valueOf(it) }.getOrNull() } ?: return null
+        return parts[0] to route
+    }
+
     /** Epoch millis of the last successful subscription update, 0 if never. */
     fun lastSubscriptionUpdate(): Long =
         MmkvManager.decodeSubscription(AmeliaConfig.SUBSCRIPTION_ID)?.lastUpdated?.takeIf { it > 0 } ?: 0L
@@ -66,6 +75,7 @@ object AmeliaManager {
         MmkvManager.removeSubscription(AmeliaConfig.SUBSCRIPTION_ID)
         MmkvManager.encodeSettings(AmeliaConfig.PREF_KEY, "")
         MmkvManager.encodeSettings(AmeliaConfig.PREF_SUB_INFO, "")
+        MmkvManager.encodeSettings(PREF_SUB_SOURCE, "")
     }
 
     private fun load(key: String, preferredBaseUrl: String?, saveKeyOnSuccess: Boolean): Outcome {
@@ -102,6 +112,7 @@ object AmeliaManager {
         sub.lastUpdated = System.currentTimeMillis()
         MmkvManager.encodeSubscription(AmeliaConfig.SUBSCRIPTION_ID, sub)
         MmkvManager.encodeSettings(AmeliaConfig.PREF_SUB_INFO, JsonUtil.toJson(info))
+        MmkvManager.encodeSettings(PREF_SUB_SOURCE, "${result.baseUrl} ${result.route.name}")
         if (saveKeyOnSuccess) {
             MmkvManager.encodeSettings(AmeliaConfig.PREF_KEY, key)
         }

@@ -78,7 +78,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -97,7 +97,7 @@ import kotlinx.coroutines.launch
 
 // ---- Brand palette, taken from the logo ------------------------------------------------------
 
-private object Brand {
+internal object Brand {
     val Night = Color(0xFF0B1336)
     val Navy = Color(0xFF1B2266)
     val Indigo = Color(0xFF483ED5)
@@ -153,13 +153,14 @@ fun AmeliaApp(
     onMessageShown: () -> Unit,
     updates: UpdateCallbacks,
     settings: SettingsCallbacks,
+    extra: ExtraCallbacks,
 ) {
     MaterialTheme(colorScheme = BrandColors) {
         val snackbar = remember { SnackbarHostState() }
-        val context = LocalContext.current
+        val resources = LocalResources.current
         val scope = rememberCoroutineScope()
         LaunchedEffect(state.message, state.messageText) {
-            val text = state.message?.let { context.getString(it) } ?: state.messageText
+            val text = state.message?.let { resources.getString(it) } ?: state.messageText
             if (text != null) {
                 // Shown in a separate scope: clearing the message restarts this effect.
                 scope.launch { snackbar.showSnackbar(text) }
@@ -168,18 +169,37 @@ fun AmeliaApp(
         }
         var showAbout by rememberSaveable { mutableStateOf(false) }
         var showSettings by rememberSaveable { mutableStateOf(false) }
+        var showApps by rememberSaveable { mutableStateOf(false) }
+        val openAbout = { extra.onOpenAbout(); showAbout = true }
 
         BrandBackground {
             when {
                 !state.loaded -> Unit
-                !state.hasKey -> KeyScreen(state.busy, onSubmitKey, onOpenUrl, onAbout = { showAbout = true })
+                showAbout -> {
+                    BackHandler { showAbout = false }
+                    AboutScreen(
+                        state.about, onBack = { showAbout = false }, onOpenUrl = onOpenUrl,
+                        onCopySupport = extra.onCopySupport, onCheckUpdate = updates.onCheck,
+                    )
+                }
+                !state.hasKey -> KeyScreen(state.busy, onSubmitKey, onOpenUrl, onAbout = openAbout)
+                showApps -> {
+                    val close = { showApps = false; extra.onAppsClosed() }
+                    BackHandler(onBack = close)
+                    AppsScreen(state.apps, extra.onAppBypass, onBack = close)
+                }
                 showSettings -> {
                     BackHandler { showSettings = false }
-                    SettingsScreen(state, updates, settings, onAbout = { showAbout = true }, onBack = { showSettings = false })
+                    SettingsScreen(
+                        state, updates, settings, extra,
+                        onAbout = openAbout,
+                        onOpenApps = { extra.onOpenApps(); showApps = true },
+                        onBack = { showSettings = false },
+                    )
                 }
                 else -> HomeScreen(
-                    state, onToggle, onSelect, onRefresh, onRecheck, onPingAll, onLogout, onOpenUrl, updates,
-                    onAbout = { showAbout = true },
+                    state, onToggle, onSelect, onRefresh, onRecheck, onPingAll, onLogout, onOpenUrl, updates, extra,
+                    onAbout = openAbout,
                     onSettings = { settings.onOpen(); showSettings = true },
                 )
             }
@@ -200,12 +220,14 @@ fun AmeliaApp(
                 onLater = if (state.updateRequired) null else ({ postponed = update.versionCode }),
             )
         }
-        if (showAbout) {
-            AboutDialog(
-                onOpenUrl,
-                onCheckUpdate = { showAbout = false; updates.onCheck() },
-                onDismiss = { showAbout = false },
+        state.report?.let { r ->
+            ReportDialog(
+                r, onSend = extra.onSendReport, onClose = extra.onCloseReport, onCopy = extra.onCopyText,
+                onOpenBot = { onOpenUrl(AmeliaConfig.botUrl(BotScreen.SUPPORT)) },
             )
+        }
+        if (state.showAlwaysOnHint && state.report == null) {
+            AlwaysOnHintDialog(onOpenSettings = extra.onAlwaysOnSettings, onDone = extra.onAlwaysOnHintDone)
         }
     }
 }
@@ -242,7 +264,7 @@ private object Avatar {
 }
 
 @Composable
-private fun AppMark(size: Int) {
+internal fun AppMark(size: Int) {
     Image(
         painter = painterResource(R.drawable.ic_amelia_logo),
         contentDescription = null,
@@ -252,7 +274,7 @@ private fun AppMark(size: Int) {
 
 /** Translucent card used everywhere on the brand background. */
 @Composable
-private fun Glass(
+internal fun Glass(
     modifier: Modifier = Modifier,
     tint: Color = Brand.Glass,
     onClick: (() -> Unit)? = null,
@@ -342,7 +364,7 @@ private fun KeyScreen(
 }
 
 @Composable
-private fun GradientButton(text: String, enabled: Boolean, busy: Boolean = false, onClick: () -> Unit) {
+internal fun GradientButton(text: String, enabled: Boolean, busy: Boolean = false, onClick: () -> Unit) {
     val shape = RoundedCornerShape(16.dp)
     Box(
         Modifier
@@ -378,6 +400,7 @@ private fun HomeScreen(
     onLogout: () -> Unit,
     onOpenUrl: (String) -> Unit,
     updates: UpdateCallbacks,
+    extra: ExtraCallbacks,
     onAbout: () -> Unit,
     onSettings: () -> Unit,
 ) {
@@ -402,14 +425,15 @@ private fun HomeScreen(
             onChangeKey = { confirmLogout = true },
             onAbout = onAbout,
             onSettings = onSettings,
+            onReport = extra.onStartReport,
         )
         if (state.update != null) {
             UpdateCard(state, updates)
             Spacer(Modifier.height(10.dp))
         }
-        // The server's "announce" header (expired-subscription hint for other apps) is not shown here.
+        ExpiryBanner(state.info, onRenew = { onOpenUrl(AmeliaConfig.botUrl(BotScreen.PAY)) })
 
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(16.dp))
         PowerButton(state.phase, enabled = state.locations.isNotEmpty(), onClick = onToggle)
         Spacer(Modifier.height(16.dp))
         PhaseText(state)
@@ -417,22 +441,28 @@ private fun HomeScreen(
             Spacer(Modifier.height(10.dp))
             TrafficPanel(it)
         }
+        if (state.showReportButton) {
+            Spacer(Modifier.height(12.dp))
+            ReportButton(extra.onStartReport)
+        }
         Spacer(Modifier.height(20.dp))
 
+        state.announce?.let {
+            AnnounceBanner(it, onOpenUrl, onClose = extra.onDismissAnnounce)
+            Spacer(Modifier.height(12.dp))
+        }
         LocationSelector(state, onClick = { showLocations = true })
         Spacer(Modifier.height(16.dp))
         ActionGrid(
             onAction = { screen -> onOpenUrl(AmeliaConfig.botUrl(screen)) },
-            onNotWorking = {
-                // With the VPN on we can fix it ourselves: re-check and switch locations
-                if (state.isRunning) onRecheck() else onOpenUrl(AmeliaConfig.botUrl(BotScreen.STATUS))
-            },
+            // Checks every location, shows which work, offers to send the result to support
+            onNotWorking = extra.onStartReport,
             onGroup = { onOpenUrl(AmeliaConfig.GROUP_URL) },
         )
         // Subscription details at the bottom: the connect button stays at the top of the screen
         state.info?.let {
             Spacer(Modifier.height(16.dp))
-            AccountCard(it, onRenew = { onOpenUrl(AmeliaConfig.botUrl(BotScreen.PAY)) })
+            AccountCard(it)
         }
         Spacer(Modifier.height(8.dp))
         TextButton(onClick = onAbout) {
@@ -478,6 +508,7 @@ private fun TopBar(
     onChangeKey: () -> Unit,
     onAbout: () -> Unit,
     onSettings: () -> Unit,
+    onReport: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     Row(
@@ -526,6 +557,10 @@ private fun TopBar(
                     )
                 }
                 DropdownMenuItem(
+                    text = { Text(stringResource(R.string.amelia_menu_report)) },
+                    onClick = { menuOpen = false; onReport() },
+                )
+                DropdownMenuItem(
                     text = { Text(stringResource(R.string.amelia_menu_check_update)) },
                     onClick = { menuOpen = false; onCheckUpdate() },
                 )
@@ -555,11 +590,9 @@ private fun formatBytes(value: Long): String {
     return "$num ${stringResource(unitRes)}"
 }
 
+/** Traffic left on the plan; the end date is on top of the main screen (ExpiryBanner). */
 @Composable
-private fun AccountCard(info: AmeliaSubInfo, onRenew: () -> Unit) {
-    val now = System.currentTimeMillis()
-    val expired = AmeliaFormat.isExpired(info, now)
-    val daysLeft = AmeliaFormat.daysLeft(info, now)
+private fun AccountCard(info: AmeliaSubInfo) {
     Glass(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             val remaining = info.remaining
@@ -575,11 +608,6 @@ private fun AccountCard(info: AmeliaSubInfo, onRenew: () -> Unit) {
                     style = MaterialTheme.typography.bodyLarge,
                     modifier = Modifier.weight(1f),
                 )
-                if (expired || (daysLeft != null && daysLeft <= 3)) {
-                    TextButton(onClick = onRenew) {
-                        Text(stringResource(R.string.amelia_renew), color = Brand.Sky, fontWeight = FontWeight.SemiBold)
-                    }
-                }
             }
             val total = info.total ?: 0L
             if (remaining != null && total > 0) {
@@ -592,16 +620,6 @@ private fun AccountCard(info: AmeliaSubInfo, onRenew: () -> Unit) {
                     modifier = Modifier.fillMaxWidth().height(6.dp),
                 )
             }
-            Text(
-                when {
-                    !info.hasExpire -> stringResource(R.string.amelia_expire_never)
-                    expired -> stringResource(R.string.amelia_expired, AmeliaFormat.date(info.expire ?: 0L))
-                    else -> stringResource(R.string.amelia_expire_until, AmeliaFormat.date(info.expire ?: 0L)) +
-                        (daysLeft?.let { " · " + stringResource(R.string.amelia_days_left, it) } ?: "")
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (expired) Brand.Red else Brand.Muted,
-            )
         }
     }
 }
@@ -980,47 +998,6 @@ private fun UpdateDialog(state: AmeliaUiState, updates: UpdateCallbacks, onLater
     )
 }
 
-@Composable
-private fun AboutDialog(onOpenUrl: (String) -> Unit, onCheckUpdate: () -> Unit, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        icon = { AppMark(56) },
-        title = { Text(stringResource(R.string.amelia_about_title)) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    stringResource(R.string.amelia_version, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE),
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Button(
-                    onClick = onCheckUpdate,
-                    colors = ButtonDefaults.buttonColors(containerColor = Brand.Sky, contentColor = Brand.Night),
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text(stringResource(R.string.amelia_menu_check_update)) }
-                Text(
-                    stringResource(
-                        R.string.amelia_about_text,
-                        BuildConfig.VERSION_NAME,
-                        BuildConfig.UPSTREAM_VERSION,
-                    ) + "\n\n" + AmeliaConfig.SOURCE_CODE_URL,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Row {
-                    TextButton(onClick = { onOpenUrl(AmeliaConfig.SOURCE_CODE_URL) }) {
-                        Text(stringResource(R.string.amelia_about_source))
-                    }
-                    TextButton(onClick = { onOpenUrl(AmeliaConfig.UPSTREAM_URL) }) {
-                        Text(stringResource(R.string.amelia_about_upstream))
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.amelia_close)) }
-        },
-    )
-}
-
 // ---- Session traffic -------------------------------------------------------------------------
 
 /** Traffic and time since the VPN was turned on; reported by the daemon every few seconds. */
@@ -1063,7 +1040,9 @@ private fun SettingsScreen(
     state: AmeliaUiState,
     updates: UpdateCallbacks,
     settings: SettingsCallbacks,
+    extra: ExtraCallbacks,
     onAbout: () -> Unit,
+    onOpenApps: () -> Unit,
     onBack: () -> Unit,
 ) {
     Column(
@@ -1075,31 +1054,23 @@ private fun SettingsScreen(
             .padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) {
-                Icon(
-                    painterResource(R.drawable.ic_arrow_back_24dp),
-                    contentDescription = stringResource(R.string.amelia_back),
-                    tint = Brand.Text,
-                )
-            }
-            Text(
-                stringResource(R.string.amelia_settings),
-                color = Brand.Text,
-                fontSize = 22.sp,
-                fontWeight = FontWeight.Bold,
-            )
-        }
+        ScreenHeader(stringResource(R.string.amelia_settings), onBack)
 
         SettingsSubscriptionSection(state, settings)
+        SettingsAppsSection(state, extra, onOpenApps)
+        SettingsAlwaysOnSection(extra)
         SettingsUpdateSection(state, updates, onAbout)
         SettingsBypassSection(state, settings)
+        SettingsProbeSection(state, extra)
+        TextButton(onClick = extra.onStartReport) {
+            Text(stringResource(R.string.amelia_menu_report), color = Brand.Sky)
+        }
         Spacer(Modifier.height(24.dp))
     }
 }
 
 @Composable
-private fun SectionTitle(text: String) {
+internal fun SectionTitle(text: String) {
     Text(text, color = Brand.Sky, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
 }
 

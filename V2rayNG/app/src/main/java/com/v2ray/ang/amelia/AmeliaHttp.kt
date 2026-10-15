@@ -1,6 +1,5 @@
 package com.v2ray.ang.amelia
 
-import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsManager
 import okhttp3.Credentials
@@ -39,8 +38,9 @@ object AmeliaHttp {
             .build()
     }
 
+    /** See [AmeliaVersions.userAgent]: the bot counts installations by its leading "AmeliaNet/<version>". */
     val userAgent: String
-        get() = "AmeliaNet/${BuildConfig.VERSION_NAME} v2rayNG/${BuildConfig.UPSTREAM_VERSION}"
+        get() = AmeliaVersions.userAgent()
 
     fun get(url: String): Request =
         Request.Builder().url(url).header("User-Agent", userAgent).build()

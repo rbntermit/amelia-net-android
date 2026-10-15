@@ -13,11 +13,8 @@ permissions:
   contents: write
 
 env:
-  # Xray core for Android (github.com/2dust/AndroidLibXrayLite). v26.10.10 = Xray-core v26.10.10.
-  LIBV2RAY_TAG: v26.10.10
-  # Same revision upstream v2rayNG 2.3.11 pins as a submodule.
+  # Xray-core (LIBV2RAY_TAG) and hev-socks5-tunnel (HEV_TAG) versions live in deps.env.
   HEV_REPO: https://github.com/heiher/hev-socks5-tunnel
-  HEV_COMMIT: d9dca26c7ad0e494492244f0309e80ee583e739e
   NDK_VERSION: 30.0.16248370
 
 jobs:
@@ -26,6 +23,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
+      - name: Native dependency versions
+        run: |
+          grep -E "^(LIBV2RAY_TAG|HEV_TAG)=" deps.env | tee -a "$GITHUB_ENV"
 
       # Fails a tag build early: tag must be v<versionName>, versionCode must grow, and
       # changelog/ru/<versionCode>.txt must exist. See RELEASING.md.
@@ -54,13 +55,13 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: libs
-          key: libhevtun-${{ runner.os }}-${{ env.NDK_VERSION }}-${{ env.HEV_COMMIT }}-${{ hashFiles('compile-hevtun.sh') }}
+          key: libhevtun-${{ runner.os }}-${{ env.NDK_VERSION }}-${{ env.HEV_TAG }}-${{ hashFiles('compile-hevtun.sh') }}
 
       - name: Build libhevtun
         if: steps.hev-cache.outputs.cache-hit != 'true'
         run: |
           git clone --quiet "$HEV_REPO" hev-socks5-tunnel
-          git -C hev-socks5-tunnel checkout --quiet "$HEV_COMMIT"
+          git -C hev-socks5-tunnel checkout --quiet "refs/tags/$HEV_TAG"
           git -C hev-socks5-tunnel submodule update --init --recursive --quiet
           bash compile-hevtun.sh
 
@@ -69,7 +70,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: libs
-          key: libhevtun-${{ runner.os }}-${{ env.NDK_VERSION }}-${{ env.HEV_COMMIT }}-${{ hashFiles('compile-hevtun.sh') }}
+          key: libhevtun-${{ runner.os }}-${{ env.NDK_VERSION }}-${{ env.HEV_TAG }}-${{ hashFiles('compile-hevtun.sh') }}
 
       - name: Add native libraries
         run: |
