@@ -25,6 +25,20 @@ object AmeliaFormat {
         return text.replace('.', ',') to unit
     }
 
+    /** 754_000 ms → "12:34", 3_725_000 → "1:02:05". */
+    fun duration(ms: Long): String {
+        val s = (ms.coerceAtLeast(0L) / 1000)
+        val h = s / 3600
+        val m = (s % 3600) / 60
+        val sec = s % 60
+        return if (h > 0) String.format(Locale.US, "%d:%02d:%02d", h, m, sec)
+        else String.format(Locale.US, "%d:%02d", m, sec)
+    }
+
+    /** "15.10 14:05" for the last update check. */
+    fun dateTime(epochMillis: Long): String =
+        SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.US).format(Date(epochMillis))
+
     fun date(epochSeconds: Long): String =
         SimpleDateFormat("dd.MM.yyyy", Locale.US).format(Date(epochSeconds * 1000))
 

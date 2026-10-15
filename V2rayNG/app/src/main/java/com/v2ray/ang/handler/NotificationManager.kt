@@ -13,6 +13,7 @@ import androidx.core.app.NotificationCompat
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.amelia.AmeliaActivity
+import com.v2ray.ang.amelia.AmeliaDaemon
 import com.v2ray.ang.core.CoreServiceManager
 import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.extension.delay
@@ -261,6 +262,11 @@ object NotificationManager {
                     }
                 }
             }
+        }
+
+        // Amelia.Net: session totals for the app screen (this loop is the only reader of the counters)
+        getService()?.let {
+            AmeliaDaemon.onTraffic(it, proxyUplink + directUplink, proxyDownlink + directDownlink, sinceLastQueryIn)
         }
 
         val proxyTotal = proxyUplink + proxyDownlink

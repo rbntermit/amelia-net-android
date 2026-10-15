@@ -1,5 +1,6 @@
 package com.v2ray.ang.amelia
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -131,6 +132,12 @@ class UpdateCallbacks(
     val onInstall: (String) -> Unit,
 )
 
+class SettingsCallbacks(
+    /** Settings opened: load geo base info and the last update check time. */
+    val onOpen: () -> Unit,
+    val onCheckRoute: (String) -> Unit,
+)
+
 @Composable
 fun AmeliaApp(
     state: AmeliaUiState,
@@ -144,6 +151,7 @@ fun AmeliaApp(
     onOpenUrl: (String) -> Unit,
     onMessageShown: () -> Unit,
     updates: UpdateCallbacks,
+    settings: SettingsCallbacks,
 ) {
     MaterialTheme(colorScheme = BrandColors) {
         val snackbar = remember { SnackbarHostState() }
@@ -158,14 +166,20 @@ fun AmeliaApp(
             }
         }
         var showAbout by rememberSaveable { mutableStateOf(false) }
+        var showSettings by rememberSaveable { mutableStateOf(false) }
 
         BrandBackground {
             when {
                 !state.loaded -> Unit
                 !state.hasKey -> KeyScreen(state.busy, onSubmitKey, onOpenUrl, onAbout = { showAbout = true })
+                showSettings -> {
+                    BackHandler { showSettings = false }
+                    SettingsScreen(state, updates, settings, onAbout = { showAbout = true }, onBack = { showSettings = false })
+                }
                 else -> HomeScreen(
                     state, onToggle, onSelect, onRefresh, onRecheck, onPingAll, onLogout, onOpenUrl, updates,
                     onAbout = { showAbout = true },
+                    onSettings = { settings.onOpen(); showSettings = true },
                 )
             }
             SnackbarHost(
@@ -364,6 +378,7 @@ private fun HomeScreen(
     onOpenUrl: (String) -> Unit,
     updates: UpdateCallbacks,
     onAbout: () -> Unit,
+    onSettings: () -> Unit,
 ) {
     var showLocations by remember { mutableStateOf(false) }
     var confirmLogout by remember { mutableStateOf(false) }
@@ -385,24 +400,23 @@ private fun HomeScreen(
             onCheckUpdate = updates.onCheck,
             onChangeKey = { confirmLogout = true },
             onAbout = onAbout,
+            onSettings = onSettings,
         )
         if (state.update != null) {
             UpdateCard(state, updates)
             Spacer(Modifier.height(10.dp))
         }
-        state.info?.announce?.let {
-            AnnounceCard(it)
-            Spacer(Modifier.height(10.dp))
-        }
-        state.info?.let {
-            AccountCard(it, onRenew = { onOpenUrl(AmeliaConfig.botUrl(BotScreen.PAY)) })
-        }
+        // The server's "announce" header (expired-subscription hint for other apps) is not shown here.
 
-        Spacer(Modifier.height(28.dp))
+        Spacer(Modifier.height(20.dp))
         PowerButton(state.phase, enabled = state.locations.isNotEmpty(), onClick = onToggle)
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(16.dp))
         PhaseText(state)
-        Spacer(Modifier.height(24.dp))
+        state.traffic?.takeIf { state.isRunning }?.let {
+            Spacer(Modifier.height(10.dp))
+            TrafficPanel(it)
+        }
+        Spacer(Modifier.height(20.dp))
 
         LocationSelector(state, onClick = { showLocations = true })
         Spacer(Modifier.height(16.dp))
@@ -414,6 +428,11 @@ private fun HomeScreen(
             },
             onGroup = { onOpenUrl(AmeliaConfig.GROUP_URL) },
         )
+        // Subscription details at the bottom: the connect button stays at the top of the screen
+        state.info?.let {
+            Spacer(Modifier.height(16.dp))
+            AccountCard(it, onRenew = { onOpenUrl(AmeliaConfig.botUrl(BotScreen.PAY)) })
+        }
         Spacer(Modifier.height(8.dp))
         TextButton(onClick = onAbout) {
             Text(stringResource(R.string.amelia_based_on), color = Brand.Muted, style = MaterialTheme.typography.bodySmall)
@@ -457,6 +476,7 @@ private fun TopBar(
     onCheckUpdate: () -> Unit,
     onChangeKey: () -> Unit,
     onAbout: () -> Unit,
+    onSettings: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     Row(
@@ -477,6 +497,13 @@ private fun TopBar(
             modifier = Modifier.weight(1f),
         )
         if (busy) CircularProgressIndicator(Modifier.size(20.dp), color = Brand.Sky, strokeWidth = 2.dp)
+        IconButton(onClick = onSettings) {
+            Icon(
+                painterResource(R.drawable.ic_settings_24dp),
+                contentDescription = stringResource(R.string.amelia_settings),
+                tint = Brand.Text,
+            )
+        }
         Box {
             IconButton(onClick = { menuOpen = true }) {
                 Icon(
@@ -511,13 +538,6 @@ private fun TopBar(
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun AnnounceCard(text: String) {
-    Glass(Modifier.fillMaxWidth(), tint = Color(0x33FFB547)) {
-        Text(text, color = Brand.Text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(14.dp))
     }
 }
 
@@ -591,7 +611,7 @@ private fun phaseColor(phase: ConnPhase): Color = when (phase) {
     ConnPhase.OFF -> Brand.Muted
     ConnPhase.STARTING, ConnPhase.CHECKING, ConnPhase.SWITCHING -> Brand.Sky
     ConnPhase.CONNECTED -> Brand.Green
-    ConnPhase.NO_INTERNET, ConnPhase.ALL_FAILED, ConnPhase.LOCATION_FAILED -> Brand.Amber
+    ConnPhase.NO_INTERNET, ConnPhase.ALL_FAILED -> Brand.Amber
 }
 
 private fun ConnPhase.inProgress() =
@@ -696,7 +716,6 @@ private fun PhaseText(state: AmeliaUiState) {
             ?: stringResource(R.string.amelia_phase_connected)
         ConnPhase.NO_INTERNET -> stringResource(R.string.amelia_phase_no_internet)
         ConnPhase.ALL_FAILED -> stringResource(R.string.amelia_phase_all_failed)
-        ConnPhase.LOCATION_FAILED -> stringResource(R.string.amelia_phase_location_failed)
     }
     Text(
         text,
@@ -999,4 +1018,234 @@ private fun AboutDialog(onOpenUrl: (String) -> Unit, onCheckUpdate: () -> Unit, 
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.amelia_close)) }
         },
     )
+}
+
+// ---- Session traffic -------------------------------------------------------------------------
+
+/** Traffic and time since the VPN was turned on; reported by the daemon every few seconds. */
+@Composable
+private fun TrafficPanel(t: AmeliaDaemon.Traffic) {
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(t.startedAt) {
+        while (true) {
+            now = System.currentTimeMillis()
+            kotlinx.coroutines.delay(1000)
+        }
+    }
+    Glass(Modifier.fillMaxWidth()) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                stringResource(R.string.amelia_traffic_session, formatBytes(t.down), formatBytes(t.up)),
+                color = Brand.Text,
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Text(
+                stringResource(R.string.amelia_traffic_speed, formatBytes(t.downSpeed), formatBytes(t.upSpeed)) +
+                    "   ·   " + stringResource(R.string.amelia_traffic_duration, AmeliaFormat.duration(now - t.startedAt)),
+                color = Brand.Muted,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+    }
+}
+
+// ---- Settings --------------------------------------------------------------------------------
+
+@Composable
+private fun SettingsScreen(
+    state: AmeliaUiState,
+    updates: UpdateCallbacks,
+    settings: SettingsCallbacks,
+    onAbout: () -> Unit,
+    onBack: () -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .systemBarsPadding()
+            .imePadding()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(
+                    painterResource(R.drawable.ic_arrow_back_24dp),
+                    contentDescription = stringResource(R.string.amelia_back),
+                    tint = Brand.Text,
+                )
+            }
+            Text(
+                stringResource(R.string.amelia_settings),
+                color = Brand.Text,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+
+        SettingsUpdateSection(state, updates, onAbout)
+        SettingsBypassSection(state, settings)
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun SectionTitle(text: String) {
+    Text(text, color = Brand.Sky, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+}
+
+/** Current version, last check, and updating right from here. */
+@Composable
+private fun SettingsUpdateSection(state: AmeliaUiState, updates: UpdateCallbacks, onAbout: () -> Unit) {
+    Glass(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SectionTitle(stringResource(R.string.amelia_settings_app))
+            Text(
+                stringResource(R.string.amelia_version, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE),
+                color = Brand.Text,
+                style = MaterialTheme.typography.titleMedium,
+            )
+            val v = state.update
+            if (v != null) {
+                Text(
+                    stringResource(
+                        if (state.updateRequired) R.string.amelia_update_required_title else R.string.amelia_update_available,
+                        v.versionName ?: v.versionCode.toString(),
+                    ),
+                    color = Brand.Text,
+                )
+                v.notes?.takeIf { it.isNotBlank() }?.let { Text(it, color = Brand.Muted, style = MaterialTheme.typography.bodySmall) }
+                UpdateActions(state, updates)
+            } else {
+                Text(
+                    if (state.lastUpdateCheck > 0) {
+                        stringResource(R.string.amelia_settings_up_to_date) + " · " +
+                            stringResource(R.string.amelia_settings_last_check, AmeliaFormat.dateTime(state.lastUpdateCheck))
+                    } else {
+                        stringResource(R.string.amelia_settings_never_checked)
+                    },
+                    color = Brand.Muted,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                GradientButton(
+                    text = stringResource(R.string.amelia_menu_check_update),
+                    enabled = !state.updateChecking,
+                    busy = state.updateChecking,
+                    onClick = updates.onCheck,
+                )
+            }
+            TextButton(onClick = onAbout) { Text(stringResource(R.string.amelia_menu_about), color = Brand.Sky) }
+        }
+    }
+}
+
+/** What goes around the VPN, and a checker for any site or address. */
+@Composable
+private fun SettingsBypassSection(state: AmeliaUiState, settings: SettingsCallbacks) {
+    var input by rememberSaveable { mutableStateOf("") }
+    Glass(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SectionTitle(stringResource(R.string.amelia_bypass_title))
+            Text(stringResource(R.string.amelia_bypass_text), color = Brand.Muted, style = MaterialTheme.typography.bodySmall)
+            val geo = state.geoInfo
+            Text(
+                if (geo != null && geo.sites > 0) {
+                    stringResource(
+                        R.string.amelia_bypass_geo, geo.sites, geo.networks,
+                        if (geo.updatedAt > 0) AmeliaFormat.dateTime(geo.updatedAt) else "—",
+                    )
+                } else {
+                    stringResource(R.string.amelia_bypass_geo_missing)
+                },
+                color = Brand.Text,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                stringResource(R.string.amelia_bypass_direct_list, AmeliaRouting.DIRECT_SITES.joinToString(", ")),
+                color = Brand.Text,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(stringResource(R.string.amelia_bypass_local), color = Brand.Text, style = MaterialTheme.typography.bodySmall)
+            Text(
+                stringResource(R.string.amelia_bypass_vpn_list, AmeliaRouting.PROXY_SITES.joinToString(", ")),
+                color = Brand.Text,
+                style = MaterialTheme.typography.bodySmall,
+            )
+
+            Spacer(Modifier.height(4.dp))
+            SectionTitle(stringResource(R.string.amelia_route_title))
+            OutlinedTextField(
+                value = input,
+                onValueChange = { input = it },
+                label = { Text(stringResource(R.string.amelia_route_hint)) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { if (input.isNotBlank()) settings.onCheckRoute(input) }),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Brand.Sky,
+                    unfocusedBorderColor = Brand.GlassBorder,
+                    focusedLabelColor = Brand.Sky,
+                    cursorColor = Brand.Sky,
+                ),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            GradientButton(
+                text = stringResource(R.string.amelia_route_check),
+                enabled = input.isNotBlank() && !state.routeChecking,
+                busy = state.routeChecking && state.routeCheck == null,
+                onClick = { settings.onCheckRoute(input) },
+            )
+            state.routeCheck?.let { RouteResult(it, state.routeDirectMs, state.routeChecking) }
+        }
+    }
+}
+
+@Composable
+private fun RouteResult(r: AmeliaRouteCheck.Result, directMs: Long?, checking: Boolean) {
+    if (r.route == null) {
+        Text(stringResource(R.string.amelia_reason_bad_input), color = Brand.Amber)
+        return
+    }
+    val direct = r.route == AmeliaRouteCheck.Route.DIRECT
+    Glass(Modifier.fillMaxWidth(), tint = if (direct) Color(0x333DDC97) else Color(0x3359ABFF)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                r.host + " — " + stringResource(if (direct) R.string.amelia_route_direct else R.string.amelia_route_vpn),
+                color = if (direct) Brand.Green else Brand.Sky,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            val rule = r.rule.orEmpty()
+            Text(
+                when (r.reason) {
+                    AmeliaRouteCheck.Reason.PROXY_SITE -> stringResource(R.string.amelia_reason_proxy_site, rule)
+                    AmeliaRouteCheck.Reason.DIRECT_SITE -> stringResource(R.string.amelia_reason_direct_site, rule)
+                    AmeliaRouteCheck.Reason.RU_SITE -> stringResource(R.string.amelia_reason_ru_site, rule)
+                    AmeliaRouteCheck.Reason.LOCAL_NETWORK -> stringResource(R.string.amelia_reason_local, rule)
+                    AmeliaRouteCheck.Reason.RU_IP -> stringResource(R.string.amelia_reason_ru_ip, rule)
+                    AmeliaRouteCheck.Reason.DEFAULT -> stringResource(R.string.amelia_reason_default)
+                    AmeliaRouteCheck.Reason.BAD_INPUT -> stringResource(R.string.amelia_reason_bad_input)
+                } + (r.ip?.let { " · " + stringResource(R.string.amelia_route_resolved, it) } ?: ""),
+                color = Brand.Text,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (direct) {
+                when {
+                    directMs == null && checking -> LinearProgressIndicator(Modifier.fillMaxWidth())
+                    directMs != null && directMs >= 0 ->
+                        Text(stringResource(R.string.amelia_route_direct_ok, directMs.toInt()), color = Brand.Green)
+                    directMs != null ->
+                        Text(stringResource(R.string.amelia_route_direct_fail), color = Brand.Amber)
+                }
+            }
+        }
+    }
 }

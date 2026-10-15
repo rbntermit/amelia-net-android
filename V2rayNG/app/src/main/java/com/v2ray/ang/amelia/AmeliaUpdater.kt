@@ -88,6 +88,9 @@ object AmeliaUpdater {
         return ALLOWED_HOSTS.any { host == it || host.endsWith(".$it") }
     }
 
+    /** Epoch millis of the last successful check, 0 if never. */
+    fun lastCheck(): Long = MmkvManager.decodeSettingsString(PREF_LAST_CHECK)?.toLongOrNull() ?: 0L
+
     fun isCheckDue(now: Long = System.currentTimeMillis()): Boolean {
         val last = MmkvManager.decodeSettingsString(PREF_LAST_CHECK)?.toLongOrNull() ?: 0L
         return now - last >= CHECK_INTERVAL_MS || last > now

@@ -89,6 +89,10 @@ class AmeliaActivity : HelperBaseComponentActivity() {
                 onDownload = viewModel::downloadUpdate,
                 onInstall = ::installUpdate,
             ),
+            settings = SettingsCallbacks(
+                onOpen = viewModel::loadSettingsInfo,
+                onCheckRoute = viewModel::checkRoute,
+            ),
         )
     }
 

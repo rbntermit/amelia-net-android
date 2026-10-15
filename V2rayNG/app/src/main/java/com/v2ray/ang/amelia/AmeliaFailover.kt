@@ -53,6 +53,17 @@ object AmeliaFailover {
             .build()
     }
 
+    /** Blocking. Time to the first HTTP answer from https://[host]/ without the VPN, -1 if none. */
+    fun directReachMs(host: String): Long {
+        val start = System.nanoTime()
+        return try {
+            directClient.newCall(AmeliaHttp.get("https://$host/")).execute().use { (System.nanoTime() - start) / 1_000_000 }
+        } catch (e: Exception) {
+            LogUtil.w(AppConfig.TAG, "Amelia: direct reach check failed", e)
+            -1L
+        }
+    }
+
     /** Blocking. True if the device itself can reach Yandex (or Google) without the VPN. */
     fun directInternetOk(): Boolean = DIRECT_PROBE_URLS.any { url ->
         try {

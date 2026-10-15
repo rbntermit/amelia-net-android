@@ -12,6 +12,8 @@ import android.os.ParcelFileDescriptor
 import android.system.OsConstants
 import androidx.core.content.ContextCompat
 import com.v2ray.ang.AppConfig
+import com.v2ray.ang.amelia.AmeliaConfig
+import com.v2ray.ang.amelia.AmeliaDaemon
 import com.v2ray.ang.contracts.IDialerService
 import com.v2ray.ang.contracts.ServiceControl
 import com.v2ray.ang.dto.ConnectionTestResult
@@ -179,6 +181,8 @@ object CoreServiceManager {
 
         if (!isReload) {
             MessageHelper.sendMsg2UI(service, AppConfig.MSG_STATE_START_SUCCESS, "")
+            // Amelia.Net: internet check / location failover and session traffic
+            AmeliaDaemon.onCoreStarted(service)
         }
         NotificationManager.startSpeedNotification()
         LogUtil.i(AppConfig.TAG, "StartCore-Manager: Core started successfully")
@@ -191,6 +195,7 @@ object CoreServiceManager {
      */
     fun stopCoreLoop(): Boolean {
         connectionTestScope.coroutineContext.cancelChildren()
+        AmeliaDaemon.onCoreStopped()
         val service = getService() ?: return false
 
         networkMonitor?.unregister()
@@ -309,6 +314,23 @@ object CoreServiceManager {
         }
 //        LogUtil.d(AppConfig.TAG, "Queried outbound traffic stats: $result")
         return result
+    }
+
+    /**
+     * Amelia.Net: one delay measurement through the running core, without the remote-IP lookup
+     * that [measureV2rayDelay] adds. Blocking (up to ~12 s), call off the main thread.
+     * @return delay in ms, -1 if the URL did not answer, or null while the core is not running or
+     * is reloading after a network change (the caller waits and asks again instead of failing).
+     */
+    fun measureDelayForAmelia(url: String): Long? {
+        if (!isRunning() || isReloading) return null
+        return try {
+            coreController.measureDelay(url)
+        } catch (e: Exception) {
+            if (!isRunning() || isReloading) return null
+            LogUtil.w(AppConfig.TAG, "StartCore-Manager: Amelia probe failed: ${e.message}")
+            -1L
+        }
     }
 
     /**
@@ -463,6 +485,7 @@ object CoreServiceManager {
                 AppConfig.MSG_REGISTER_CLIENT -> {
                     if (isRunning()) {
                         MessageHelper.sendMsg2UI(serviceControl.getService(), AppConfig.MSG_STATE_RUNNING, "")
+                        AmeliaDaemon.sendSnapshot(serviceControl.getService())
                     } else {
                         MessageHelper.sendMsg2UI(serviceControl.getService(), AppConfig.MSG_STATE_NOT_RUNNING, "")
                     }
@@ -502,6 +525,10 @@ object CoreServiceManager {
                 AppConfig.MSG_MEASURE_DELAY -> {
                     if (isOrderedBroadcast) resultCode = Activity.RESULT_OK
                     measureV2rayDelay(intent.getStringExtra("content").orEmpty())
+                }
+
+                AmeliaConfig.MSG_RECHECK -> {
+                    if (isRunning()) AmeliaDaemon.recheck(serviceControl.getService())
                 }
             }
 

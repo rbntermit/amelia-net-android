@@ -6,7 +6,6 @@ import android.content.Intent
 import android.content.IntentFilter
 import androidx.core.content.ContextCompat
 import com.v2ray.ang.AppConfig
-import com.v2ray.ang.dto.ConnectionTestResult
 import com.v2ray.ang.dto.RealPingResult
 import com.v2ray.ang.dto.TestServiceMessage
 import com.v2ray.ang.extension.serializable
@@ -29,8 +28,10 @@ class AmeliaServiceEvents(private val context: Context) : Closeable {
         data object Running : Event()
         data object Stopped : Event()
         data class StartFailed(val message: String?) : Event()
-        /** Result of [requestTunnelProbe]: delay in ms, or -1 when the probe failed or was cancelled. */
-        data class Probe(val requestId: String, val delayMs: Long) : Event()
+        /** Connection health from the daemon watchdog (see AmeliaDaemon). */
+        data class Health(val health: AmeliaDaemon.Health) : Event()
+        /** Session traffic from the daemon, every few seconds while the screen is on. */
+        data class Traffic(val traffic: AmeliaDaemon.Traffic) : Event()
         /** "Ping all": one location measured (delay in ms, -1 = no answer). */
         data class Ping(val requestId: String, val guid: String, val delayMs: Long) : Event()
         /** "Ping all" finished or was cancelled. */
@@ -53,14 +54,9 @@ class AmeliaServiceEvents(private val context: Context) : Closeable {
         MessageHelper.sendMsg2TestService(context, TestServiceMessage(key = AppConfig.MSG_MEASURE_CONFIG_CANCEL))
     }
 
-    /**
-     * Asks the running core to fetch Google through the tunnel (upstream MSG_MEASURE_DELAY).
-     * The answer arrives as [Event.Probe] with the same request id.
-     */
-    fun requestTunnelProbe(requestId: String) {
-        MessageHelper.sendMsg2ServiceForResult(context, AppConfig.MSG_MEASURE_DELAY, requestId) { handled ->
-            if (!handled) channel.trySend(Event.Probe(requestId, -1L))
-        }
+    /** "Не работает?": the daemon checks right away and switches locations if needed. */
+    fun requestRecheck() {
+        MessageHelper.sendMsg2Service(context, AmeliaConfig.MSG_RECHECK, "")
     }
 
     private val closed = AtomicBoolean(false)
@@ -73,12 +69,10 @@ class AmeliaServiceEvents(private val context: Context) : Closeable {
                 AppConfig.MSG_STATE_RUNNING, AppConfig.MSG_STATE_START_SUCCESS -> Event.Running
                 AppConfig.MSG_STATE_NOT_RUNNING, AppConfig.MSG_STATE_STOP_SUCCESS -> Event.Stopped
                 AppConfig.MSG_STATE_START_FAILURE -> Event.StartFailed(intent.getStringExtra("content"))
-                AppConfig.MSG_MEASURE_DELAY_RESULT -> Event.Probe(
-                    intent.getStringExtra(MessageHelper.EXTRA_REQUEST_ID).orEmpty(),
-                    intent.serializable<ConnectionTestResult>("content")?.delayMillis ?: -1L,
-                )
-                AppConfig.MSG_MEASURE_DELAY_CANCEL ->
-                    Event.Probe(intent.getStringExtra(MessageHelper.EXTRA_REQUEST_ID).orEmpty(), -1L)
+                AmeliaConfig.MSG_HEALTH ->
+                    intent.serializable<AmeliaDaemon.Health>("content")?.let { Event.Health(it) }
+                AmeliaConfig.MSG_TRAFFIC ->
+                    intent.serializable<AmeliaDaemon.Traffic>("content")?.let { Event.Traffic(it) }
                 AppConfig.MSG_MEASURE_CONFIG_SUCCESS -> intent.serializable<RealPingResult>("content")?.let {
                     Event.Ping(intent.getStringExtra(MessageHelper.EXTRA_REQUEST_ID).orEmpty(), it.guid, it.delayMillis)
                 }

@@ -54,6 +54,14 @@ object AmeliaConfig {
     const val PREF_SUB_INFO = "amelia_sub_info"
     const val PREF_DEFAULTS_VERSION = "amelia_defaults_version"
 
+    // Daemon <-> UI messages (same "key" extra as AppConfig.MSG_*, ids far above upstream's)
+    /** Daemon -> UI: connection health, content = AmeliaDaemon.Health */
+    const val MSG_HEALTH = 9101
+    /** Daemon -> UI: session traffic, content = AmeliaDaemon.Traffic */
+    const val MSG_TRAFFIC = 9102
+    /** UI -> daemon: check now and switch locations if needed (user pressed "Не работает?") */
+    const val MSG_RECHECK = 9103
+
     const val HTTP_TIMEOUT_SECONDS = 15L
     const val CONNECT_TIMEOUT_SECONDS = 8L
 }

@@ -35,7 +35,6 @@
     <string name="amelia_phase_connected_ping">Подключено · %1$d мс</string>
     <string name="amelia_phase_no_internet">Нет интернета на телефоне. Проверьте Wi-Fi или мобильную сеть.</string>
     <string name="amelia_phase_all_failed">Ни одна локация не отвечает. Попробуйте позже или напишите в поддержку.</string>
-    <string name="amelia_phase_location_failed">Эта локация не отвечает. Нажмите «Не работает?» — подберу рабочую.</string>
 
     <!-- action tiles: same items as the bot's main menu -->
     <string name="amelia_act_pay">Тарифы и оплата</string>
@@ -80,6 +79,7 @@
     <string name="amelia_update_none">Установлена последняя версия</string>
     <string name="amelia_update_failed">Не удалось скачать обновление. Попробуйте позже.</string>
     <string name="amelia_update_later">Позже</string>
+    <string name="amelia_update_check_failed">Не удалось проверить обновления. Попробуйте позже.</string>
     <string name="amelia_update_required_title">Нужно обновить приложение до версии %1$s</string>
     <string name="amelia_update_required_text">Эта версия больше не работает с нашими серверами. Обновите приложение, чтобы подключиться.</string>
     <string name="amelia_update_required_block">Сначала обновите приложение</string>
@@ -87,6 +87,43 @@
     <string name="amelia_update_tap">Нажмите, чтобы обновить</string>
     <string name="amelia_version">Версия %1$s (%2$d)</string>
     <string name="amelia_update_allow_install">Разрешите Amelia.Net устанавливать приложения и нажмите «Установить» ещё раз</string>
+
+    <!-- session traffic -->
+    <string name="amelia_traffic_session">↓ %1$s   ↑ %2$s</string>
+    <string name="amelia_traffic_speed">↓ %1$s/с   ↑ %2$s/с</string>
+    <string name="amelia_traffic_duration">В сети %1$s</string>
+
+    <!-- settings -->
+    <string name="amelia_settings">Настройки</string>
+    <string name="amelia_back">Назад</string>
+    <string name="amelia_settings_app">Приложение</string>
+    <string name="amelia_settings_last_check">Последняя проверка: %1$s</string>
+    <string name="amelia_settings_never_checked">Обновления ещё не проверялись</string>
+    <string name="amelia_settings_up_to_date">Установлена последняя версия</string>
+    <string name="amelia_settings_account">Подписка</string>
+
+    <string name="amelia_bypass_title">Что идёт мимо VPN</string>
+    <string name="amelia_bypass_text">Российские сайты и адреса, локальные сети и сайты из списка ниже открываются напрямую: так они работают быстрее и не блокируют вход из-за зарубежного адреса. YouTube и сервисы Google всегда идут через VPN, остальное — тоже через VPN.</string>
+    <string name="amelia_bypass_geo">База российских сайтов: %1$d записей и %2$d сетей, обновлена %3$s</string>
+    <string name="amelia_bypass_geo_missing">База российских сайтов ещё не загружена — пока напрямую идут только сайты из списка.</string>
+    <string name="amelia_bypass_direct_list">Напрямую: %1$s</string>
+    <string name="amelia_bypass_vpn_list">Всегда через VPN: %1$s</string>
+    <string name="amelia_bypass_local">Локальные сети (роутер, принтер, ТВ) — напрямую</string>
+    <string name="amelia_route_title">Проверить сайт</string>
+    <string name="amelia_route_hint">Сайт или IP-адрес</string>
+    <string name="amelia_route_check">Проверить</string>
+    <string name="amelia_route_direct">Напрямую, мимо VPN</string>
+    <string name="amelia_route_vpn">Через VPN</string>
+    <string name="amelia_reason_proxy_site">в списке «всегда через VPN» (%1$s)</string>
+    <string name="amelia_reason_direct_site">в списке сайтов напрямую (%1$s)</string>
+    <string name="amelia_reason_ru_site">российский сайт (%1$s)</string>
+    <string name="amelia_reason_local">адрес локальной сети (%1$s)</string>
+    <string name="amelia_reason_ru_ip">российский адрес (%1$s)</string>
+    <string name="amelia_reason_default">не российский сайт</string>
+    <string name="amelia_reason_bad_input">Это не похоже на адрес сайта</string>
+    <string name="amelia_route_resolved">адрес %1$s</string>
+    <string name="amelia_route_direct_ok">Без VPN открывается · %1$d мс</string>
+    <string name="amelia_route_direct_fail">Без VPN не открывается</string>
 
     <string name="amelia_unit_b">Б</string>
     <string name="amelia_unit_kb">КБ</string>

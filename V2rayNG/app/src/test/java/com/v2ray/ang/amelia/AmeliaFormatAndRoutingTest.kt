@@ -26,6 +26,14 @@ class AmeliaFormatAndRoutingTest {
     }
 
     @Test
+    fun sessionDuration() {
+        assertEquals("0:00", AmeliaFormat.duration(0))
+        assertEquals("12:34", AmeliaFormat.duration(754_000))
+        assertEquals("1:02:05", AmeliaFormat.duration(3_725_000))
+        assertEquals("0:00", AmeliaFormat.duration(-5))
+    }
+
+    @Test
     fun pingLevels() {
         assertEquals(AmeliaFormat.PingLevel.FAILED, AmeliaFormat.pingLevel(-1))
         assertEquals(AmeliaFormat.PingLevel.GOOD, AmeliaFormat.pingLevel(0))
