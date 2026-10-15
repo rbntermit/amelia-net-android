@@ -22,7 +22,7 @@ object AmeliaPingStage {
     private val CONNECT_MARKERS = listOf(
         "dial ", "connection refused", "network is unreachable", "no route to host",
         "no such host", "lookup ", "no recent network activity", "handshake did not complete",
-        "i/o timeout",
+        "i/o timeout", AmeliaCheck.TIMEOUT_ERROR,
     )
 
     /**

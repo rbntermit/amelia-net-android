@@ -21,7 +21,8 @@ object AmeliaReport {
     /** All locations are checked in parallel; the core gives up on one after ~12 s. */
     const val TEST_TIMEOUT_MS = 30_000L
     const val MAX_COMMENT = 500
-    const val NO_RESULT_ERROR = "no result in 30 s"
+    /** A location without a result: the app stopped waiting for it after 5 s. */
+    const val NO_RESULT_ERROR = AmeliaCheck.TIMEOUT_ERROR
 
     /** One location's result, as the test service reported it. */
     data class Check(val guid: String, val ms: Long, val stage: String, val error: String?)

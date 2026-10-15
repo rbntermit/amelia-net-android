@@ -234,7 +234,10 @@ object AmeliaDaemon {
             AmeliaCheck.Result(guid, config.remarks, config.server.orEmpty(), config.serverPort?.toIntOrNull(), ms, AmeliaPingStage.OK, null),
             net,
         )
-        if (!AmeliaReserve.isReserve(config.remarks)) AmeliaBest.remember(net, config.remarks)
+        // only foreign locations are worth starting with on this network
+        if (!AmeliaReserve.isReserve(config.remarks) && !AmeliaReserve.isRussianExit(config.remarks)) {
+            AmeliaBest.remember(net, config.remarks)
+        }
         bgScope.launch { AmeliaHints.refreshIfStale(service) }
     }
 
@@ -256,6 +259,7 @@ object AmeliaDaemon {
     private suspend fun switchFast(service: Service, failed: String?, why: String): Long {
         val t0 = System.currentTimeMillis()
         val fromName = failed?.let { MmkvManager.decodeServerConfig(it)?.remarks }.orEmpty()
+        quickPickIfStale(service, failed)
         startFullCheck(service)
         val tried = mutableSetOf<String>().apply { failed?.let { add(it) } }
         while (true) {
@@ -286,6 +290,30 @@ object AmeliaDaemon {
         }
         report(service, Health(Phase.ALL_FAILED.name, guid = MmkvManager.getSelectServer()))
         return ALL_FAILED_RETRY_MS
+    }
+
+    /**
+     * No fresh working foreign location known: check the best few by past ping for 3 s in
+     * parallel; their results go to the store, so the queue then starts with the fastest.
+     */
+    private suspend fun quickPickIfStale(service: Service, failed: String?) {
+        val now = System.currentTimeMillis()
+        val store = AmeliaChecks.load()
+        val fresh = AmeliaChecks.fresh(store, now)
+        val locations = AmeliaQueue.locations()
+        val haveFresh = locations.any {
+            it.guid != failed && fresh[it.name]?.ok == true &&
+                !AmeliaReserve.isReserve(it.name) && !AmeliaReserve.isRussianExit(it.name)
+        }
+        if (haveFresh) return
+        val guids = AmeliaQuickPick.candidates(locations, store.entries, setOfNotNull(failed))
+        if (guids.isEmpty()) return
+        val net = AmeliaHints.netKey(service)
+        val answered = AmeliaQuickPick.quickest(guids, check = { AmeliaCheck.checkOne(service, it) }) { r ->
+            AmeliaChecks.put(service, r, net)
+            MessageHelper.sendMsg2UI(service, AmeliaConfig.MSG_CHECKS, "")
+        }
+        LogUtil.i(AppConfig.TAG, "Amelia watch: quick pick, ${answered.size} of ${guids.size} answered in 3 s")
     }
 
     /** Waits up to 10 s while the core reloads (network change, our own switch). */

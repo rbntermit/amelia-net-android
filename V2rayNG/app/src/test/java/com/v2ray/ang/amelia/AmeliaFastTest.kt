@@ -38,9 +38,11 @@ class AmeliaFastTest {
             listOf("se", "fi", "de", "pl", "nl", "res"),
             AmeliaQueue.order(locs, known, bad, preferred = null),
         )
-        // the network's remembered best goes first, unless it was just seen failing
-        assertEquals("fi", AmeliaQueue.order(locs, known, bad, preferred = "Финляндия 2").first())
+        // 1.2.1: the remembered best never jumps ahead of a faster working location
+        assertEquals("se", AmeliaQueue.order(locs, known, bad, preferred = "Финляндия 2").first())
         assertEquals("se", AmeliaQueue.order(locs, known, bad, preferred = "Нидерланды 1").first())
+        // ...it only goes first among the unchecked ones
+        assertEquals(listOf("se", "fi", "pl", "de"), AmeliaQueue.order(locs, known, emptySet(), preferred = "Польша 1").take(4))
         // a hint says bad, but our own check says it works: we believe our check
         val ownOk = known + ("Польша 1" to e("Польша 1", 90))
         assertEquals("pl", AmeliaQueue.order(locs, ownOk, bad, preferred = null).first())
@@ -119,5 +121,77 @@ class AmeliaFastTest {
         assertEquals(12, arrived.size)
         assertTrue(total * scale < 10_000, "took ${total * scale} ms (scaled)")
         assertTrue(arrived.first().second * scale < 1_000, "first result after ${arrived.first().second * scale} ms (scaled)")
+    }
+}
+
+class AmeliaQueueRussiaTest {
+
+    private fun e(name: String, ms: Long) =
+        AmeliaChecks.Entry(name, "h", 1, ms, if (ms >= 0) "ok" else "data", 1L, "mobile|MTS")
+
+    private val locs = listOf(
+        AmeliaQueue.Location("msk", "Москва 🇷🇺", "10.0.0.1:443"),
+        AmeliaQueue.Location("se1", "Швеция 1", "1.1.1.1:443"),
+        AmeliaQueue.Location("fi1", "Финляндия 1", "2.2.2.2:443"),
+        AmeliaQueue.Location("fi2", "Финляндия 2", "3.3.3.3:443"),
+        AmeliaQueue.Location("nl", "Нидерланды 1", "4.4.4.4:443"),
+        AmeliaQueue.Location("res", "🆘 Резервный — только Telegram", "5.5.5.5:443"),
+    )
+
+    /** The live case: Швеция 1 failed, Москва (546 ms) was taken over Финляндия 1/2 (59/60 ms). */
+    @Test
+    fun fastestForeignFirstRussianExitLast() {
+        val known = mapOf(
+            "Москва 🇷🇺" to e("Москва 🇷🇺", 546),
+            "Швеция 1" to e("Швеция 1", -1),
+            "Финляндия 1" to e("Финляндия 1", 59),
+            "Финляндия 2" to e("Финляндия 2", 60),
+            "🆘 Резервный — только Telegram" to e("🆘 Резервный — только Telegram", 200),
+        )
+        val q = AmeliaQueue.order(locs, known, emptySet(), preferred = "Москва 🇷🇺", exclude = setOf("se1"))
+        assertEquals(listOf("fi1", "fi2", "nl", "msk", "res"), q)
+        // even a broken-down foreign list keeps Russia and reserve at the end
+        val none = mapOf("Москва 🇷🇺" to e("Москва 🇷🇺", 546))
+        assertEquals(listOf("msk", "res"), AmeliaQueue.order(locs, none, emptySet(), null).takeLast(2))
+        assertTrue(AmeliaReserve.isRussianExit("Москва 🇷🇺"))
+        assertTrue(AmeliaReserve.isRussianExit("москва-2"))
+        assertTrue(AmeliaReserve.isRussianExit("RU 🇷🇺 exit"))
+        assertFalse(AmeliaReserve.isRussianExit("Финляндия 1 🇫🇮"))
+        assertEquals("fi1", AmeliaReserve.firstChoice(listOf(
+            AmeliaManager.Location("msk", "Москва 🇷🇺"), AmeliaManager.Location("fi1", "Финляндия 1"),
+        ))?.guid)
+    }
+
+    @Test
+    fun quickPickChecksTheBestFewAndTakesTheFastest() = runBlocking {
+        val last = mapOf(
+            "Финляндия 1" to e("Финляндия 1", 59),
+            "Финляндия 2" to e("Финляндия 2", 60),
+            "Нидерланды 1" to e("Нидерланды 1", 120),
+            "Швеция 1" to e("Швеция 1", -1),
+            "Москва 🇷🇺" to e("Москва 🇷🇺", 30),
+        )
+        // foreign only, best past ping first, the failed one excluded
+        val c = AmeliaQuickPick.candidates(locs, last, setOf("se1"))
+        assertEquals(listOf("fi1", "fi2", "nl"), c)
+        // fi1 is slow now, fi2 fast, nl does not answer within the deadline
+        val delays = mapOf("fi1" to 250L, "fi2" to 40L, "nl" to 2_000L)
+        val stored = Collections.synchronizedList(mutableListOf<String>())
+        val answered = AmeliaQuickPick.quickest(c, deadlineMs = 500, check = { g ->
+            Thread.sleep(delays.getValue(g))
+            AmeliaCheck.Result(g, g, "h", 1, delays.getValue(g), "ok", null)
+        }) { stored += it.guid }
+        assertEquals(listOf("fi2", "fi1"), answered.map { it.guid })
+        Thread.sleep(1_700)
+        // the late one still reaches the store
+        assertTrue("nl" in stored)
+    }
+
+    @Test
+    fun timeoutTextInReports() {
+        assertEquals("нет ответа за 5 с", AmeliaReport.NO_RESULT_ERROR)
+        // hysteria2 (no TCP check) that timed out did not connect; TCP that connected: data cut
+        assertEquals("connect", AmeliaPingStage.classify(-1, null, AmeliaCheck.TIMEOUT_ERROR))
+        assertEquals("data", AmeliaPingStage.classify(-1, true, AmeliaCheck.TIMEOUT_ERROR))
     }
 }

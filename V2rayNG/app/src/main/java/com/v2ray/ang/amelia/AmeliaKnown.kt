@@ -187,7 +187,9 @@ object AmeliaQueue {
         exclude: Set<String> = emptySet(),
     ): List<String> {
         val pool = locations.filter { it.guid !in exclude }
-        val (reserves, regular) = pool.partition { AmeliaReserve.isReserve(it.name) }
+        // Reserve ("только Telegram") and Russian-exit ("Москва 🇷🇺") locations do not get around
+        // blocks: chosen automatically only when no foreign one works
+        val (lastResort, regular) = pool.partition { AmeliaReserve.isReserve(it.name) || AmeliaReserve.isRussianExit(it.name) }
         fun group(l: Location): Int {
             val k = known[l.name]
             return when {
@@ -197,11 +199,17 @@ object AmeliaQueue {
                 else -> 2
             }
         }
-        val sorted = regular.sortedWith(compareBy<Location>({ group(it) }, { known[it.name]?.ms?.takeIf { ms -> ms >= 0 } ?: Long.MAX_VALUE }))
-        val first = sorted.firstOrNull { it.name == preferred && group(it) != 4 }
-        val ordered = listOfNotNull(first) + sorted.filter { it != first }
-        val reservesSorted = reserves.sortedBy { if (known[it.name]?.ok == true) 0 else 1 }
-        return (ordered + reservesSorted).map { it.guid }
+        // Working ones strictly by the last ping. The network's remembered best only goes first among
+        // the unchecked ones (1.2.1: before, it jumped ahead of faster working locations).
+        fun ms(l: Location) = known[l.name]?.ms?.takeIf { it >= 0 } ?: Long.MAX_VALUE
+        val ordered = regular.sortedWith(
+            compareBy<Location>({ group(it) }, { ms(it) }, { if (group(it) == 2 && it.name == preferred) 0 else 1 }),
+        )
+        // Russian exits before reserve ones; working ones first, by ping
+        val tail = lastResort.sortedWith(
+            compareBy<Location>({ if (AmeliaReserve.isReserve(it.name)) 1 else 0 }, { if (known[it.name]?.ok == true) 0 else 1 }, { ms(it) }),
+        )
+        return (ordered + tail).map { it.guid }
     }
 
     fun locations(): List<Location> =

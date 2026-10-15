@@ -18,6 +18,13 @@ object AmeliaReserve {
     fun isReserve(name: String?): Boolean =
         name != null && (name.contains("только telegram", ignoreCase = true) || name.contains("резервный", ignoreCase = true))
 
+    /**
+     * Exit in Russia ("Москва 🇷🇺"): for services that need a Russian address. It does not get
+     * around blocks, so it is never chosen automatically while a foreign location works.
+     */
+    fun isRussianExit(name: String?): Boolean =
+        name != null && (name.contains("🇷🇺") || name.contains("москва", ignoreCase = true))
+
     /** URL for the "does it work" request through a location named [name]. */
     fun testUrl(name: String?, default: String): String = if (isReserve(name)) TEST_URL else default
 
@@ -50,9 +57,10 @@ object AmeliaReserve {
             ?: ring.firstOrNull { it !in tried && it in reserves }
     }
 
-    /** Location to pick automatically: the first regular one, a reserve one only if there is nothing else. */
+    /** Location to pick automatically: the first foreign one; Russian exit, then reserve, only if there is nothing else. */
     fun firstChoice(locations: List<AmeliaManager.Location>): AmeliaManager.Location? =
-        locations.firstOrNull { !isReserve(it.name) } ?: locations.firstOrNull()
+        locations.firstOrNull { !isReserve(it.name) && !isRussianExit(it.name) }
+            ?: locations.firstOrNull { !isReserve(it.name) } ?: locations.firstOrNull()
 }
 
 /** Set while the daemon fell back to a reserve location because no regular one worked. */

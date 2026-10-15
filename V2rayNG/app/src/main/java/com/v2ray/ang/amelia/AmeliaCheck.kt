@@ -10,13 +10,18 @@ import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.handler.SpeedtestManager
 import com.v2ray.ang.util.LogUtil
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
@@ -40,7 +45,8 @@ object AmeliaCheck {
     const val CONNECT_TIMEOUT_MS = 3_000
     const val REQUEST_TIMEOUT_MS = 5_000L
     const val HYSTERIA2_TIMEOUT_MS = 5_000L
-    const val TIMEOUT_ERROR = "i/o timeout: no answer in 5 s"
+    /** Shown in reports when the app stops waiting (1.2.1: was the core's own text). */
+    const val TIMEOUT_ERROR = "нет ответа за 5 с"
 
     data class Result(
         val guid: String,
@@ -125,5 +131,54 @@ object AmeliaCheck {
             }.awaitAll()
         }
         return System.currentTimeMillis() - started
+    }
+}
+
+/**
+ * 1.2.1: when the known results are stale, failover does not take the first location of the
+ * list: the few best by past ping are checked in parallel for [QUICK_DEADLINE_MS] and the
+ * fastest that answered wins.
+ */
+object AmeliaQuickPick {
+
+    const val QUICK_DEADLINE_MS = 3_000L
+    const val QUICK_COUNT = 4
+
+    /** Results that finish after the deadline still reach the store. */
+    private val lateScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Foreign (not reserve, not Russian-exit) locations other than [exclude], best past ping
+     * first (any age; never-checked ones after), at most [QUICK_COUNT].
+     */
+    fun candidates(locations: List<AmeliaQueue.Location>, last: Map<String, AmeliaChecks.Entry>, exclude: Set<String>): List<String> =
+        locations.asSequence()
+            .filter { it.guid !in exclude && !AmeliaReserve.isReserve(it.name) && !AmeliaReserve.isRussianExit(it.name) }
+            .sortedWith(compareBy({ if (last[it.name]?.ok == true) 0 else if (last[it.name] == null) 1 else 2 }, { last[it.name]?.ms?.takeIf { ms -> ms >= 0 } ?: Long.MAX_VALUE }))
+            .take(QUICK_COUNT).map { it.guid }.toList()
+
+    /** Checks [guids] at the same time; those that answered within [deadlineMs], fastest first. */
+    suspend fun quickest(
+        guids: List<String>,
+        deadlineMs: Long = QUICK_DEADLINE_MS,
+        check: (String) -> AmeliaCheck.Result,
+        onResult: (AmeliaCheck.Result) -> Unit,
+    ): List<AmeliaCheck.Result> {
+        val channel = Channel<AmeliaCheck.Result>(Channel.UNLIMITED)
+        guids.forEach { g ->
+            lateScope.launch {
+                val r = check(g)
+                onResult(r)
+                channel.trySend(r)
+            }
+        }
+        val answered = mutableListOf<AmeliaCheck.Result>()
+        withTimeoutOrNull(deadlineMs) {
+            repeat(guids.size) {
+                val r = channel.receive()
+                if (r.ok) answered += r
+            }
+        }
+        return answered.sortedBy { it.ms }
     }
 }
