@@ -53,6 +53,10 @@ object AmeliaReport {
         @SerializedName("bypass_ru") val bypassRu: Boolean,
         val comment: String,
         val servers: List<Server>,
+        /** 1.2.0: how long the check of all locations took, ms. */
+        @SerializedName("check_ms") val checkMs: Long? = null,
+        /** 1.2.0: the last automatic switches (AmeliaEvents), oldest first. */
+        val events: List<AmeliaEvents.Event> = emptyList(),
     )
 
     // ---- pure logic (unit-tested) ---------------------------------------------------------
@@ -152,6 +156,7 @@ object AmeliaReport {
         comment: String,
         net: AmeliaNetwork.Info,
         path: String,
+        checkMs: Long? = null,
     ) = Body(
         key = key,
         ts = System.currentTimeMillis() / 1000,
@@ -169,13 +174,22 @@ object AmeliaReport {
         bypassRu = AmeliaApps.isEnabled(),
         comment = comment.trim().take(MAX_COMMENT),
         servers = servers,
+        checkMs = checkMs,
+        events = AmeliaEvents.list(),
     )
 
     /** Blocking. Sends the report; the report id on success, null when no server took it. */
-    fun send(context: Context, key: String, servers: List<Server>, active: String?, comment: String): String? {
+    fun send(
+        context: Context,
+        key: String,
+        servers: List<Server>,
+        active: String?,
+        comment: String,
+        checkMs: Long? = null,
+    ): String? {
         val net = AmeliaNetwork.info(context)
         val answer = AmeliaNetwork.post(context, PATH) { path ->
-            toJson(body(context, key, servers, active, comment, net, path))
+            toJson(body(context, key, servers, active, comment, net, path, checkMs))
         } ?: return null
         return parseAnswer(answer.first)
     }

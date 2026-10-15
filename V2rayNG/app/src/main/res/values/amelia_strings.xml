@@ -213,4 +213,25 @@
     <!-- 1.1.1: reserve locations (only Telegram) -->
     <string name="amelia_reserve_label">только Telegram</string>
     <string name="amelia_reserve_fallback">Подписка закончилась — работает только Telegram</string>
+    <!-- 1.2.0: fast checks and switching -->
+    <string name="amelia_checked_now">проверено только что</string>
+    <plurals name="amelia_checked_min_ago">
+        <item quantity="one">проверено %1$d минуту назад</item>
+        <item quantity="few">проверено %1$d минуты назад</item>
+        <item quantity="many">проверено %1$d минут назад</item>
+        <item quantity="other">проверено %1$d минуты назад</item>
+    </plurals>
+    <string name="amelia_checked_long_ago">проверено давно</string>
+    <string name="amelia_checked_took">за %1$s с</string>
+    <string name="amelia_provider_bad">⚠️ у вашего провайдера сейчас не работает</string>
+    <string name="amelia_connect_best">⚡ Подключить лучший</string>
+    <string name="amelia_switch_channel">Переключение локаций</string>
+    <string name="amelia_switch_text">%1$s перестал отвечать — переключились на %2$s</string>
+    <string name="amelia_switch_text_short">Переключились на %1$s</string>
+    <string name="amelia_suggest_title">Сообщить, что %1$s не работает?</string>
+    <string name="amelia_suggest_text">Соединение с этой локацией есть, но данные через неё не идут, а остальные работают. Мы посмотрим, что с ней.</string>
+    <string name="amelia_suggest_send">Сообщить</string>
+    <string name="amelia_suggest_no">Не нужно</string>
+    <string name="amelia_suggest_comment">Приложение заметило: %1$s соединяется, но данные не идут</string>
+    <string name="amelia_suggest_failed">Не получилось отправить сообщение, попробуйте кнопкой «Не работает — сообщить»</string>
 </resources>

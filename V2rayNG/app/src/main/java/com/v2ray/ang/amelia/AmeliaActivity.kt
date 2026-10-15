@@ -110,6 +110,8 @@ class AmeliaActivity : HelperBaseComponentActivity() {
                 onAppsClosed = viewModel::appsClosed,
                 onProbe = viewModel::setProbeEnabled,
                 onDismissAnnounce = viewModel::dismissAnnounce,
+                onConnectBest = { viewModel.connectBest(::toggle) },
+                onAnswerSuggestion = viewModel::answerSuggestion,
             ),
         )
     }

@@ -17,6 +17,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** Opening the app checks every location in the background when the last check is older. */
+private const val BACKGROUND_CHECK_AFTER_MS = 5L * 60 * 1000
+
 /** Upper bound for a "ping all" round; the core gives up on each location after ~12 s. */
 private const val PING_ALL_TIMEOUT_MS = 120_000L
 
@@ -94,6 +97,15 @@ data class AmeliaUiState(
     val bypassCount: Int = 0,
     /** Connected to a reserve location (only Telegram) because no regular one works. */
     val reserveFallback: Boolean = false,
+    // ---- 1.2.0 ----
+    /** When the newest shown result was measured, epoch millis; 0 = never. */
+    val checkedAt: Long = 0L,
+    /** How long the last check of all locations took, ms; 0 = unknown. */
+    val lastCheckMs: Long = 0L,
+    /** Locations the server says do not work for this provider (and our check does not contradict). */
+    val providerBad: Set<String> = emptySet(),
+    /** "Сообщить, что <name> не работает?" */
+    val suggestReport: String? = null,
 ) {
     val selectedName: String?
         get() = locations.firstOrNull { it.guid == selectedGuid }?.name
@@ -146,6 +158,8 @@ data class ReportUi(
     val reportId: String? = null,
     /** Report as text for the bot, when sending failed. */
     val fallbackText: String? = null,
+    /** How long the check of all locations took, ms (sent as check_ms). */
+    val checkMs: Long? = null,
 ) {
     val working: List<String> get() = AmeliaReport.split(servers).first
     val failing: List<String> get() = AmeliaReport.split(servers).second
@@ -172,6 +186,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             reload()
             if (_state.value.hasKey) refresh(silent = true)
+            refreshInBackground()
         }
         updateGeoIfDue()
         viewModelScope.launch {
@@ -218,6 +233,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
     // ---------------------------------------------------------------------------------------
 
     private var reportRequestId: String? = null
+    private var reportStartedAt = 0L
     private var reportJob: Job? = null
 
     /** Checks every location with a real request through it, at most [AmeliaReport.TEST_TIMEOUT_MS]. */
@@ -229,6 +245,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         }
         val id = java.util.UUID.randomUUID().toString()
         reportRequestId = id
+        reportStartedAt = System.currentTimeMillis()
         _state.update { it.copy(report = ReportUi(ReportPhase.TESTING, total = locations.size)) }
         if (locations.isEmpty()) {
             finishReportTest(id)
@@ -263,7 +280,10 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             val servers = withContext(Dispatchers.IO) {
                 AmeliaReport.servers(AmeliaReport.locations(), _state.value.report?.checks.orEmpty())
             }
-            _state.update { s -> s.copy(report = s.report?.copy(phase = ReportPhase.RESULT, servers = servers)) }
+            val checkMs = System.currentTimeMillis() - reportStartedAt
+            withContext(Dispatchers.IO) { AmeliaChecks.putFull(checkMs) }
+            _state.update { s -> s.copy(report = s.report?.copy(phase = ReportPhase.RESULT, servers = servers, checkMs = checkMs)) }
+            reloadChecks()
             // With the VPN on, let the daemon move to a location that works
             val s = _state.value
             if (s.isRunning && s.phase != ConnPhase.CONNECTED && servers.any { it.ok }) recheck()
@@ -278,13 +298,13 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             val app = getApplication<Application>()
             val key = AmeliaManager.getKey().orEmpty()
             val active = _state.value.selectedName
-            val id = withContext(Dispatchers.IO) { AmeliaReport.send(app, key, r.servers, active, comment) }
+            val id = withContext(Dispatchers.IO) { AmeliaReport.send(app, key, r.servers, active, comment, r.checkMs) }
             if (id != null) {
                 _state.update { it.copy(report = it.report?.copy(phase = ReportPhase.SENT, reportId = id)) }
             } else {
                 val text = withContext(Dispatchers.IO) {
                     AmeliaReport.plainText(
-                        AmeliaReport.body(app, key, r.servers, active, comment, AmeliaNetwork.info(app), AmeliaNetwork.PATH_DIRECT),
+                        AmeliaReport.body(app, key, r.servers, active, comment, AmeliaNetwork.info(app), AmeliaNetwork.PATH_DIRECT, r.checkMs),
                     )
                 }
                 _state.update { it.copy(report = it.report?.copy(phase = ReportPhase.FAILED, fallbackText = text)) }
@@ -384,6 +404,129 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         if (!AmeliaExpiry.needsRefresh(s.info, now)) return
         lastResumeRefresh = now
         refresh(silent = true)
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // 1.2.0: last known results, hints, best location, report suggestion
+    // ---------------------------------------------------------------------------------------
+
+    private class ChecksSnapshot(
+        val pings: Map<String, Long>,
+        val checkedAt: Long,
+        val lastCheckMs: Long,
+        val providerBad: Set<String>,
+        val lastFullAt: Long,
+    )
+
+    /** Blocking: what AmeliaChecks and AmeliaHints know about the current locations. */
+    private fun checksSnapshot(): ChecksSnapshot {
+        val app = getApplication<Application>()
+        val store = AmeliaChecks.load()
+        val locations = AmeliaQueue.locations()
+        val names = locations.map { it.name }.toSet()
+        val fresh = AmeliaChecks.fresh(store, System.currentTimeMillis())
+        val bad = AmeliaHints.badHostPorts(AmeliaHints.current(AmeliaProbe.netKey(AmeliaNetwork.info(app))))
+        return ChecksSnapshot(
+            pings = AmeliaManager.getPings(),
+            checkedAt = store.entries.values.filter { it.name in names }.maxOfOrNull { it.ts } ?: 0L,
+            lastCheckMs = store.lastFullMs,
+            // our own check saying it works beats the hint
+            providerBad = locations.filter { it.hostPort in bad && fresh[it.name]?.ok != true }.map { it.guid }.toSet(),
+            lastFullAt = store.lastFullAt,
+        )
+    }
+
+    private var seenFullAt = 0L
+
+    /** New results from the daemon (or a finished round): refresh the list, maybe offer a report. */
+    private fun reloadChecks() {
+        viewModelScope.launch {
+            val c = withContext(Dispatchers.IO) { checksSnapshot() }
+            _state.update {
+                it.copy(
+                    pings = if (it.pinging) it.pings else c.pings,
+                    checkedAt = c.checkedAt,
+                    lastCheckMs = c.lastCheckMs,
+                    providerBad = c.providerBad,
+                )
+            }
+            if (c.lastFullAt > seenFullAt) {
+                seenFullAt = c.lastFullAt
+                evaluateSuggestion()
+            }
+        }
+    }
+
+    /** App opened: hints for this provider, and fresh results in the background if they are old. */
+    private fun refreshInBackground() {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { AmeliaHints.refreshIfStale(getApplication()) }
+            reloadChecks()
+            val s = _state.value
+            val stale = withContext(Dispatchers.IO) {
+                System.currentTimeMillis() - AmeliaChecks.load().lastFullAt > BACKGROUND_CHECK_AFTER_MS
+            }
+            // with the VPN on the daemon keeps the results fresh itself
+            if (s.hasKey && s.locations.isNotEmpty() && !s.isRunning && stale && !s.pinging) pingAll(silent = true)
+        }
+    }
+
+    /** "⚡ Подключить лучший": the first location of the failover queue; [connect] starts the VPN. */
+    fun connectBest(connect: () -> Unit) {
+        viewModelScope.launch {
+            val guid = withContext(Dispatchers.IO) { AmeliaQueue.current(getApplication()).firstOrNull() } ?: return@launch
+            if (guid != _state.value.selectedGuid) {
+                withContext(Dispatchers.IO) {
+                    AmeliaManager.select(guid)
+                    AmeliaReserveState.setAuto(false)
+                }
+                _state.update { it.copy(selectedGuid = guid, reserveFallback = false) }
+                if (_state.value.isRunning) {
+                    restartIfRunning()
+                    return@launch
+                }
+            }
+            if (!_state.value.isRunning) connect()
+        }
+    }
+
+    private fun evaluateSuggestion() {
+        if (_state.value.suggestReport != null || _state.value.report != null) return
+        viewModelScope.launch {
+            val name = withContext(Dispatchers.IO) {
+                val now = System.currentTimeMillis()
+                val fresh = AmeliaChecks.fresh(AmeliaChecks.load(), now)
+                AmeliaSuggest.candidates(fresh.values, _state.value.locations.map { it.name })
+                    .firstOrNull { AmeliaSuggest.due(it, now) }
+            }
+            if (name != null) _state.update { it.copy(suggestReport = name) }
+        }
+    }
+
+    /** Answer to "Сообщить, что … не работает?". Either way not asked again for this location today. */
+    fun answerSuggestion(send: Boolean) {
+        val name = _state.value.suggestReport ?: return
+        _state.update { it.copy(suggestReport = null) }
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            withContext(Dispatchers.IO) { AmeliaSuggest.mark(name, System.currentTimeMillis()) }
+            if (!send) return@launch
+            val id = withContext(Dispatchers.IO) {
+                val store = AmeliaChecks.load()
+                val checks = AmeliaReport.locations().mapNotNull { l ->
+                    store.entries[l.name]?.let { l.guid to AmeliaReport.Check(l.guid, it.ms, it.stage, null) }
+                }.toMap()
+                AmeliaReport.send(
+                    app, AmeliaManager.getKey().orEmpty(), AmeliaReport.servers(AmeliaReport.locations(), checks),
+                    _state.value.selectedName, app.getString(R.string.amelia_suggest_comment, name),
+                    store.lastFullMs.takeIf { it > 0 },
+                )
+            }
+            _state.update {
+                it.copy(messageText = if (id != null) app.getString(R.string.amelia_report_sent, id) else null,
+                    message = if (id == null) R.string.amelia_suggest_failed else null)
+            }
+        }
     }
 
     // ---------------------------------------------------------------------------------------
@@ -498,8 +641,13 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
     private var pingRequestId: String? = null
     private var pingTimeoutJob: Job? = null
 
-    /** Starts measuring every location; a second tap cancels. */
-    fun pingAll() {
+    private var pingStartedAt = 0L
+
+    /**
+     * Starts measuring every location; a second tap cancels. [silent]: refresh in the background
+     * without clearing the last known results first.
+     */
+    fun pingAll(silent: Boolean = false) {
         if (_state.value.pinging) {
             serviceEvents.cancelPingAll()
             finishPing()
@@ -508,7 +656,8 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         if (_state.value.locations.isEmpty()) return
         val id = java.util.UUID.randomUUID().toString()
         pingRequestId = id
-        _state.update { it.copy(pinging = true, pings = emptyMap()) }
+        pingStartedAt = System.currentTimeMillis()
+        _state.update { it.copy(pinging = true, pings = if (silent) it.pings else emptyMap()) }
         serviceEvents.requestPingAll(id, AmeliaConfig.SUBSCRIPTION_ID)
         pingTimeoutJob?.cancel()
         pingTimeoutJob = viewModelScope.launch {
@@ -521,10 +670,17 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun finishPing() {
+    private fun finishPing(completed: Boolean = false) {
         pingRequestId = null
         pingTimeoutJob?.cancel()
         _state.update { it.copy(pinging = false) }
+        if (completed) {
+            val ms = System.currentTimeMillis() - pingStartedAt
+            viewModelScope.launch {
+                withContext(Dispatchers.IO) { AmeliaChecks.putFull(ms) }
+                reloadChecks()
+            }
+        }
     }
 
     /** Called by the activity right before it starts the VPN. */
@@ -620,6 +776,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 announceDismissed = AmeliaAnnounce.dismissed(),
             ).also { AmeliaExpiry.check(getApplication(), it.info) }
         }
+        val checks = withContext(Dispatchers.IO) { checksSnapshot() }
         _state.update {
             it.copy(
                 loaded = true,
@@ -634,6 +791,9 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 bypassCount = snapshot.bypassCount,
                 probeEnabled = snapshot.probeEnabled,
                 announceDismissed = snapshot.announceDismissed,
+                checkedAt = checks.checkedAt,
+                lastCheckMs = checks.lastCheckMs,
+                providerBad = checks.providerBad,
             )
         }
     }
@@ -671,8 +831,10 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 reportRequestId -> onReportPing(event)
             }
 
+            AmeliaServiceEvents.Event.ChecksUpdated -> reloadChecks()
+
             is AmeliaServiceEvents.Event.PingDone -> when (event.requestId) {
-                pingRequestId -> finishPing()
+                pingRequestId -> finishPing(completed = true)
                 reportRequestId -> finishReportTest(event.requestId)
             }
         }

@@ -97,6 +97,8 @@ object AmeliaRouting {
         MmkvManager.encodeSettings(AppConfig.PREF_DYNAMIC_SOCKS_PORT, false)
         // Traffic counters in the core (session traffic on the main screen, speed in the notification)
         MmkvManager.encodeSettings(AppConfig.PREF_SPEED_ENABLED, true)
+        // 1.2.0: six locations are checked at the same time (AmeliaCheck.PARALLEL)
+        MmkvManager.encodeSettings(AppConfig.PREF_REAL_PING_CONCURRENCY, AmeliaCheck.PARALLEL.toString())
         // "Ping all" must only measure: never delete or reorder the user's locations
         MmkvManager.encodeSettings(AppConfig.PREF_AUTO_REMOVE_INVALID_AFTER_TEST, false)
         MmkvManager.encodeSettings(AppConfig.PREF_AUTO_SORT_AFTER_TEST, false)

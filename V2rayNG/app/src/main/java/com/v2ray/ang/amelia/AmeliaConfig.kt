@@ -67,6 +67,8 @@ object AmeliaConfig {
     const val MSG_TRAFFIC = 9102
     /** UI -> daemon: check now and switch locations if needed (user pressed "Не работает?") */
     const val MSG_RECHECK = 9103
+    /** Daemon -> UI: new server check results are stored (AmeliaChecks) */
+    const val MSG_CHECKS = 9104
 
     const val HTTP_TIMEOUT_SECONDS = 15L
     const val CONNECT_TIMEOUT_SECONDS = 8L

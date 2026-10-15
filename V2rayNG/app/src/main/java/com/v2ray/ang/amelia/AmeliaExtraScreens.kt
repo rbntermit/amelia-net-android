@@ -76,6 +76,10 @@ class ExtraCallbacks(
     val onAppsClosed: () -> Unit,
     val onProbe: (Boolean) -> Unit,
     val onDismissAnnounce: () -> Unit,
+    /** "⚡ Подключить лучший". */
+    val onConnectBest: () -> Unit,
+    /** Answer to "Сообщить, что … не работает?": true = send. */
+    val onAnswerSuggestion: (Boolean) -> Unit,
 )
 
 // ---- shared pieces ---------------------------------------------------------------------------
@@ -534,4 +538,46 @@ internal fun ReserveFallbackBanner(onRenew: () -> Unit) {
             GradientButton(text = stringResource(R.string.amelia_renew), enabled = true, onClick = onRenew)
         }
     }
+}
+
+/** "проверено 3 минуты назад · за 7,4 с" under the location list. */
+@Composable
+internal fun CheckedAgo(checkedAt: Long, lastCheckMs: Long, modifier: Modifier = Modifier) {
+    if (checkedAt <= 0) return
+    val minutes = ((System.currentTimeMillis() - checkedAt) / 60_000).toInt()
+    val ago = when {
+        minutes < 1 -> stringResource(R.string.amelia_checked_now)
+        minutes < 24 * 60 -> pluralStringResource(R.plurals.amelia_checked_min_ago, minutes, minutes)
+        else -> stringResource(R.string.amelia_checked_long_ago)
+    }
+    val took = if (lastCheckMs > 0) {
+        " · " + stringResource(R.string.amelia_checked_took, String.format(java.util.Locale.US, "%.1f", lastCheckMs / 1000.0).replace('.', ','))
+    } else ""
+    Text(ago + took, color = Brand.Muted, style = MaterialTheme.typography.labelSmall, modifier = modifier)
+}
+
+/** "⚡ Подключить лучший": the first location of the failover queue. */
+@Composable
+internal fun ConnectBestButton(onClick: () -> Unit) {
+    Glass(Modifier.fillMaxWidth(), tint = Color(0x2659ABFF), onClick = onClick) {
+        Text(
+            stringResource(R.string.amelia_connect_best),
+            color = Brand.Text,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
+        )
+    }
+}
+
+/** Offered by the app when one or two locations pass no data while the others work. */
+@Composable
+internal fun SuggestReportDialog(name: String, onAnswer: (Boolean) -> Unit) {
+    AlertDialog(
+        onDismissRequest = { onAnswer(false) },
+        title = { Text(stringResource(R.string.amelia_suggest_title, name)) },
+        text = { Text(stringResource(R.string.amelia_suggest_text)) },
+        confirmButton = { TextButton(onClick = { onAnswer(true) }) { Text(stringResource(R.string.amelia_suggest_send)) } },
+        dismissButton = { TextButton(onClick = { onAnswer(false) }) { Text(stringResource(R.string.amelia_suggest_no)) } },
+    )
 }

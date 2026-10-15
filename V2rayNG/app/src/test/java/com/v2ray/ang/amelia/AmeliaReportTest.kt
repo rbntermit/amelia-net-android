@@ -50,7 +50,7 @@ class AmeliaReportTest {
         assertEquals(
             setOf(
                 "key", "ts", "app", "code", "xray", "hy2", "android", "device", "tv", "net", "op", "path", "active",
-                "bypass_ru", "comment", "servers",
+                "bypass_ru", "comment", "servers", "check_ms", "events",
             ),
             json.keySet(),
         )

@@ -35,11 +35,16 @@ object AmeliaManager {
 
     fun getSelectedGuid(): String? = MmkvManager.getSelectServer()
 
-    /** Last "ping all" results kept by upstream: ms, or -1 for no answer; untested ones are absent. */
-    fun getPings(): Map<String, Long> =
-        MmkvManager.decodeServerList(AmeliaConfig.SUBSCRIPTION_ID).mapNotNull { guid ->
-            MmkvManager.decodeServerAffiliationInfo(guid)?.testDelayMillis?.takeIf { it != 0L }?.let { guid to it }
+    /**
+     * Last known check of each location (AmeliaChecks, any age; the screen says how old):
+     * ms, or -1 for no answer; never checked ones are absent.
+     */
+    fun getPings(): Map<String, Long> {
+        val known = AmeliaChecks.load().entries
+        return MmkvManager.decodeServerList(AmeliaConfig.SUBSCRIPTION_ID).mapNotNull { guid ->
+            MmkvManager.decodeServerConfig(guid)?.remarks?.let { known[it] }?.let { guid to it.ms }
         }.toMap()
+    }
 
     fun select(guid: String) = MmkvManager.setSelectServer(guid)
 

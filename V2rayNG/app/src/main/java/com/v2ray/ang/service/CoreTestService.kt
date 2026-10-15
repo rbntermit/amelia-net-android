@@ -8,7 +8,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
-import com.v2ray.ang.amelia.AmeliaProbe
+import com.v2ray.ang.amelia.AmeliaChecks
 import com.v2ray.ang.core.CoreNativeManager
 import com.v2ray.ang.dto.RealPingEvent
 import com.v2ray.ang.dto.RealPingResult
@@ -159,8 +159,9 @@ class CoreTestService : Service() {
                     RealPingResult(event.guid, event.delayMillis, event.stage, event.error),
                     requestId,
                 )
-                // Amelia.Net: results also feed the anonymous blocking map (host:port only)
-                if (event.stage != null) AmeliaProbe.recordPing(this, event.guid, event.delayMillis, event.stage, event.error)
+                // Amelia.Net: last known results (shown at app start, used to choose locations)
+                // and the anonymous blocking map (host:port only)
+                if (event.stage != null) AmeliaChecks.putPing(this, event.guid, event.delayMillis, event.stage, event.error)
             }
 
             is RealPingEvent.Finish -> {

@@ -43,6 +43,8 @@ class AmeliaServiceEvents(private val context: Context) : Closeable {
         ) : Event()
         /** "Ping all" finished or was cancelled. */
         data class PingDone(val requestId: String) : Event()
+        /** The daemon stored new check results (AmeliaChecks). */
+        data object ChecksUpdated : Event()
     }
 
     /**
@@ -85,6 +87,7 @@ class AmeliaServiceEvents(private val context: Context) : Closeable {
                         intent.getStringExtra(MessageHelper.EXTRA_REQUEST_ID).orEmpty(), it.guid, it.delayMillis, it.stage, it.error,
                     )
                 }
+                AmeliaConfig.MSG_CHECKS -> Event.ChecksUpdated
                 AppConfig.MSG_MEASURE_CONFIG_FINISH, AppConfig.MSG_MEASURE_CONFIG_CANCEL ->
                     Event.PingDone(intent.getStringExtra(MessageHelper.EXTRA_REQUEST_ID).orEmpty())
                 else -> null

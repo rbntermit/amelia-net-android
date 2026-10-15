@@ -220,6 +220,9 @@ fun AmeliaApp(
                 onLater = if (state.updateRequired) null else ({ postponed = update.versionCode }),
             )
         }
+        state.suggestReport?.takeIf { state.report == null }?.let { name ->
+            SuggestReportDialog(name, extra.onAnswerSuggestion)
+        }
         state.report?.let { r ->
             ReportDialog(
                 r, onSend = extra.onSendReport, onClose = extra.onCloseReport, onCopy = extra.onCopyText,
@@ -453,6 +456,10 @@ private fun HomeScreen(
             Spacer(Modifier.height(12.dp))
         }
         LocationSelector(state, onClick = { showLocations = true })
+        if (state.locations.size > 1) {
+            Spacer(Modifier.height(10.dp))
+            ConnectBestButton(extra.onConnectBest)
+        }
         Spacer(Modifier.height(16.dp))
         ActionGrid(
             onAction = { screen -> onOpenUrl(AmeliaConfig.botUrl(screen)) },
@@ -785,6 +792,7 @@ private fun LocationSelector(state: AmeliaUiState, onClick: () -> Unit) {
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                CheckedAgo(state.checkedAt, state.lastCheckMs)
             }
             PingBadge(
                 state.selectedGuid?.let { state.pings[it] }, pinging = false,
@@ -821,6 +829,7 @@ private fun LocationsSheet(
                 Text(stringResource(R.string.amelia_menu_refresh), color = Brand.Muted)
             }
         }
+        CheckedAgo(state.checkedAt, state.lastCheckMs, Modifier.padding(horizontal = 20.dp))
         // Happ-style "ping all": measures every location through its own core instance
         Box(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
             GradientButton(
@@ -869,12 +878,16 @@ private fun LocationsSheet(
                         colors = RadioButtonDefaults.colors(selectedColor = Brand.Sky, unselectedColor = Brand.Muted),
                         modifier = Modifier.padding(8.dp),
                     )
-                    Text(
-                        location.name,
-                        color = Brand.Text,
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.weight(1f),
-                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(location.name, color = Brand.Text, style = MaterialTheme.typography.bodyLarge)
+                        if (location.guid in state.providerBad) {
+                            Text(
+                                stringResource(R.string.amelia_provider_bad),
+                                color = Brand.Amber,
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                    }
                     PingBadge(state.pings[location.guid], state.pinging, AmeliaReserve.isReserve(location.name))
                 }
             }

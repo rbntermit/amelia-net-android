@@ -84,8 +84,33 @@ object AmeliaNetwork {
     @Suppress("DEPRECATION")
     private fun allNetworksCompat(cm: ConnectivityManager): List<Network> = cm.allNetworks.toList()
 
-    private fun clientOn(network: Network): OkHttpClient =
-        AmeliaHttp.client.newBuilder()
+    /**
+     * Blocking. GET [path] from [POST_BASE_URLS] in order, only over the phone's own network
+     * (never the tunnel: the server must see the provider). Null when nobody answered.
+     */
+    fun getDirect(context: Context, path: String): String? {
+        val network = physicalNetwork(context) ?: return null
+        val client = clientOn(network)
+        for (base in POST_BASE_URLS) {
+            try {
+                val request = Request.Builder().url(base + path).header("User-Agent", AmeliaVersions.userAgent()).build()
+                client.newCall(request).execute().use { resp ->
+                    if (resp.isSuccessful) return resp.body.string()
+                    LogUtil.w(AppConfig.TAG, "Amelia: GET $path HTTP ${resp.code} from $base")
+                }
+            } catch (e: Exception) {
+                LogUtil.w(AppConfig.TAG, "Amelia: GET $path failed at $base", e)
+            }
+        }
+        return null
+    }
+
+    /** [base] bound to the phone's own network; [base] itself when there is none. */
+    fun directClient(context: Context, base: OkHttpClient): OkHttpClient =
+        physicalNetwork(context)?.let { clientOn(it, base) } ?: base
+
+    private fun clientOn(network: Network, base: OkHttpClient = AmeliaHttp.client): OkHttpClient =
+        base.newBuilder()
             .socketFactory(network.socketFactory)
             .dns(object : Dns {
                 override fun lookup(hostname: String): List<InetAddress> = network.getAllByName(hostname).toList()

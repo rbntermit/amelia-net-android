@@ -245,7 +245,10 @@ object CoreServiceManager {
         networkMonitor = NetworkMonitor(
             connectivity = connectivity,
             onUnderlyingNetworksChanged = { networks -> serviceControl?.get()?.setUnderlyingNetworks(networks) },
-            onHandover = { reloadCore() },
+            onHandover = {
+                // Amelia.Net: a new network may cut other locations, check again (AmeliaDaemon)
+                if (reloadCore()) getService()?.let { AmeliaDaemon.onNetworkChanged(it) }
+            },
         ).also { it.register() }
     }
 
@@ -284,6 +287,15 @@ object CoreServiceManager {
             isReloading = false
         }
     }
+
+    /** Amelia.Net: the core runs and is not being reloaded. */
+    fun isReadyForAmelia(): Boolean = isRunning() && !isReloading
+
+    /**
+     * Amelia.Net: restart the core in place with the currently selected location (fast
+     * failover). The VPN interface, the service and the notification stay up. Blocking.
+     */
+    fun reloadForAmelia(): Boolean = reloadCore()
 
     /**
      * Queries and resets all outbound traffic counters in one core call.

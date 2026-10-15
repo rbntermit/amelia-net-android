@@ -266,7 +266,9 @@ object NotificationManager {
 
         // Amelia.Net: session totals for the app screen (this loop is the only reader of the counters)
         getService()?.let {
-            AmeliaDaemon.onTraffic(it, proxyUplink + directUplink, proxyDownlink + directDownlink, sinceLastQueryIn)
+            AmeliaDaemon.onTraffic(
+                it, proxyUplink + directUplink, proxyDownlink + directDownlink, sinceLastQueryIn, proxyUplink, proxyDownlink,
+            )
         }
 
         val proxyTotal = proxyUplink + proxyDownlink

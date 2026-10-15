@@ -1,5 +1,6 @@
 package com.v2ray.ang.amelia
 
+import android.content.Context
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.handler.MmkvManager
@@ -50,9 +51,9 @@ object AmeliaFailover {
 
     private val directClient: OkHttpClient by lazy {
         AmeliaHttp.client.newBuilder()
-            .connectTimeout(6, TimeUnit.SECONDS)
-            .readTimeout(6, TimeUnit.SECONDS)
-            .callTimeout(10, TimeUnit.SECONDS)
+            .connectTimeout(4, TimeUnit.SECONDS)
+            .readTimeout(4, TimeUnit.SECONDS)
+            .callTimeout(5, TimeUnit.SECONDS)
             .build()
     }
 
@@ -80,10 +81,13 @@ object AmeliaFailover {
         return if (SpeedtestManager.socketConnectTime(host, port, 3000) >= 0) AmeliaPingStage.DATA else AmeliaPingStage.CONNECT
     }
 
-    /** Blocking. True if the device itself can reach Yandex (or Google) without the VPN. */
-    fun directInternetOk(): Boolean = DIRECT_PROBE_URLS.any { url ->
+    /**
+     * Blocking. True if the phone itself reaches Yandex (or Google) over its own network, not
+     * the VPN (ConnectivityManager network without TRANSPORT_VPN).
+     */
+    fun directInternetOk(context: Context): Boolean = DIRECT_PROBE_URLS.any { url ->
         try {
-            directClient.newCall(AmeliaHttp.get(url)).execute().use { it.code in 200..399 }
+            AmeliaNetwork.directClient(context, directClient).newCall(AmeliaHttp.get(url)).execute().use { it.code in 200..399 }
         } catch (e: Exception) {
             LogUtil.w(AppConfig.TAG, "Amelia: direct probe failed for $url", e)
             false

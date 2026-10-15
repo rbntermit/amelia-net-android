@@ -1,10 +1,7 @@
 package com.v2ray.ang.service
 
 import android.content.Context
-import com.v2ray.ang.amelia.AmeliaPingStage
-import com.v2ray.ang.amelia.AmeliaReserve
-import com.v2ray.ang.core.CoreConfigManager
-import com.v2ray.ang.core.CoreNativeManager
+import com.v2ray.ang.amelia.AmeliaCheck
 import com.v2ray.ang.dto.RealPingEvent
 import com.v2ray.ang.enums.EConfigType
 import com.v2ray.ang.extension.isComplexType
@@ -107,46 +104,12 @@ class RealPingWorkerService(
     }
 
     /**
-     * Amelia.Net: also says at which stage a failed server stopped (see AmeliaPingStage):
-     * "connect" when the TCP handshake fails, otherwise from the core's error text.
+     * Amelia.Net: the 1.2.0 check engine (AmeliaCheck): 3 s TCP connect, 5 s for the whole
+     * request, Telegram for reserve locations, and the stage where a failed server stopped.
      */
-    private suspend fun startRealPing(guid: String): RealPingEvent.Result {
-        val retFailure = RealPingEvent.Result(guid, -1L, AmeliaPingStage.CONNECT, "no config")
-
-        val config = MmkvManager.decodeServerConfig(guid) ?: return retFailure
-        var tcpOk: Boolean? = null
-        if (!config.configType.isComplexType()
-            && config.configType != EConfigType.HYSTERIA2
-            && config.configType != EConfigType.WIREGUARD
-            && config.alpn?.startsWith("h3") != true
-            && config.server.isNotNullEmpty()
-            && config.serverPort?.toIntOrNull() != null
-        ) {
-            val url = config.server.orEmpty()
-            val port = config.serverPort.orEmpty().toInt()
-            val tcpTime = SpeedtestManager.socketConnectTime(url, port, 1000)
-            if (tcpTime <= -1L) {
-                return RealPingEvent.Result(guid, -1L, AmeliaPingStage.CONNECT, AmeliaPingStage.TCP_FAILED)
-            }
-            tcpOk = true
-        }
-
-        val configResult = CoreConfigManager.getV2rayConfig4Speedtest(context, guid)
-        if (!configResult.status) {
-            return retFailure
-        }
-        // Amelia.Net: reserve locations pass only Telegram; any HTTP answer from it means "works"
-        val reserve = AmeliaReserve.isReserve(config.remarks)
-        val started = System.nanoTime()
-        val (rawDelay, rawError) = RealPingExecutionLimiter.run(config.configType) {
-            CoreNativeManager.measureOutboundDelayDetailed(
-                configResult.content, AmeliaReserve.testUrl(config.remarks, SettingsManager.getDelayTestUrl()),
-            )
-        }
-        val (delay, error) = AmeliaReserve.interpret(reserve, rawDelay, rawError, (System.nanoTime() - started) / 1_000_000)
-        return RealPingEvent.Result(
-            guid, delay, AmeliaPingStage.classify(delay, tcpOk, error), error?.take(AmeliaPingStage.MAX_ERROR),
-        )
+    private fun startRealPing(guid: String): RealPingEvent.Result {
+        val r = AmeliaCheck.checkOne(context, guid)
+        return RealPingEvent.Result(guid, r.ms, r.stage, r.error)
     }
 
     private fun startTcping(guid: String): Long {
