@@ -98,44 +98,76 @@ object AmeliaUpdater {
 
     /**
      * Blocking. Returns a version newer than the installed one, or null. A successful answer
-     * also updates the cache (cleared when the installed version is current).
+     * also updates the cache (cleared when the installed version is current) and remembers
+     * which address answered, so the APK is downloaded from it.
      */
     fun check(): AppVersion? {
-        for (base in AmeliaConfig.SUB_BASE_URLS) {
+        for (a in AmeliaHttp.currentPlan()) {
             try {
-                AmeliaHttp.client.newCall(AmeliaHttp.get(base + VERSION_PATH)).execute().use { resp ->
+                AmeliaHttp.clientFor(a.route).newCall(AmeliaHttp.get(a.base + VERSION_PATH)).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     MmkvManager.encodeSettings(PREF_LAST_CHECK, System.currentTimeMillis().toString())
+                    AmeliaHttp.rememberBase(a.base)
                     val v = parse(resp.body.string())?.takeIf { it.versionCode > BuildConfig.VERSION_CODE }
                     MmkvManager.encodeSettings(PREF_CACHED, v?.let { JsonUtil.toJson(it) } ?: "")
                     return v
                 }
             } catch (e: Exception) {
-                LogUtil.w(AppConfig.TAG, "Amelia: update check failed at $base", e)
+                LogUtil.w(AppConfig.TAG, "Amelia: update check failed at ${a.base} (${a.route})", e)
             }
         }
         return null
     }
 
+    /**
+     * Where to download the APK from, in order. An APK on our domains is fetched from the
+     * address that answered version.json first ([lastBase]), then from the other addresses;
+     * through the tunnel first when the VPN is on. Other hosts (GitHub) are used as given.
+     */
+    internal fun downloadPlan(url: String, lastBase: String?, tunnel: Boolean): List<Pair<String, AmeliaHttp.Route>> {
+        if (!AmeliaHttp.isOwnUrl(url)) {
+            return AmeliaHttp.plan(listOf(url), tunnel).map { it.base to it.route }
+        }
+        return AmeliaHttp.plan(AmeliaHttp.orderBases(lastBase), tunnel)
+            .map { AmeliaHttp.rewriteOrigin(url, it.base) to it.route }
+    }
+
     private fun updatesDir(context: Context) = File(context.cacheDir, "updates").apply { mkdirs() }
 
     /**
-     * Blocking download with sha256 check. Removes older downloads.
+     * Blocking download with sha256 check, walking [downloadPlan]. Removes older downloads.
      * @param onProgress 0..100, or -1 when the size is unknown
      */
     fun download(context: Context, v: AppVersion, onProgress: (Int) -> Unit): File? {
         val dir = updatesDir(context)
         dir.listFiles()?.forEach { it.delete() }
         val target = File(dir, "AmeliaNet-${v.versionCode}.apk")
-        val tmp = File(dir, "${target.name}.part")
+        for ((url, route) in downloadPlan(v.url!!, AmeliaHttp.lastBase(), AmeliaHttp.tunnelAvailable())) {
+            if (!isAllowedUrl(url)) continue
+            if (downloadFrom(url, route, v, target, onProgress)) {
+                AmeliaConfig.SUB_BASE_URLS.firstOrNull { url.startsWith(it) }?.let { AmeliaHttp.rememberBase(it) }
+                return target
+            }
+        }
+        return null
+    }
+
+    private fun downloadFrom(
+        url: String,
+        route: AmeliaHttp.Route,
+        v: AppVersion,
+        target: File,
+        onProgress: (Int) -> Unit,
+    ): Boolean {
+        val tmp = File(target.parentFile, "${target.name}.part")
         try {
-            AmeliaHttp.client.newCall(AmeliaHttp.get(v.url!!)).execute().use { resp ->
+            AmeliaHttp.clientFor(route).newCall(AmeliaHttp.get(url)).execute().use { resp ->
                 if (!resp.isSuccessful) {
-                    LogUtil.w(AppConfig.TAG, "Amelia: update download HTTP ${resp.code}")
-                    return null
+                    LogUtil.w(AppConfig.TAG, "Amelia: update download HTTP ${resp.code} ($route)")
+                    return false
                 }
                 // Redirects (e.g. GitHub → CDN) must stay on allowed hosts too
-                if (!isAllowedUrl(resp.request.url.toString())) return null
+                if (!isAllowedUrl(resp.request.url.toString())) return false
                 val total = resp.body.contentLength().takeIf { it > 0 } ?: v.size ?: -1L
                 val digest = MessageDigest.getInstance("SHA-256")
                 resp.body.byteStream().use { input ->
@@ -156,16 +188,16 @@ object AmeliaUpdater {
                 }
                 val hex = digest.digest().joinToString("") { "%02x".format(it) }
                 if (!hex.equals(v.sha256, ignoreCase = true)) {
-                    LogUtil.w(AppConfig.TAG, "Amelia: update sha256 mismatch")
+                    LogUtil.w(AppConfig.TAG, "Amelia: update sha256 mismatch ($route)")
                     tmp.delete()
-                    return null
+                    return false
                 }
             }
-            return if (tmp.renameTo(target)) target else null
+            return tmp.renameTo(target)
         } catch (e: Exception) {
-            LogUtil.w(AppConfig.TAG, "Amelia: update download failed", e)
+            LogUtil.w(AppConfig.TAG, "Amelia: update download failed ($route)", e)
             tmp.delete()
-            return null
+            return false
         }
     }
 

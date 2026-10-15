@@ -92,6 +92,9 @@ object AmeliaRouting {
         MmkvManager.encodeSettings(AppConfig.PREF_FAKE_DNS_ENABLED, false)
         MmkvManager.encodeSettings(AppConfig.PREF_LOCAL_DNS_ENABLED, false)
         MmkvManager.encodeSettings(AppConfig.PREF_MODE, AppConfig.VPN)
+        // Fixed local inbound port: the app reaches the tunnel through it from any process
+        // (a dynamic port is generated per process and would differ from the daemon's)
+        MmkvManager.encodeSettings(AppConfig.PREF_DYNAMIC_SOCKS_PORT, false)
         // Traffic counters in the core (session traffic on the main screen, speed in the notification)
         MmkvManager.encodeSettings(AppConfig.PREF_SPEED_ENABLED, true)
         // "Ping all" must only measure: never delete or reorder the user's locations

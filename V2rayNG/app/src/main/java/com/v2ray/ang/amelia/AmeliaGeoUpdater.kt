@@ -56,24 +56,31 @@ object AmeliaGeoUpdater {
         return !wasReady && AmeliaRouting.geoFilesReady(context)
     }
 
+    /** Through the tunnel first when the VPN is on, then directly; last good address first. */
     private fun downloadOne(dir: File, name: String): Boolean {
-        for (base in AmeliaConfig.SUB_BASE_URLS) {
+        for (a in AmeliaHttp.currentPlan()) {
             val tmp = File(dir, "$name.tmp")
             try {
-                AmeliaHttp.client.newCall(AmeliaHttp.get(base + AmeliaConfig.GEO_PATH + name)).execute().use { resp ->
-                    if (!resp.isSuccessful) {
-                        LogUtil.w(AppConfig.TAG, "Amelia: geo $name HTTP ${resp.code} from $base")
-                        return@use
+                val ok = AmeliaHttp.clientFor(a.route)
+                    .newCall(AmeliaHttp.get(a.base + AmeliaConfig.GEO_PATH + name)).execute().use { resp ->
+                        if (!resp.isSuccessful) {
+                            LogUtil.w(AppConfig.TAG, "Amelia: geo $name HTTP ${resp.code} from ${a.base} (${a.route})")
+                            false
+                        } else {
+                            resp.body.byteStream().use { input -> tmp.outputStream().use { input.copyTo(it) } }
+                            true
+                        }
                     }
-                    resp.body.byteStream().use { input -> tmp.outputStream().use { input.copyTo(it) } }
-                }
                 val size = tmp.length()
-                if (tmp.isFile && size > AmeliaRouting.MIN_GEO_SIZE && size < MAX_SIZE && looksLikeGeoDat(tmp)) {
+                if (ok && tmp.isFile && size > AmeliaRouting.MIN_GEO_SIZE && size < MAX_SIZE && looksLikeGeoDat(tmp)) {
                     // rename() replaces atomically, so the core never sees a half-written file
-                    if (tmp.renameTo(File(dir, name))) return true
+                    if (tmp.renameTo(File(dir, name))) {
+                        AmeliaHttp.rememberBase(a.base)
+                        return true
+                    }
                 }
             } catch (e: Exception) {
-                LogUtil.w(AppConfig.TAG, "Amelia: geo $name download failed from $base", e)
+                LogUtil.w(AppConfig.TAG, "Amelia: geo $name download failed from ${a.base} (${a.route})", e)
             } finally {
                 tmp.delete()
             }

@@ -52,6 +52,8 @@ data class AmeliaUiState(
     val pinging: Boolean = false,
     /** Traffic since the VPN was turned on, from the daemon; null while off. */
     val traffic: AmeliaDaemon.Traffic? = null,
+    /** Epoch millis of the last successful subscription update, 0 = never. */
+    val subUpdatedAt: Long = 0L,
     // ---- settings screen ----
     val updateChecking: Boolean = false,
     /** Epoch millis of the last successful update check, 0 = never. */
@@ -205,9 +207,9 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun submitKey(raw: String) = runLoad(silent = false) { AmeliaManager.activate(raw) }
+    fun submitKey(raw: String) = runLoad(silent = false, isRefresh = false) { AmeliaManager.activate(raw) }
 
-    fun refresh(silent: Boolean = false) = runLoad(silent) { AmeliaManager.refresh() }
+    fun refresh(silent: Boolean = false) = runLoad(silent, isRefresh = true) { AmeliaManager.refresh() }
 
     fun select(guid: String) {
         if (guid == _state.value.selectedGuid) return
@@ -317,7 +319,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
 
     fun showMessage(@StringRes res: Int) = _state.update { it.copy(message = res) }
 
-    private fun runLoad(silent: Boolean, block: () -> AmeliaManager.Outcome) {
+    private fun runLoad(silent: Boolean, isRefresh: Boolean, block: () -> AmeliaManager.Outcome) {
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
             _state.update { it.copy(busy = true) }
@@ -327,12 +329,13 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 AmeliaManager.Outcome.OK -> if (silent) null else R.string.amelia_updated
                 AmeliaManager.Outcome.INVALID_FORMAT -> R.string.amelia_err_invalid_format
                 AmeliaManager.Outcome.UNKNOWN_KEY -> R.string.amelia_err_unknown_key
-                AmeliaManager.Outcome.NETWORK_ERROR -> R.string.amelia_err_network
+                // A failed refresh is always reported (also the silent one on app start): the app
+                // keeps working on old locations, and the person should know it is stale.
+                AmeliaManager.Outcome.NETWORK_ERROR ->
+                    if (isRefresh) R.string.amelia_err_sub_refresh else R.string.amelia_err_network
                 AmeliaManager.Outcome.EMPTY -> R.string.amelia_err_empty
             }
-            // A silent background refresh only reports problems that need the user.
-            val shown = if (silent && outcome == AmeliaManager.Outcome.NETWORK_ERROR) null else msg
-            _state.update { it.copy(busy = false, message = shown ?: it.message) }
+            _state.update { it.copy(busy = false, message = msg ?: it.message) }
         }
     }
 
@@ -344,6 +347,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 locations = AmeliaManager.getLocations(),
                 selectedGuid = AmeliaManager.getSelectedGuid(),
                 info = AmeliaManager.getSubInfo(),
+                subUpdatedAt = AmeliaManager.lastSubscriptionUpdate(),
                 pings = AmeliaManager.getPings(),
             )
         }
@@ -354,6 +358,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 locations = snapshot.locations,
                 selectedGuid = snapshot.selectedGuid,
                 info = snapshot.info,
+                subUpdatedAt = snapshot.subUpdatedAt,
                 // keep live results while a ping round is running
                 pings = if (it.pinging) it.pings else snapshot.pings,
             )

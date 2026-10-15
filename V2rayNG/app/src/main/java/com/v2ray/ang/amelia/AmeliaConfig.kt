@@ -7,14 +7,20 @@ package com.v2ray.ang.amelia
  */
 object AmeliaConfig {
     /**
-     * Subscription servers, tried in order. The key is appended as `/sub/<key>`.
-     * The second entry is the backup domain (own TLS certificate since 14.10.2026), used for
-     * the subscription, geo bases and app updates whenever the primary does not answer.
+     * Servers for the subscription (`/sub/<key>`), version.json and APK (`/app/`) and geo bases
+     * (`/geo/`), tried in order (the one that answered last goes first, see AmeliaHttp): two
+     * Russian mirrors, then the main domain and its backup on .net.
      */
     val SUB_BASE_URLS = listOf(
+        // Russian mirrors first: from Russia TLS to foreign addresses is often cut (1.0.5)
+        "https://msk1.ameliajustamelia.com:9443",
+        "https://msk2.ameliajustamelia.com:9443",
         "https://sub.ameliajustamelia.com:9443",
         "https://sub.ameliajustamelia.net:9443",
     )
+
+    /** Our domains: URLs on them may be redirected to whichever mirror answered. */
+    val OWN_DOMAINS = listOf("ameliajustamelia.com", "ameliajustamelia.net")
     const val SUB_PATH = "/sub/"
     const val GEO_PATH = "/geo/"
 

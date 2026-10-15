@@ -92,6 +92,7 @@ class AmeliaActivity : HelperBaseComponentActivity() {
             settings = SettingsCallbacks(
                 onOpen = viewModel::loadSettingsInfo,
                 onCheckRoute = viewModel::checkRoute,
+                onRefreshSubscription = { viewModel.refresh() },
             ),
         )
     }

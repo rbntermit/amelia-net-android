@@ -2,14 +2,13 @@ package com.v2ray.ang.amelia
 
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.util.LogUtil
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
 /**
  * Downloads the subscription for a key. Unlike upstream HttpUtil it keeps the HTTP status
- * (404 = unknown key) and the response headers, and falls back to the backup domain.
- * The app's own traffic bypasses the VPN tunnel, so this always uses the device network.
+ * (404 = unknown key) and the response headers, and walks [AmeliaHttp.plan]: through the
+ * tunnel when the VPN is on, then directly, over the Russian mirrors and the main domains.
  */
 object AmeliaSubscriptionClient {
 
@@ -28,31 +27,18 @@ object AmeliaSubscriptionClient {
         data object Failed : Attempt()
     }
 
-    private val client: OkHttpClient by lazy {
-        AmeliaHttp.client.newBuilder()
-            .callTimeout(AmeliaConfig.HTTP_TIMEOUT_SECONDS * 2, TimeUnit.SECONDS)
-            .build()
-    }
-
     val userAgent: String get() = AmeliaHttp.userAgent
 
-    /** The server that answered last time goes first, then the rest in config order. */
-    internal fun orderBases(preferred: String?, all: List<String> = AmeliaConfig.SUB_BASE_URLS): List<String> =
-        buildList {
-            preferred?.takeIf { it in all }?.let { add(it) }
-            all.forEach { if (it !in this) add(it) }
-        }
-
     /**
-     * Tries servers in order until one returns the subscription. A failure (timeout, TLS,
-     * 5xx, empty body) moves on to the next server; 404 is remembered but also moves on,
-     * so a stale primary cannot hide a key the backup knows.
+     * Tries attempts in order until one returns the subscription. A failure (timeout, TLS,
+     * 5xx, empty body) moves on; 404 is remembered but also moves on, so a stale server cannot
+     * hide a key another one knows.
      */
-    internal fun fetchWith(bases: List<String>, attempt: (String) -> Attempt): Result {
+    internal fun fetchWith(plan: List<AmeliaHttp.Attempt>, attempt: (AmeliaHttp.Attempt) -> Attempt): Result {
         var sawNotFound = false
-        for (base in bases) {
-            when (val a = attempt(base)) {
-                is Attempt.Ok -> return Result.Ok(a.body, a.info, base)
+        for (a in plan) {
+            when (val r = attempt(a)) {
+                is Attempt.Ok -> return Result.Ok(r.body, r.info, a.base)
                 Attempt.NotFound -> sawNotFound = true
                 Attempt.Failed -> Unit
             }
@@ -64,15 +50,22 @@ object AmeliaSubscriptionClient {
      * Blocking; call from Dispatchers.IO.
      * @param preferredBaseUrl the server that answered last time, tried first.
      */
-    fun fetch(key: String, preferredBaseUrl: String? = null): Result =
-        fetchWith(orderBases(preferredBaseUrl)) { base -> request(base, key) }
+    fun fetch(key: String, preferredBaseUrl: String? = AmeliaHttp.lastBase()): Result {
+        val plan = AmeliaHttp.plan(AmeliaHttp.orderBases(preferredBaseUrl), AmeliaHttp.tunnelAvailable())
+        val result = fetchWith(plan) { a -> request(a, key) }
+        if (result is Result.Ok) AmeliaHttp.rememberBase(result.baseUrl)
+        return result
+    }
 
-    private fun request(base: String, key: String): Attempt {
+    private fun request(a: AmeliaHttp.Attempt, key: String): Attempt {
         return try {
             val request = Request.Builder()
-                .url(AmeliaKey.subscriptionUrl(base, key))
+                .url(AmeliaKey.subscriptionUrl(a.base, key))
                 .header("User-Agent", userAgent)
                 .header("Accept", "text/plain, */*")
+                .build()
+            val client = AmeliaHttp.clientFor(a.route).newBuilder()
+                .callTimeout(AmeliaConfig.HTTP_TIMEOUT_SECONDS * 2, TimeUnit.SECONDS)
                 .build()
             client.newCall(request).execute().use { response ->
                 when {
@@ -87,21 +80,21 @@ object AmeliaSubscriptionClient {
                                 ),
                             )
                         } else {
-                            LogUtil.w(AppConfig.TAG, "Amelia: empty subscription from $base")
+                            LogUtil.w(AppConfig.TAG, "Amelia: empty subscription from ${a.base} (${a.route})")
                             Attempt.Failed
                         }
                     }
 
                     response.code == 404 -> Attempt.NotFound
                     else -> {
-                        LogUtil.w(AppConfig.TAG, "Amelia: subscription HTTP ${response.code} from $base")
+                        LogUtil.w(AppConfig.TAG, "Amelia: subscription HTTP ${response.code} from ${a.base} (${a.route})")
                         Attempt.Failed
                     }
                 }
             }
         } catch (e: Exception) {
             // Never log the URL: it contains the key.
-            LogUtil.w(AppConfig.TAG, "Amelia: subscription fetch failed from $base", e)
+            LogUtil.w(AppConfig.TAG, "Amelia: subscription fetch failed from ${a.base} (${a.route})", e)
             Attempt.Failed
         }
     }

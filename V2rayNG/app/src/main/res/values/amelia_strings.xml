@@ -101,6 +101,10 @@
     <string name="amelia_settings_never_checked">Обновления ещё не проверялись</string>
     <string name="amelia_settings_up_to_date">Установлена последняя версия</string>
     <string name="amelia_settings_account">Подписка</string>
+    <string name="amelia_settings_sub_updated">Подписка обновлена: %1$s</string>
+    <string name="amelia_settings_sub_never">Подписка ещё не обновлялась</string>
+    <string name="amelia_settings_sub_refresh">Обновить подписку</string>
+    <string name="amelia_err_sub_refresh">Не удалось обновить подписку, проверьте интернет</string>
 
     <string name="amelia_bypass_title">Что идёт мимо VPN</string>
     <string name="amelia_bypass_text">Российские сайты и адреса, локальные сети и сайты из списка ниже открываются напрямую: так они работают быстрее и не блокируют вход из-за зарубежного адреса. YouTube и сервисы Google всегда идут через VPN, остальное — тоже через VPN.</string>

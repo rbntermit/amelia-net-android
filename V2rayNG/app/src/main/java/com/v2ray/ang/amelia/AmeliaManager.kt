@@ -46,16 +46,18 @@ object AmeliaManager {
     /** Checks the key against the server and, on success, makes it the active one. */
     fun activate(rawKey: String?): Outcome {
         val key = AmeliaKey.normalize(rawKey) ?: return Outcome.INVALID_FORMAT
-        return load(key, preferredBaseUrl = null, saveKeyOnSuccess = true)
+        return load(key, preferredBaseUrl = AmeliaHttp.lastBase(), saveKeyOnSuccess = true)
     }
 
     /** Re-downloads the subscription for the saved key. */
     fun refresh(): Outcome {
         val key = getKey() ?: return Outcome.INVALID_FORMAT
-        val current = MmkvManager.decodeSubscription(AmeliaConfig.SUBSCRIPTION_ID)?.url
-        val preferred = AmeliaConfig.SUB_BASE_URLS.firstOrNull { current?.startsWith(it) == true }
-        return load(key, preferred, saveKeyOnSuccess = false)
+        return load(key, AmeliaHttp.lastBase(), saveKeyOnSuccess = false)
     }
+
+    /** Epoch millis of the last successful subscription update, 0 if never. */
+    fun lastSubscriptionUpdate(): Long =
+        MmkvManager.decodeSubscription(AmeliaConfig.SUBSCRIPTION_ID)?.lastUpdated?.takeIf { it > 0 } ?: 0L
 
     /** Forgets the key and every location. The caller stops the VPN first. */
     fun logout() {

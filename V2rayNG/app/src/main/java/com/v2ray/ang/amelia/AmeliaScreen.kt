@@ -136,6 +136,7 @@ class SettingsCallbacks(
     /** Settings opened: load geo base info and the last update check time. */
     val onOpen: () -> Unit,
     val onCheckRoute: (String) -> Unit,
+    val onRefreshSubscription: () -> Unit,
 )
 
 @Composable
@@ -1090,6 +1091,7 @@ private fun SettingsScreen(
             )
         }
 
+        SettingsSubscriptionSection(state, settings)
         SettingsUpdateSection(state, updates, onAbout)
         SettingsBypassSection(state, settings)
         Spacer(Modifier.height(24.dp))
@@ -1099,6 +1101,31 @@ private fun SettingsScreen(
 @Composable
 private fun SectionTitle(text: String) {
     Text(text, color = Brand.Sky, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+}
+
+/** When the locations were last downloaded, and a button to do it now. */
+@Composable
+private fun SettingsSubscriptionSection(state: AmeliaUiState, settings: SettingsCallbacks) {
+    Glass(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SectionTitle(stringResource(R.string.amelia_settings_account))
+            Text(
+                if (state.subUpdatedAt > 0) {
+                    stringResource(R.string.amelia_settings_sub_updated, AmeliaFormat.dateTime(state.subUpdatedAt))
+                } else {
+                    stringResource(R.string.amelia_settings_sub_never)
+                },
+                color = Brand.Text,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            GradientButton(
+                text = stringResource(R.string.amelia_settings_sub_refresh),
+                enabled = !state.busy,
+                busy = state.busy,
+                onClick = settings.onRefreshSubscription,
+            )
+        }
+    }
 }
 
 /** Current version, last check, and updating right from here. */
