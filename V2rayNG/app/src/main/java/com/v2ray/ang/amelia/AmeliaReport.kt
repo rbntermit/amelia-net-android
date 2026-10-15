@@ -79,9 +79,13 @@ object AmeliaReport {
     /** Server details the report needs; the name is only for people, never for /app/probe. */
     data class Location(val guid: String, val name: String, val host: String, val port: Int?)
 
-    /** Names that work and names that do not, in subscription order. */
+    /**
+     * Names that work and names that do not, in subscription order. Reserve locations (only
+     * Telegram) are never listed as not working: they are for paying and reaching the bot.
+     */
     fun split(servers: List<Server>): Pair<List<String>, List<String>> =
-        servers.filter { it.ok }.map { it.name } to servers.filterNot { it.ok }.map { it.name }
+        servers.filter { it.ok }.map { it.name } to
+            servers.filter { !it.ok && !AmeliaReserve.isReserve(it.name) }.map { it.name }
 
     /**
      * The body as JSON within [AmeliaNetwork.MAX_BODY_BYTES]: long error texts are cut first,

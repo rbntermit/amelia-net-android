@@ -33,7 +33,13 @@ object AmeliaDaemon {
     /** Same names as the app's ConnPhase where they overlap. */
     enum class Phase { CHECKING, CONNECTED, SWITCHING, NO_INTERNET, ALL_FAILED }
 
-    data class Health(val phase: String, val pingMs: Long = -1L, val guid: String? = null) : Serializable
+    data class Health(
+        val phase: String,
+        val pingMs: Long = -1L,
+        val guid: String? = null,
+        /** Connected to a reserve location because no regular one works (AmeliaReserve). */
+        val reserveFallback: Boolean = false,
+    ) : Serializable
 
     data class Traffic(
         val up: Long,
@@ -183,7 +189,9 @@ object AmeliaDaemon {
                 MmkvManager.getSelectServer()?.let { tried += it }
             }
             persist()
-            report(service, Health(Phase.CONNECTED.name, ms, MmkvManager.getSelectServer()))
+            val selected = MmkvManager.getSelectServer()
+            val fallback = AmeliaReserveState.isAuto() && AmeliaReserveState.isReserveGuid(selected)
+            report(service, Health(Phase.CONNECTED.name, ms, selected, reserveFallback = fallback))
             AmeliaProbe.recordDaemon(service, MmkvManager.getSelectServer(), ms, AmeliaPingStage.OK)
             return CHECK_INTERVAL_MS
         }
@@ -207,7 +215,9 @@ object AmeliaDaemon {
     private fun switchToNext(service: Service): Long {
         val order = MmkvManager.decodeServerList(AmeliaConfig.SUBSCRIPTION_ID)
         val current = MmkvManager.getSelectServer()
-        val next = synchronized(tried) { AmeliaFailover.next(order, current, tried)?.also { tried += it } }
+        // Regular locations first; a reserve one (only Telegram) when none of them works
+        val reserves = AmeliaReserveState.reserveGuids()
+        val next = synchronized(tried) { AmeliaReserve.next(order, current, tried, reserves)?.also { tried += it } }
         if (next == null) {
             report(service, Health(Phase.ALL_FAILED.name, guid = current))
             synchronized(tried) {
@@ -219,6 +229,7 @@ object AmeliaDaemon {
         }
         LogUtil.i(AppConfig.TAG, "Amelia watchdog: location does not answer, switching")
         MmkvManager.setSelectServer(next)
+        AmeliaReserveState.setAuto(next in reserves)
         switching = true
         persist()
         report(service, Health(Phase.SWITCHING.name, guid = next))
@@ -232,10 +243,13 @@ object AmeliaDaemon {
      * @return delay in ms, or -1 when every URL failed
      */
     private suspend fun probeTunnel(): Long {
-        for (url in PROBE_URLS) {
+        // A reserve location passes only Telegram: check it with a request to Telegram
+        val reserve = AmeliaReserveState.isReserveGuid(MmkvManager.getSelectServer())
+        val urls = if (reserve) listOf(AmeliaReserve.TEST_URL) else PROBE_URLS
+        for (url in urls) {
             var waited = 0
             while (true) {
-                val r = CoreServiceManager.measureDelayForAmelia(url)
+                val r = CoreServiceManager.measureDelayForAmelia(url, reserve)
                 if (r != null) {
                     if (r >= 0) return r
                     break // this URL failed, try the next one

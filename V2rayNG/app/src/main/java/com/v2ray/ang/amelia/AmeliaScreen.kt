@@ -226,9 +226,6 @@ fun AmeliaApp(
                 onOpenBot = { onOpenUrl(AmeliaConfig.botUrl(BotScreen.SUPPORT)) },
             )
         }
-        if (state.showAlwaysOnHint && state.report == null) {
-            AlwaysOnHintDialog(onOpenSettings = extra.onAlwaysOnSettings, onDone = extra.onAlwaysOnHintDone)
-        }
     }
 }
 
@@ -431,7 +428,11 @@ private fun HomeScreen(
             UpdateCard(state, updates)
             Spacer(Modifier.height(10.dp))
         }
-        ExpiryBanner(state.info, onRenew = { onOpenUrl(AmeliaConfig.botUrl(BotScreen.PAY)) })
+        if (state.onReserveFallback) {
+            ReserveFallbackBanner(onRenew = { onOpenUrl(AmeliaConfig.botUrl(BotScreen.PAY)) })
+        } else {
+            ExpiryBanner(state.info, onRenew = { onOpenUrl(AmeliaConfig.botUrl(BotScreen.PAY)) })
+        }
 
         Spacer(Modifier.height(16.dp))
         PowerButton(state.phase, enabled = state.locations.isNotEmpty(), onClick = onToggle)
@@ -749,10 +750,18 @@ private fun PhaseText(state: AmeliaUiState) {
 
 /** Ping value with Happ-like colours; "…" while a round is running and this one has no result yet. */
 @Composable
-private fun PingBadge(ms: Long?, pinging: Boolean) {
+private fun PingBadge(ms: Long?, pinging: Boolean, reserve: Boolean = false) {
     if (ms == null) {
         if (pinging) Text("…", color = Brand.Muted, style = MaterialTheme.typography.labelLarge)
         return
+    }
+    // Reserve locations are checked through Telegram, the only thing they pass
+    if (reserve) {
+        Text(
+            stringResource(R.string.amelia_reserve_label) + " · ",
+            color = Brand.Muted,
+            style = MaterialTheme.typography.labelMedium,
+        )
     }
     val (text, color) = when (AmeliaFormat.pingLevel(ms)) {
         AmeliaFormat.PingLevel.GOOD -> stringResource(R.string.amelia_ping_ms, ms.toInt()) to Brand.Green
@@ -777,7 +786,10 @@ private fun LocationSelector(state: AmeliaUiState, onClick: () -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            PingBadge(state.selectedGuid?.let { state.pings[it] }, pinging = false)
+            PingBadge(
+                state.selectedGuid?.let { state.pings[it] }, pinging = false,
+                reserve = AmeliaReserve.isReserve(state.selectedName),
+            )
             Spacer(Modifier.width(8.dp))
             Text("›", color = Brand.Sky, fontSize = 28.sp, fontWeight = FontWeight.Light)
         }
@@ -863,7 +875,7 @@ private fun LocationsSheet(
                         style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.weight(1f),
                     )
-                    PingBadge(state.pings[location.guid], state.pinging)
+                    PingBadge(state.pings[location.guid], state.pinging, AmeliaReserve.isReserve(location.name))
                 }
             }
         }
@@ -1058,7 +1070,6 @@ private fun SettingsScreen(
 
         SettingsSubscriptionSection(state, settings)
         SettingsAppsSection(state, extra, onOpenApps)
-        SettingsAlwaysOnSection(extra)
         SettingsUpdateSection(state, updates, onAbout)
         SettingsBypassSection(state, settings)
         SettingsProbeSection(state, extra)

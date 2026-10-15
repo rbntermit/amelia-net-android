@@ -2,6 +2,7 @@ package com.v2ray.ang.service
 
 import android.content.Context
 import com.v2ray.ang.amelia.AmeliaPingStage
+import com.v2ray.ang.amelia.AmeliaReserve
 import com.v2ray.ang.core.CoreConfigManager
 import com.v2ray.ang.core.CoreNativeManager
 import com.v2ray.ang.dto.RealPingEvent
@@ -134,9 +135,15 @@ class RealPingWorkerService(
         if (!configResult.status) {
             return retFailure
         }
-        val (delay, error) = RealPingExecutionLimiter.run(config.configType) {
-            CoreNativeManager.measureOutboundDelayDetailed(configResult.content, SettingsManager.getDelayTestUrl())
+        // Amelia.Net: reserve locations pass only Telegram; any HTTP answer from it means "works"
+        val reserve = AmeliaReserve.isReserve(config.remarks)
+        val started = System.nanoTime()
+        val (rawDelay, rawError) = RealPingExecutionLimiter.run(config.configType) {
+            CoreNativeManager.measureOutboundDelayDetailed(
+                configResult.content, AmeliaReserve.testUrl(config.remarks, SettingsManager.getDelayTestUrl()),
+            )
         }
+        val (delay, error) = AmeliaReserve.interpret(reserve, rawDelay, rawError, (System.nanoTime() - started) / 1_000_000)
         return RealPingEvent.Result(
             guid, delay, AmeliaPingStage.classify(delay, tcpOk, error), error?.take(AmeliaPingStage.MAX_ERROR),
         )

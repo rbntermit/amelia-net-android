@@ -14,6 +14,7 @@ import androidx.core.content.ContextCompat
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.amelia.AmeliaConfig
 import com.v2ray.ang.amelia.AmeliaDaemon
+import com.v2ray.ang.amelia.AmeliaReserve
 import com.v2ray.ang.contracts.IDialerService
 import com.v2ray.ang.contracts.ServiceControl
 import com.v2ray.ang.dto.ConnectionTestResult
@@ -321,13 +322,17 @@ object CoreServiceManager {
      * that [measureV2rayDelay] adds. Blocking (up to ~12 s), call off the main thread.
      * @return delay in ms, -1 if the URL did not answer, or null while the core is not running or
      * is reloading after a network change (the caller waits and asks again instead of failing).
+     * @param reserve the location passes only Telegram: any HTTP answer counts (AmeliaReserve)
      */
-    fun measureDelayForAmelia(url: String): Long? {
+    fun measureDelayForAmelia(url: String, reserve: Boolean = false): Long? {
         if (!isRunning() || isReloading) return null
+        val started = System.nanoTime()
         return try {
             coreController.measureDelay(url)
         } catch (e: Exception) {
             if (!isRunning() || isReloading) return null
+            val (delay, _) = AmeliaReserve.interpret(reserve, -1L, e.message, (System.nanoTime() - started) / 1_000_000)
+            if (delay >= 0) return delay
             LogUtil.w(AppConfig.TAG, "StartCore-Manager: Amelia probe failed: ${e.message}")
             -1L
         }

@@ -6,7 +6,6 @@ import android.content.Intent
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.enableEdgeToEdge
@@ -111,8 +110,6 @@ class AmeliaActivity : HelperBaseComponentActivity() {
                 onAppsClosed = viewModel::appsClosed,
                 onProbe = viewModel::setProbeEnabled,
                 onDismissAnnounce = viewModel::dismissAnnounce,
-                onAlwaysOnSettings = ::openVpnSettings,
-                onAlwaysOnHintDone = viewModel::alwaysOnHintDone,
             ),
         )
     }
@@ -127,16 +124,6 @@ class AmeliaActivity : HelperBaseComponentActivity() {
         val cm = getSystemService(ClipboardManager::class.java) ?: return
         cm.setPrimaryClip(ClipData.newPlainText(getString(R.string.amelia_clip_label), text))
         viewModel.showMessage(R.string.amelia_about_copied)
-    }
-
-    /** System VPN settings, where "Always-on VPN" is switched on for this app. */
-    private fun openVpnSettings() {
-        try {
-            startActivity(Intent(Settings.ACTION_VPN_SETTINGS))
-        } catch (e: Exception) {
-            LogUtil.e(AppConfig.TAG, "Amelia: cannot open the VPN settings", e)
-            startActivity(Intent(Settings.ACTION_WIRELESS_SETTINGS))
-        }
     }
 
     private fun installUpdate(apkPath: String) {

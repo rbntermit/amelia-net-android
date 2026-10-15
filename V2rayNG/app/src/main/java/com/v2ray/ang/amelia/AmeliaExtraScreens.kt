@@ -76,8 +76,6 @@ class ExtraCallbacks(
     val onAppsClosed: () -> Unit,
     val onProbe: (Boolean) -> Unit,
     val onDismissAnnounce: () -> Unit,
-    val onAlwaysOnSettings: () -> Unit,
-    val onAlwaysOnHintDone: () -> Unit,
 )
 
 // ---- shared pieces ---------------------------------------------------------------------------
@@ -221,22 +219,6 @@ internal fun ReportButton(onClick: () -> Unit) {
     }
 }
 
-/** Once after the first connection. */
-@Composable
-internal fun AlwaysOnHintDialog(onOpenSettings: () -> Unit, onDone: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDone,
-        title = { Text(stringResource(R.string.amelia_alwayson_title)) },
-        text = { Text(stringResource(R.string.amelia_alwayson_text)) },
-        confirmButton = {
-            TextButton(onClick = { onDone(); onOpenSettings() }) { Text(stringResource(R.string.amelia_alwayson_open)) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDone) { Text(stringResource(R.string.amelia_alwayson_later)) }
-        },
-    )
-}
-
 // ---- problem report --------------------------------------------------------------------------
 
 @Composable
@@ -337,7 +319,7 @@ private fun ReportSummary(report: ReportUi) {
     if (failing.isNotEmpty() && working.isNotEmpty()) {
         Text(stringResource(R.string.amelia_report_failing, failing.joinToString(", ")), color = Brand.Amber)
     }
-    report.servers.filterNot { it.ok }.forEach { s ->
+    report.servers.filter { !it.ok && !AmeliaReserve.isReserve(it.name) }.forEach { s ->
         Text(
             "• ${s.name}: " + stringResource(
                 if (s.stage == AmeliaPingStage.CONNECT) R.string.amelia_report_no_connect else R.string.amelia_report_no_data,
@@ -468,16 +450,6 @@ internal fun SettingsProbeSection(state: AmeliaUiState, extra: ExtraCallbacks) {
     }
 }
 
-@Composable
-internal fun SettingsAlwaysOnSection(extra: ExtraCallbacks) {
-    Glass(Modifier.fillMaxWidth(), onClick = extra.onAlwaysOnSettings) {
-        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(stringResource(R.string.amelia_alwayson_setting), color = Brand.Text, style = MaterialTheme.typography.titleSmall)
-            Text(stringResource(R.string.amelia_alwayson_setting_text), color = Brand.Muted, style = MaterialTheme.typography.bodySmall)
-        }
-    }
-}
-
 // ---- app picker ------------------------------------------------------------------------------
 
 @Composable
@@ -544,6 +516,22 @@ internal fun AppsScreen(apps: List<AppRow>?, onToggle: (String, Boolean) -> Unit
                     }
                 }
             }
+        }
+    }
+}
+
+/** Connected through a reserve location: only Telegram works, so the bot can take the payment. */
+@Composable
+internal fun ReserveFallbackBanner(onRenew: () -> Unit) {
+    Glass(Modifier.fillMaxWidth(), tint = Color(0x40FF6B6B)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                stringResource(R.string.amelia_reserve_fallback),
+                color = Brand.Text,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            GradientButton(text = stringResource(R.string.amelia_renew), enabled = true, onClick = onRenew)
         }
     }
 }

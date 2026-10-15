@@ -116,17 +116,30 @@ object AmeliaManager {
         if (saveKeyOnSuccess) {
             MmkvManager.encodeSettings(AmeliaConfig.PREF_KEY, key)
         }
-        ensureSelection(previousName)
+        ensureSelection(previousName, info)
         SubscriptionUpdater.syncOne(subId = AmeliaConfig.SUBSCRIPTION_ID)
         return Outcome.OK
     }
 
-    /** Re-selects the location with the same name as before, otherwise the first one. */
-    private fun ensureSelection(previousName: String?) {
+    /**
+     * Re-selects the location with the same name as before, otherwise the first regular one
+     * (never a reserve "только Telegram" one while there are others). After a fallback to a
+     * reserve location, a renewed subscription moves the choice back to a regular location.
+     */
+    private fun ensureSelection(previousName: String?, info: AmeliaSubInfo) {
         val locations = getLocations()
         if (locations.isEmpty()) return
-        if (locations.any { it.guid == getSelectedGuid() }) return
+        val selected = getSelectedGuid()
+        val currentName = locations.firstOrNull { it.guid == selected }?.name ?: previousName
+        if (AmeliaReserveState.isAuto() && AmeliaReserve.isReserve(currentName) &&
+            !AmeliaFormat.isExpired(info, System.currentTimeMillis())
+        ) {
+            AmeliaReserveState.setAuto(false)
+            AmeliaReserve.firstChoice(locations)?.let { select(it.guid) }
+            return
+        }
+        if (locations.any { it.guid == selected }) return
         val match = previousName?.let { name -> locations.firstOrNull { it.name == name } }
-        select((match ?: locations.first()).guid)
+        (match ?: AmeliaReserve.firstChoice(locations))?.let { select(it.guid) }
     }
 }

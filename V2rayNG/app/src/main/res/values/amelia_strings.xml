@@ -208,12 +208,9 @@
     <string name="amelia_expiry_ended">Подписка закончилась</string>
     <string name="amelia_expiry_text">Действует до %1$s. Продлить можно в @amelianet_bot.</string>
 
-    <!-- 1.1.0: announcement, always-on VPN -->
+    <!-- 1.1.0: announcement -->
     <string name="amelia_announce_close">Закрыть объявление</string>
-    <string name="amelia_alwayson_title">Чтобы VPN не выключался сам</string>
-    <string name="amelia_alwayson_text">Включите «Постоянный VPN» для Amelia.Net в настройках Android. Тогда система сама включит VPN после перезагрузки или сбоя.</string>
-    <string name="amelia_alwayson_open">Открыть настройки</string>
-    <string name="amelia_alwayson_later">Не сейчас</string>
-    <string name="amelia_alwayson_setting">Постоянный VPN</string>
-    <string name="amelia_alwayson_setting_text">Чтобы VPN не выключался сам — включите «Постоянный VPN» в настройках Android.</string>
+    <!-- 1.1.1: reserve locations (only Telegram) -->
+    <string name="amelia_reserve_label">только Telegram</string>
+    <string name="amelia_reserve_fallback">Подписка закончилась — работает только Telegram</string>
 </resources>

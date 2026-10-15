@@ -17,9 +17,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Set once the always-on VPN hint was shown (or dismissed). */
-private const val PREF_ALWAYS_ON_HINT = "amelia_always_on_hint"
-
 /** Upper bound for a "ping all" round; the core gives up on each location after ~12 s. */
 private const val PING_ALL_TIMEOUT_MS = 120_000L
 
@@ -93,10 +90,10 @@ data class AmeliaUiState(
     val probeEnabled: Boolean = true,
     /** Fingerprint of the announcement the person closed. */
     val announceDismissed: String? = null,
-    /** Once after the first connection: how to keep the VPN on (always-on VPN). */
-    val showAlwaysOnHint: Boolean = false,
     /** How many packages go around the VPN (built-in list with the person's changes). */
     val bypassCount: Int = 0,
+    /** Connected to a reserve location (only Telegram) because no regular one works. */
+    val reserveFallback: Boolean = false,
 ) {
     val selectedName: String?
         get() = locations.firstOrNull { it.guid == selectedGuid }?.name
@@ -104,6 +101,14 @@ data class AmeliaUiState(
     /** Installed version is below the server's minVersionCode: no connecting until updated. */
     val updateRequired: Boolean
         get() = AmeliaUpdater.isRequired(update)
+
+    /**
+     * Working only on a reserve location (only Telegram): the daemon fell back to it, or the
+     * subscription has ended and that is where the VPN is.
+     */
+    val onReserveFallback: Boolean
+        get() = phase == ConnPhase.CONNECTED && AmeliaReserve.isReserve(selectedName) &&
+            (reserveFallback || (info != null && AmeliaFormat.isExpired(info, System.currentTimeMillis())))
 
     /** Our announcement to show above the locations, unless the person closed this text. */
     val announce: String?
@@ -369,11 +374,6 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(announceDismissed = AmeliaAnnounce.fingerprint(text)) }
     }
 
-    fun alwaysOnHintDone() {
-        viewModelScope.launch(Dispatchers.IO) { MmkvManager.encodeSettings(PREF_ALWAYS_ON_HINT, true) }
-        _state.update { it.copy(showAlwaysOnHint = false) }
-    }
-
     private var lastResumeRefresh = 0L
 
     /** Back from the bot after paying: if the end was near, see whether it moved. */
@@ -469,8 +469,12 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
     fun select(guid: String) {
         if (guid == _state.value.selectedGuid) return
         viewModelScope.launch {
-            withContext(Dispatchers.IO) { AmeliaManager.select(guid) }
-            _state.update { it.copy(selectedGuid = guid) }
+            withContext(Dispatchers.IO) {
+                AmeliaManager.select(guid)
+                // the person chose: no longer an automatic fallback to a reserve location
+                AmeliaReserveState.setAuto(false)
+            }
+            _state.update { it.copy(selectedGuid = guid, reserveFallback = false) }
             if (_state.value.isRunning) {
                 // The daemon checks the new location after the restart (a fresh round of failover).
                 expectRestart = true
@@ -541,8 +545,6 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         serviceEvents.requestRecheck()
     }
 
-    private var alwaysOnHintChecked = false
-
     private fun onHealth(h: AmeliaDaemon.Health) {
         val phase = when (h.phase) {
             AmeliaDaemon.Phase.CHECKING.name -> ConnPhase.CHECKING
@@ -553,18 +555,12 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             else -> return
         }
         if (phase == ConnPhase.SWITCHING) expectRestart = true
-        if (phase == ConnPhase.CONNECTED && !alwaysOnHintChecked) {
-            alwaysOnHintChecked = true
-            viewModelScope.launch {
-                val shown = withContext(Dispatchers.IO) { MmkvManager.decodeSettingsBool(PREF_ALWAYS_ON_HINT, false) }
-                if (!shown) _state.update { it.copy(showAlwaysOnHint = true) }
-            }
-        }
         _state.update {
             it.copy(
                 phase = phase,
                 pingMs = h.pingMs.takeIf { ms -> phase == ConnPhase.CONNECTED && ms >= 0 },
                 selectedGuid = h.guid ?: it.selectedGuid,
+                reserveFallback = phase == ConnPhase.CONNECTED && h.reserveFallback,
             )
         }
     }
@@ -587,8 +583,13 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
             _state.update { it.copy(busy = true) }
+            val before = _state.value.selectedName
             val outcome = withContext(Dispatchers.IO) { block() }
             reload()
+            // e.g. renewed after a fallback to a reserve location: move the VPN to the new choice
+            if (outcome == AmeliaManager.Outcome.OK && before != null && _state.value.selectedName != before) {
+                restartIfRunning()
+            }
             val msg = when (outcome) {
                 AmeliaManager.Outcome.OK -> if (silent) null else R.string.amelia_updated
                 AmeliaManager.Outcome.INVALID_FORMAT -> R.string.amelia_err_invalid_format
