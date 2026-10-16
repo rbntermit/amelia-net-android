@@ -29,8 +29,18 @@ class AmeliaUpdateWorker(context: Context, params: WorkerParameters) : Coroutine
 
     override suspend fun doWork(): Result {
         checkSubscriptionEnd()
-        val v = AmeliaUpdater.check() ?: return Result.success()
         val ctx = applicationContext
+        val before = AmeliaUpdater.lastCheck()
+        val v = AmeliaUpdater.check()
+        if (v == null) {
+            // 1.3.1: the server says nothing newer: no stale "вышла версия …" stays behind
+            if (AmeliaUpdater.lastCheck() != before) {
+                cancelNotification(ctx)
+                AmeliaUpdater.deleteDownloads(ctx)
+            }
+            return Result.success()
+        }
+        AmeliaUpdater.pruneDownloads(ctx, v)
         // 1.3.0: on Wi-Fi (no data limit) the update is downloaded right away; on mobile data we ask first
         val ready = AmeliaUpdater.readyApk(ctx, v)
             ?: if (AmeliaUpdater.isUnmetered(ctx)) AmeliaUpdater.download(ctx, v) {} else null
@@ -66,6 +76,9 @@ class AmeliaUpdateWorker(context: Context, params: WorkerParameters) : Coroutine
             RemoteWorkManager.getInstance(context)
                 .enqueueUniquePeriodicWork(WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, request)
         }
+
+        /** Removes the update notification (the app shows the current state itself). */
+        fun cancelNotification(context: Context) = NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
 
         /** Opens the app straight into installing the downloaded update. */
         const val EXTRA_INSTALL = "amelia_install_update"

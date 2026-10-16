@@ -115,3 +115,30 @@ class Amelia130Test {
         assertEquals("127.0.0.1", inbound.get("listen").asString)
     }
 }
+
+class Amelia131Test {
+
+    @Test
+    fun resumeFromWhereItStopped() {
+        assertEquals(AmeliaUpdater.Resume.APPEND, AmeliaUpdater.resumeAction(have = 10_000_000, code = 206))
+        // the server ignored Range and sent everything: start over
+        assertEquals(AmeliaUpdater.Resume.RESTART, AmeliaUpdater.resumeAction(have = 10_000_000, code = 200))
+        assertEquals(AmeliaUpdater.Resume.RESTART, AmeliaUpdater.resumeAction(have = 0, code = 200))
+        // "range not satisfiable": the part may already be complete, check its sha256
+        assertEquals(AmeliaUpdater.Resume.CHECK_COMPLETE, AmeliaUpdater.resumeAction(have = 32_438_882, code = 416))
+        assertEquals(AmeliaUpdater.Resume.FAIL, AmeliaUpdater.resumeAction(have = 0, code = 404))
+        assertEquals(AmeliaUpdater.Resume.FAIL, AmeliaUpdater.resumeAction(have = 0, code = 206))
+    }
+
+    @Test
+    fun filesOfAnOlderVersionAreDropped() {
+        assertTrue(AmeliaUpdater.belongsTo("AmeliaNet-12.apk", 12))
+        assertTrue(AmeliaUpdater.belongsTo("AmeliaNet-12-b04f29336bca336c.part", 12))
+        assertTrue(AmeliaUpdater.belongsTo(".lock", 12))
+        assertFalse(AmeliaUpdater.belongsTo("AmeliaNet-11.apk", 12))
+        assertFalse(AmeliaUpdater.belongsTo("AmeliaNet-11-b04f29336bca336c.part", 12))
+        // 1 and 12 are different versions
+        assertFalse(AmeliaUpdater.belongsTo("AmeliaNet-1.apk", 12))
+        assertFalse(AmeliaUpdater.belongsTo("AmeliaNet-120.apk", 12))
+    }
+}

@@ -169,7 +169,13 @@ object AmeliaUpdater {
     fun check(): AppVersion? {
         for (a in AmeliaHttp.currentPlan()) {
             try {
-                AmeliaHttp.clientFor(a.route).newCall(AmeliaHttp.get(a.base + VERSION_PATH)).execute().use { resp ->
+                // 1.3.1: always from the server: no HTTP cache, and ask proxies on the way not to answer from theirs
+                val request = AmeliaHttp.get(a.base + VERSION_PATH).newBuilder()
+                    .cacheControl(okhttp3.CacheControl.FORCE_NETWORK)
+                    .header("Cache-Control", "no-cache")
+                    .header("Pragma", "no-cache")
+                    .build()
+                AmeliaHttp.clientFor(a.route).newCall(request).execute().use { resp ->
                     if (!resp.isSuccessful) return@use
                     val now = System.currentTimeMillis()
                     MmkvManager.encodeSettings(PREF_LAST_CHECK, now.toString())
@@ -185,8 +191,17 @@ object AmeliaUpdater {
             }
         }
         saveAnswer(CheckAnswer(System.currentTimeMillis(), false))
+        // 1.3.1: a version remembered from an earlier check is not shown again without a fresh answer;
+        // only a required update (minVersionCode) holds, so it cannot be skipped by going offline
+        if (cached()?.let { isRequired(it) } != true) MmkvManager.encodeSettings(PREF_CACHED, "")
         return null
     }
+
+    /** When the last check was attempted (answered or not), 0 if never. */
+    fun lastAttempt(): Long = lastAnswer()?.at ?: 0L
+
+    /** Coming back to the screen checks again after this long. */
+    const val RESUME_CHECK_MS = 60L * 60 * 1000
 
     /**
      * Where to download the APK from, in order. An APK on our domains is fetched from the
@@ -204,27 +219,51 @@ object AmeliaUpdater {
     private fun updatesDir(context: Context) = File(context.cacheDir, "updates").apply { mkdirs() }
 
     /**
-     * Blocking download with sha256 check, walking [downloadPlan]. Removes older downloads.
+     * Blocking download with sha256 check, walking [downloadPlan]. 1.3.1: an interrupted download
+     * continues where it stopped (HTTP Range; msk1/msk2 serve the APK in parts), files of other
+     * versions are removed, and only one process downloads at a time.
      * @param onProgress 0..100, or -1 when the size is unknown
      */
     fun download(context: Context, v: AppVersion, onProgress: (Int) -> Unit): File? {
         val dir = updatesDir(context)
-        dir.listFiles()?.forEach { it.delete() }
-        val target = targetFile(context, v)
-        // arm64-v8a APK first (1.3.0), the universal one if that fails or does not match
-        for (apk in apkChoices(v, deviceAbis(), AmeliaHttp.lastBase())) {
-            for ((url, route) in downloadPlan(apk.url, AmeliaHttp.lastBase(), AmeliaHttp.tunnelAvailable())) {
-                if (!isAllowedUrl(url)) continue
-                if (downloadFrom(url, route, apk, target, onProgress)) {
-                    AmeliaConfig.SUB_BASE_URLS.firstOrNull { url.startsWith(it) }?.let { AmeliaHttp.rememberBase(it) }
-                    return target
+        val lock = try {
+            java.io.RandomAccessFile(File(dir, ".lock"), "rw").channel.tryLock()
+        } catch (e: Exception) {
+            null
+        } ?: return null // the background worker or the app is downloading it right now
+        try {
+            pruneDownloads(context, v)
+            val target = targetFile(context, v)
+            // arm64-v8a APK first (1.3.0), the universal one if that fails or does not match
+            for (apk in apkChoices(v, deviceAbis(), AmeliaHttp.lastBase())) {
+                for ((url, route) in downloadPlan(apk.url, AmeliaHttp.lastBase(), AmeliaHttp.tunnelAvailable())) {
+                    if (!isAllowedUrl(url)) continue
+                    if (downloadFrom(url, route, apk, partFile(context, v, apk), target, onProgress)) {
+                        AmeliaConfig.SUB_BASE_URLS.firstOrNull { url.startsWith(it) }?.let { AmeliaHttp.rememberBase(it) }
+                        return target
+                    }
                 }
             }
+            return null
+        } finally {
+            runCatching { lock.release(); lock.channel().close() }
         }
-        return null
     }
 
     private fun targetFile(context: Context, v: AppVersion) = File(updatesDir(context), "AmeliaNet-${v.versionCode}.apk")
+
+    /** Partial download of one APK; named by its checksum, so any mirror can continue it. */
+    private fun partFile(context: Context, v: AppVersion, apk: Apk) =
+        File(updatesDir(context), "AmeliaNet-${v.versionCode}-${apk.sha256.take(16).lowercase()}.part")
+
+    /** Files of [v] that are kept: its APK and its partial downloads. */
+    internal fun belongsTo(fileName: String, versionCode: Int): Boolean =
+        fileName == ".lock" || fileName.startsWith("AmeliaNet-$versionCode.") || fileName.startsWith("AmeliaNet-$versionCode-")
+
+    /** A newer version came out meanwhile: what was downloaded for the older one is deleted. */
+    fun pruneDownloads(context: Context, v: AppVersion) {
+        updatesDir(context).listFiles()?.filterNot { belongsTo(it.name, v.versionCode) }?.forEach { it.delete() }
+    }
 
     /**
      * An APK for [v] downloaded earlier (e.g. in the background on Wi-Fi) whose checksum matches
@@ -236,8 +275,9 @@ object AmeliaUpdater {
         return f.takeIf { apkChoices(v, deviceAbis(), AmeliaHttp.lastBase()).any { it.sha256.equals(hex, ignoreCase = true) } }
     }
 
-    private fun sha256(f: File): String {
-        val digest = MessageDigest.getInstance("SHA-256")
+    private fun sha256(f: File): String = hex(MessageDigest.getInstance("SHA-256").also { update(it, f) })
+
+    private fun update(digest: MessageDigest, f: File) {
         f.inputStream().use { input ->
             val buf = ByteArray(64 * 1024)
             while (true) {
@@ -246,8 +286,9 @@ object AmeliaUpdater {
                 digest.update(buf, 0, n)
             }
         }
-        return digest.digest().joinToString("") { "%02x".format(it) }
     }
+
+    private fun hex(digest: MessageDigest) = digest.digest().joinToString("") { "%02x".format(it) }
 
     /** After an update is installed: the downloaded APK is no longer needed. */
     fun deleteDownloads(context: Context) {
@@ -258,28 +299,56 @@ object AmeliaUpdater {
     fun isUnmetered(context: Context): Boolean =
         context.getSystemService(android.net.ConnectivityManager::class.java)?.isActiveNetworkMetered == false
 
+    /**
+     * What to do with the server's answer to a request for the rest of the file from [have]:
+     * 206 = append, 200 = the server sent the whole file (start over), 416 = we may already
+     * have all of it.
+     */
+    internal enum class Resume { APPEND, RESTART, CHECK_COMPLETE, FAIL }
+
+    internal fun resumeAction(have: Long, code: Int): Resume = when {
+        have > 0 && code == 206 -> Resume.APPEND
+        code == 200 -> Resume.RESTART
+        have > 0 && code == 416 -> Resume.CHECK_COMPLETE
+        else -> Resume.FAIL
+    }
+
     private fun downloadFrom(
         url: String,
         route: AmeliaHttp.Route,
         apk: Apk,
+        part: File,
         target: File,
         onProgress: (Int) -> Unit,
     ): Boolean {
-        val tmp = File(target.parentFile, "${target.name}.part")
+        val have = if (part.isFile) part.length() else 0L
         try {
-            AmeliaHttp.clientFor(route).newCall(AmeliaHttp.get(url)).execute().use { resp ->
-                if (!resp.isSuccessful) {
-                    LogUtil.w(AppConfig.TAG, "Amelia: update download HTTP ${resp.code} ($route)")
-                    return false
-                }
+            val request = AmeliaHttp.get(url).newBuilder()
+                .apply { if (have > 0) header("Range", "bytes=$have-") }
+                .build()
+            AmeliaHttp.clientFor(route).newCall(request).execute().use { resp ->
                 // Redirects (e.g. GitHub → CDN) must stay on allowed hosts too
                 if (!isAllowedUrl(resp.request.url.toString())) return false
-                val total = resp.body.contentLength().takeIf { it > 0 } ?: apk.size ?: -1L
                 val digest = MessageDigest.getInstance("SHA-256")
+                var done = when (resumeAction(have, resp.code)) {
+                    Resume.APPEND -> {
+                        update(digest, part)
+                        have
+                    }
+                    Resume.RESTART -> {
+                        part.delete()
+                        0L
+                    }
+                    Resume.CHECK_COMPLETE -> return finish(part, target, apk, sha256(part), route)
+                    Resume.FAIL -> {
+                        LogUtil.w(AppConfig.TAG, "Amelia: update download HTTP ${resp.code} ($route)")
+                        return false
+                    }
+                }
+                val total = apk.size ?: (resp.body.contentLength().takeIf { it > 0 }?.let { it + done } ?: -1L)
                 resp.body.byteStream().use { input ->
-                    tmp.outputStream().use { out ->
+                    java.io.FileOutputStream(part, done > 0).use { out ->
                         val buf = ByteArray(64 * 1024)
-                        var done = 0L
                         var lastPct = -2
                         while (true) {
                             val n = input.read(buf)
@@ -292,20 +361,25 @@ object AmeliaUpdater {
                         }
                     }
                 }
-                val hex = digest.digest().joinToString("") { "%02x".format(it) }
-                if (!hex.equals(apk.sha256, ignoreCase = true)) {
-                    LogUtil.w(AppConfig.TAG, "Amelia: update sha256 mismatch ($route)")
-                    tmp.delete()
-                    return false
-                }
+                return finish(part, target, apk, hex(digest), route)
             }
-            return tmp.renameTo(target)
         } catch (e: Exception) {
-            LogUtil.w(AppConfig.TAG, "Amelia: update download failed ($route)", e)
-            tmp.delete()
+            // the part stays: the next attempt (this or another mirror, now or later) continues it
+            LogUtil.w(AppConfig.TAG, "Amelia: update download interrupted ($route)", e)
             return false
         }
     }
+
+    private fun finish(part: File, target: File, apk: Apk, hex: String, route: AmeliaHttp.Route): Boolean {
+        if (!hex.equals(apk.sha256, ignoreCase = true)) {
+            LogUtil.w(AppConfig.TAG, "Amelia: update sha256 mismatch ($route)")
+            part.delete()
+            return false
+        }
+        target.delete()
+        return part.renameTo(target)
+    }
+
 
     /** Android 8+: the user must allow this app to install unknown apps once. */
     fun canInstall(context: Context): Boolean =

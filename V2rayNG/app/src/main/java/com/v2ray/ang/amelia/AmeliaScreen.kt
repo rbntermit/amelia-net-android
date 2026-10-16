@@ -981,6 +981,13 @@ private fun ActionGrid(
 
 // ---- Update and about ------------------------------------------------------------------------
 
+/** 1.3.1: "Обновление X готово — установить" once the APK is downloaded (e.g. on Wi-Fi in the background). */
+private fun updateTitle(state: AmeliaUiState, required: Boolean): Int = when {
+    required -> R.string.amelia_update_required_title
+    state.updateApkPath != null -> R.string.amelia_update_ready
+    else -> R.string.amelia_update_available
+}
+
 /** Download progress, then "Install"; or "Download" before that. */
 @Composable
 private fun UpdateActions(state: AmeliaUiState, updates: UpdateCallbacks) {
@@ -1016,7 +1023,7 @@ private fun UpdateCard(state: AmeliaUiState, updates: UpdateCallbacks) {
     Glass(Modifier.fillMaxWidth(), tint = Color(0x3359ABFF)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                stringResource(R.string.amelia_update_available, v.versionName ?: v.versionCode.toString()),
+                stringResource(updateTitle(state, required = false), v.versionName ?: v.versionCode.toString()),
                 color = Brand.Text,
                 style = MaterialTheme.typography.titleSmall,
             )
@@ -1044,7 +1051,7 @@ private fun UpdateDialog(state: AmeliaUiState, updates: UpdateCallbacks, onLater
         title = {
             Text(
                 stringResource(
-                    if (onLater == null) R.string.amelia_update_required_title else R.string.amelia_update_available,
+                    updateTitle(state, required = onLater == null),
                     name,
                 ),
                 textAlign = TextAlign.Center,
@@ -1183,7 +1190,7 @@ private fun SettingsUpdateSection(state: AmeliaUiState, updates: UpdateCallbacks
             if (v != null) {
                 Text(
                     stringResource(
-                        if (state.updateRequired) R.string.amelia_update_required_title else R.string.amelia_update_available,
+                        updateTitle(state, required = state.updateRequired),
                         v.versionName ?: v.versionCode.toString(),
                     ),
                     color = Brand.Text,

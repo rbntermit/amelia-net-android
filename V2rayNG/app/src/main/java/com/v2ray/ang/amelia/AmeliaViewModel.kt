@@ -202,11 +202,12 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) { AmeliaCrash.sendPending(getApplication()) }
         updateGeoIfDue()
         viewModelScope.launch {
-            // A forced update found earlier must hold even when the server is unreachable now
-            val cached = withContext(Dispatchers.IO) { AmeliaUpdater.cached() }
-            if (cached != null) _state.update { it.copy(update = it.update ?: cached) }
-            cached?.let { onUpdateFound(it) }
-            if (AmeliaUpdater.isCheckDue()) checkUpdate(manual = false)
+            // A forced update found earlier must hold even when the server is unreachable now;
+            // any other remembered version waits for the fresh answer (1.3.1)
+            val cached = withContext(Dispatchers.IO) { AmeliaUpdater.cached()?.takeIf { AmeliaUpdater.isRequired(it) } }
+            if (cached != null) _state.update { it.copy(update = cached) }
+            // 1.3.1: every cold start asks the server right away, in the background
+            checkUpdate(manual = false)
         }
     }
 
@@ -218,11 +219,29 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             val v = withContext(Dispatchers.IO) { AmeliaUpdater.check() }
             val answered = AmeliaUpdater.lastCheck() != before
             // check() refreshed the cache: null now means "up to date" or "no answer"
-            val current = v ?: withContext(Dispatchers.IO) { AmeliaUpdater.cached() }
+            // 1.3.1: only what this check says. No answer: only a required update stays (check() keeps it).
+            val current = v ?: if (answered) null else withContext(Dispatchers.IO) { AmeliaUpdater.cached() }
+            val app = getApplication<Application>()
             _state.update {
-                it.copy(update = current, updateChecking = false, lastUpdateCheck = AmeliaUpdater.lastCheck())
+                val same = it.update?.versionCode == current?.versionCode
+                it.copy(
+                    update = current,
+                    updateChecking = false,
+                    lastUpdateCheck = AmeliaUpdater.lastCheck(),
+                    // a file or progress of another version must not stay on screen
+                    updateApkPath = if (same) it.updateApkPath else null,
+                    updateSize = if (same) it.updateSize else null,
+                )
+            }
+            withContext(Dispatchers.IO) {
+                // the app shows the current state itself: no stale "вышла версия …" in the shade
+                AmeliaUpdateWorker.cancelNotification(app)
+                if (current == null && answered) AmeliaUpdater.deleteDownloads(app)
+                current?.let { AmeliaUpdater.pruneDownloads(app, it) }
             }
             current?.let { onUpdateFound(it) }
+            // "О программе" open: its "Обновления проверены …" line follows the new answer
+            if (_state.value.about != null) loadAbout()
             if (manual && current == null) {
                 showMessage(if (answered) R.string.amelia_update_none else R.string.amelia_update_check_failed)
             }
@@ -413,6 +432,8 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
     /** Back from the bot after paying: if the end was near, see whether it moved. */
     fun onResume() {
         val s = _state.value
+        // 1.3.1: back on the screen after more than an hour: ask the server again
+        if (System.currentTimeMillis() - AmeliaUpdater.lastAttempt() > AmeliaUpdater.RESUME_CHECK_MS) checkUpdate(manual = false)
         viewModelScope.launch {
             val ok = withContext(Dispatchers.IO) { AmeliaBattery.isAllowed(getApplication()) }
             _state.update { it.copy(batteryOk = ok, showBatteryCard = it.showBatteryCard && !ok) }

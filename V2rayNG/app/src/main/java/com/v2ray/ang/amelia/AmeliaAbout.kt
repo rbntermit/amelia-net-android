@@ -70,6 +70,17 @@ object AmeliaAbout {
         return if (first.startsWith("msk")) first else "$backupWord ($host)"
     }
 
+    /** "только что", "12 мин назад", "3 ч назад", or the date for older. */
+    fun ago(context: Context, at: Long, now: Long = System.currentTimeMillis()): String {
+        val min = (now - at).coerceAtLeast(0) / 60_000
+        return when {
+            min < 1 -> context.getString(R.string.amelia_ago_now)
+            min < 60 -> context.getString(R.string.amelia_ago_min, min.toInt())
+            min < 48 * 60 -> context.getString(R.string.amelia_ago_hours, (min / 60).toInt())
+            else -> AmeliaFormat.dateTime(at)
+        }
+    }
+
     fun dateOrDash(ms: Long): String = if (ms > 0) AmeliaFormat.dateTime(ms) else "—"
 
     /** What the update server said, in words. */
@@ -77,13 +88,11 @@ object AmeliaAbout {
         a == null || a.at <= 0 -> context.getString(R.string.amelia_about_update_never)
         !a.ok -> context.getString(R.string.amelia_about_update_no_answer, AmeliaFormat.dateTime(a.at))
         a.versionCode == null -> context.getString(R.string.amelia_about_update_bad, AmeliaFormat.dateTime(a.at))
-        else -> context.getString(
-            R.string.amelia_about_update_answer,
-            AmeliaFormat.dateTime(a.at),
-            a.versionName ?: a.versionCode.toString(),
-            a.versionCode,
-            baseLabel(a.base, context.getString(R.string.amelia_about_backup)) ?: "—",
+        // 1.3.1: "Обновления проверены 5 мин назад — у вас последняя версия" / "— доступна 1.3.2"
+        a.versionCode > BuildConfig.VERSION_CODE -> context.getString(
+            R.string.amelia_about_update_newer, ago(context, a.at), a.versionName ?: a.versionCode.toString(),
         )
+        else -> context.getString(R.string.amelia_about_update_latest, ago(context, a.at))
     }
 
     fun subText(context: Context, i: Info): String = if (i.subUpdatedAt <= 0) {

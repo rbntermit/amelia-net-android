@@ -147,7 +147,6 @@
     <string name="amelia_about_update_never">Обновления приложения ещё не проверялись</string>
     <string name="amelia_about_update_no_answer">Проверка обновлений %1$s: сервер не ответил</string>
     <string name="amelia_about_update_bad">Проверка обновлений %1$s: сервер прислал неверный ответ</string>
-    <string name="amelia_about_update_answer">Проверка обновлений %1$s: на сервере версия %2$s (%3$d), ответил %4$s</string>
     <string name="amelia_about_network">Сеть: %1$s</string>
     <string name="amelia_about_bypass_on">Российские приложения мимо VPN: да (%1$d в списке)</string>
     <string name="amelia_about_bypass_off">Российские приложения мимо VPN: нет</string>
@@ -245,4 +244,10 @@
     <string name="amelia_update_ready">Обновление %1$s готово — установить</string>
     <string name="amelia_update_tap_size">Нажмите, чтобы скачать (%1$s МБ)</string>
     <string name="amelia_update_download_size">Скачать · %1$s МБ</string>
+    <!-- 1.3.1 -->
+    <string name="amelia_about_update_latest">Обновления проверены %1$s — у вас последняя версия</string>
+    <string name="amelia_about_update_newer">Обновления проверены %1$s — доступна %2$s</string>
+    <string name="amelia_ago_now">только что</string>
+    <string name="amelia_ago_min">%1$d мин назад</string>
+    <string name="amelia_ago_hours">%1$d ч назад</string>
 </resources>
