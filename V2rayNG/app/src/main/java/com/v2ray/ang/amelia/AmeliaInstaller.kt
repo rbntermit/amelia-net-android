@@ -84,6 +84,10 @@ object AmeliaInstaller {
                         "Amelia: update install failed, status=$status " +
                             intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE).orEmpty(),
                     )
+                    AmeliaCrash.nonFatal(
+                        "update", null,
+                        "install failed, status=$status " + intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE).orEmpty(),
+                    )
                 }
             }
         }
@@ -103,6 +107,8 @@ object AmeliaInstaller {
     class PackageReplacedReceiver : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
+            // 1.3.0: the downloaded APK is installed now, free the space
+            AmeliaUpdater.deleteDownloads(context)
             if (!MmkvManager.decodeSettingsBool(PREF_RESTART_VPN, false)) return
             MmkvManager.encodeSettings(PREF_RESTART_VPN, false)
             if (MmkvManager.getSelectServer().isNullOrEmpty()) return

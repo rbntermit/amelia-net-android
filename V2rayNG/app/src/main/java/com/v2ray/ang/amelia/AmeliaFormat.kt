@@ -39,6 +39,9 @@ object AmeliaFormat {
     fun dateTime(epochMillis: Long): String =
         SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.US).format(Date(epochMillis))
 
+    /** 32 400 000 bytes → "31" (MB, binary, whole). */
+    fun megabytes(bytes: Long): String = ((bytes + 512 * 1024) / (1024 * 1024)).toString()
+
     fun date(epochSeconds: Long): String =
         SimpleDateFormat("dd.MM.yyyy", Locale.US).format(Date(epochSeconds * 1000))
 

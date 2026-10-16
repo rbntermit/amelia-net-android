@@ -904,7 +904,11 @@ object CoreConfigManager {
             servers = servers,
             hosts = hosts,
             tag = AppConfig.TAG_DNS,
-            enableParallelQuery = if ((domesticDns.size + remoteDns.size) > 2) true else null
+            enableParallelQuery = if ((domesticDns.size + remoteDns.size) > 2) true else null,
+            // Amelia.Net 1.3.0: without IPv6 in the VPN, Android blocks IPv6 for apps inside it (no
+            // leak), but AAAA answers would still make them try IPv6 first and wait. Remove when
+            // the VPN gets IPv6 (PREF_IPV6_ENABLED).
+            queryStrategy = if (MmkvManager.decodeSettingsBool(AppConfig.PREF_IPV6_ENABLED)) null else "UseIPv4",
         )
 
         if (domesticDnsTags.isNotEmpty()) {

@@ -174,7 +174,7 @@
 
     <!-- 1.1.0: problem report -->
     <string name="amelia_menu_report">Не работает — сообщить</string>
-    <string name="amelia_report_button">Не работает — сообщить</string>
+    <string name="amelia_report_link">Не работает? Сообщить</string>
     <string name="amelia_report_title">Проверка локаций</string>
     <string name="amelia_report_testing">Проверяю все локации… %1$d из %2$d</string>
     <string name="amelia_report_working">Работают: %1$s</string>
@@ -228,10 +228,21 @@
     <string name="amelia_switch_channel">Переключение локаций</string>
     <string name="amelia_switch_text">%1$s перестал отвечать — переключились на %2$s</string>
     <string name="amelia_switch_text_short">Переключились на %1$s</string>
-    <string name="amelia_suggest_title">Сообщить, что %1$s не работает?</string>
-    <string name="amelia_suggest_text">Соединение с этой локацией есть, но данные через неё не идут, а остальные работают. Мы посмотрим, что с ней.</string>
-    <string name="amelia_suggest_send">Сообщить</string>
-    <string name="amelia_suggest_no">Не нужно</string>
-    <string name="amelia_suggest_comment">Приложение заметило: %1$s соединяется, но данные не идут</string>
-    <string name="amelia_suggest_failed">Не получилось отправить сообщение, попробуйте кнопкой «Не работает — сообщить»</string>
+    <!-- 1.3.0 -->
+    <string name="amelia_crash_title">Отправлять отчёты о сбоях</string>
+    <string name="amelia_crash_text">Если приложение упадёт или VPN не запустится, мы получим техническое описание ошибки: случайный номер установки (тот же, что для поиска блокировок), версии приложения, ядра и Android, модель телефона и место ошибки в коде. Ключ, идентификаторы, ссылки и IP-адреса из текста удаляются.</string>
+    <string name="amelia_battery_card_title">Чтобы VPN не отключался сам — разрешите работу в фоне</string>
+    <string name="amelia_battery_card_text">Телефон экономит батарею и может усыпить приложение вместе с VPN.</string>
+    <string name="amelia_battery_samsung">На Samsung ещё: Настройки → Батарея → Фоновые ограничения → Никогда не отправлять в спящий режим → добавить Amelia.Net.</string>
+    <string name="amelia_battery_allow">Разрешить</string>
+    <string name="amelia_battery_setting">Работа в фоне</string>
+    <string name="amelia_battery_ok">✅ работа в фоне разрешена</string>
+    <string name="amelia_battery_not_ok">Телефон может усыпить VPN ради экономии батареи</string>
+    <string name="amelia_speed_measure">Замерить скорость (10 МБ)</string>
+    <string name="amelia_speed_value">≈ %1$s Мбит/с</string>
+    <string name="amelia_speed_testing">замеряю…</string>
+    <string name="amelia_speed_failed">Не удалось замерить скорость через эту локацию</string>
+    <string name="amelia_update_ready">Обновление %1$s готово — установить</string>
+    <string name="amelia_update_tap_size">Нажмите, чтобы скачать (%1$s МБ)</string>
+    <string name="amelia_update_download_size">Скачать · %1$s МБ</string>
 </resources>

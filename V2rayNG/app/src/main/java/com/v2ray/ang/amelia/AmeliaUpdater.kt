@@ -45,13 +45,21 @@ object AmeliaUpdater {
     fun cached(): AppVersion? =
         parse(MmkvManager.decodeSettingsString(PREF_CACHED))?.takeIf { it.versionCode > BuildConfig.VERSION_CODE }
 
-    /** For the background notification: true once per new versionCode. */
-    fun markNotified(v: AppVersion): Boolean {
-        val last = MmkvManager.decodeSettingsString(PREF_NOTIFIED)?.toIntOrNull() ?: 0
-        if (v.versionCode <= last) return false
-        MmkvManager.encodeSettings(PREF_NOTIFIED, v.versionCode.toString())
+    /**
+     * For the background notification: true once per new versionCode, and once more when the
+     * update downloaded on Wi-Fi is ready to install ("<code>:<ready 0/1>").
+     */
+    fun markNotified(v: AppVersion, ready: Boolean = false): Boolean {
+        val stored = MmkvManager.decodeSettingsString(PREF_NOTIFIED).orEmpty().split(':')
+        val lastCode = stored.getOrNull(0)?.toIntOrNull() ?: 0
+        val lastReady = stored.getOrNull(1) == "1"
+        if (!shouldNotify(v.versionCode, ready, lastCode, lastReady)) return false
+        MmkvManager.encodeSettings(PREF_NOTIFIED, "${v.versionCode}:${if (ready) 1 else 0}")
         return true
     }
+
+    internal fun shouldNotify(code: Int, ready: Boolean, lastCode: Int, lastReady: Boolean): Boolean =
+        code > lastCode || (code == lastCode && ready && !lastReady)
 
     /** APK downloads are accepted only from these hosts and their subdomains. */
     private val ALLOWED_HOSTS = listOf(
@@ -67,7 +75,43 @@ object AmeliaUpdater {
         val notes: String? = null,
         /** Optional; absent in version.json made before 1.0.1. */
         val minVersionCode: Int? = null,
+        /**
+         * 1.3.0: smaller per-ABI APKs next to the universal one in /app/ (file name only):
+         * {"arm64-v8a": {"file": "AmeliaNet_1.3.0_arm64-v8a.apk", "sha256": "…", "size": 32400000}}
+         */
+        val abis: Map<String, AbiApk>? = null,
     )
+
+    data class AbiApk(val file: String? = null, val sha256: String? = null, val size: Long? = null)
+
+    /** One APK to try: where, its checksum and size. */
+    data class Apk(val url: String, val sha256: String, val size: Long?)
+
+    private val SHA256 = Regex("^[0-9a-fA-F]{64}$")
+    private val APK_FILE = Regex("""^[A-Za-z0-9._-]+\.apk$""")
+
+    /**
+     * APKs to try, in order: the arm64-v8a one when the phone runs arm64 and version.json has
+     * it (about 31 MB instead of 75), from the address that answered version.json; then the
+     * universal one from "url".
+     */
+    fun apkChoices(v: AppVersion, supportedAbis: List<String>, base: String?): List<Apk> = buildList {
+        val arm = v.abis?.get(ARM64)
+        val origin = base ?: v.url?.let { runCatching { URI(it) }.getOrNull() }?.let { "${it.scheme}://${it.rawAuthority}" }
+        if (ARM64 in supportedAbis && arm != null && origin != null &&
+            arm.file != null && APK_FILE.matches(arm.file) && arm.sha256 != null && SHA256.matches(arm.sha256)
+        ) {
+            add(Apk("${origin.trimEnd('/')}/app/${arm.file}", arm.sha256, arm.size))
+        }
+        v.url?.let { url -> v.sha256?.let { add(Apk(url, it, v.size)) } }
+    }
+
+    const val ARM64 = "arm64-v8a"
+
+    fun deviceAbis(): List<String> = Build.SUPPORTED_ABIS.toList()
+
+    /** Size of what will be downloaded on this phone, for "Скачать · 31 МБ". */
+    fun downloadSize(v: AppVersion): Long? = apkChoices(v, deviceAbis(), AmeliaHttp.lastBase()).firstOrNull()?.size
 
     /** Validates server JSON; null when malformed or unsafe. */
     internal fun parse(json: String?): AppVersion? {
@@ -166,21 +210,58 @@ object AmeliaUpdater {
     fun download(context: Context, v: AppVersion, onProgress: (Int) -> Unit): File? {
         val dir = updatesDir(context)
         dir.listFiles()?.forEach { it.delete() }
-        val target = File(dir, "AmeliaNet-${v.versionCode}.apk")
-        for ((url, route) in downloadPlan(v.url!!, AmeliaHttp.lastBase(), AmeliaHttp.tunnelAvailable())) {
-            if (!isAllowedUrl(url)) continue
-            if (downloadFrom(url, route, v, target, onProgress)) {
-                AmeliaConfig.SUB_BASE_URLS.firstOrNull { url.startsWith(it) }?.let { AmeliaHttp.rememberBase(it) }
-                return target
+        val target = targetFile(context, v)
+        // arm64-v8a APK first (1.3.0), the universal one if that fails or does not match
+        for (apk in apkChoices(v, deviceAbis(), AmeliaHttp.lastBase())) {
+            for ((url, route) in downloadPlan(apk.url, AmeliaHttp.lastBase(), AmeliaHttp.tunnelAvailable())) {
+                if (!isAllowedUrl(url)) continue
+                if (downloadFrom(url, route, apk, target, onProgress)) {
+                    AmeliaConfig.SUB_BASE_URLS.firstOrNull { url.startsWith(it) }?.let { AmeliaHttp.rememberBase(it) }
+                    return target
+                }
             }
         }
         return null
     }
 
+    private fun targetFile(context: Context, v: AppVersion) = File(updatesDir(context), "AmeliaNet-${v.versionCode}.apk")
+
+    /**
+     * An APK for [v] downloaded earlier (e.g. in the background on Wi-Fi) whose checksum matches
+     * one of its APKs; null otherwise. Blocking (hashes the file).
+     */
+    fun readyApk(context: Context, v: AppVersion): File? {
+        val f = targetFile(context, v).takeIf { it.isFile } ?: return null
+        val hex = sha256(f)
+        return f.takeIf { apkChoices(v, deviceAbis(), AmeliaHttp.lastBase()).any { it.sha256.equals(hex, ignoreCase = true) } }
+    }
+
+    private fun sha256(f: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        f.inputStream().use { input ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) break
+                digest.update(buf, 0, n)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    /** After an update is installed: the downloaded APK is no longer needed. */
+    fun deleteDownloads(context: Context) {
+        File(context.cacheDir, "updates").listFiles()?.forEach { it.delete() }
+    }
+
+    /** Wi-Fi or another network without a data limit: updates may be downloaded unasked. */
+    fun isUnmetered(context: Context): Boolean =
+        context.getSystemService(android.net.ConnectivityManager::class.java)?.isActiveNetworkMetered == false
+
     private fun downloadFrom(
         url: String,
         route: AmeliaHttp.Route,
-        v: AppVersion,
+        apk: Apk,
         target: File,
         onProgress: (Int) -> Unit,
     ): Boolean {
@@ -193,7 +274,7 @@ object AmeliaUpdater {
                 }
                 // Redirects (e.g. GitHub → CDN) must stay on allowed hosts too
                 if (!isAllowedUrl(resp.request.url.toString())) return false
-                val total = resp.body.contentLength().takeIf { it > 0 } ?: v.size ?: -1L
+                val total = resp.body.contentLength().takeIf { it > 0 } ?: apk.size ?: -1L
                 val digest = MessageDigest.getInstance("SHA-256")
                 resp.body.byteStream().use { input ->
                     tmp.outputStream().use { out ->
@@ -212,7 +293,7 @@ object AmeliaUpdater {
                     }
                 }
                 val hex = digest.digest().joinToString("") { "%02x".format(it) }
-                if (!hex.equals(v.sha256, ignoreCase = true)) {
+                if (!hex.equals(apk.sha256, ignoreCase = true)) {
                     LogUtil.w(AppConfig.TAG, "Amelia: update sha256 mismatch ($route)")
                     tmp.delete()
                     return false

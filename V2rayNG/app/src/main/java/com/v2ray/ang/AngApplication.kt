@@ -7,6 +7,7 @@ import androidx.work.Configuration
 import androidx.work.WorkManager
 import com.v2ray.ang.AppConfig.ANG_PACKAGE
 import com.v2ray.ang.handler.AppLocaleManager
+import com.v2ray.ang.amelia.AmeliaCrash
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.ui.compose.ThemeManager
@@ -36,6 +37,9 @@ class AngApplication : Application() {
         super.onCreate()
 
         MmkvManager.initialize(this)
+
+        // Amelia.Net: crash reports from every process (app, VPN daemon, workers)
+        AmeliaCrash.install(this)
 
         AppLocaleManager.initialize(this)
 

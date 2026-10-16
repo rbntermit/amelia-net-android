@@ -14,6 +14,7 @@ import android.os.StrictMode
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.AppConfig.LOOPBACK
 import com.v2ray.ang.BuildConfig
+import com.v2ray.ang.amelia.AmeliaCrash
 import com.v2ray.ang.contracts.ServiceControl
 import com.v2ray.ang.contracts.Tun2SocksControl
 import com.v2ray.ang.core.CoreServiceManager
@@ -185,6 +186,8 @@ class CoreVpnService : VpnService(), ServiceControl {
             return true
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "Failed to establish VPN interface", e)
+            // Amelia.Net: crash report (non-fatal), sent with the next app start
+            AmeliaCrash.nonFatal("vpn_service", e)
             stopAllService()
         }
         return false

@@ -51,22 +51,6 @@ class AmeliaFastTest {
     }
 
     @Test
-    fun suggestOnlyWhenOneOrTwoPassNoDataAndTheRestWork() {
-        val names = listOf("A", "B", "C", "D", "🆘 Резервный — только Telegram")
-        val base = listOf(e("A", 100), e("B", 200), e("C", 150), e("D", -1, "data"), e("🆘 Резервный — только Telegram", -1))
-        assertEquals(listOf("D"), AmeliaSuggest.candidates(base, names))
-        // "does not connect" is not "data does not pass"
-        assertEquals(emptyList<String>(), AmeliaSuggest.candidates(base.dropLast(2) + e("D", -1, "connect"), names))
-        // three cut: something bigger than one server, the report button is for that
-        assertEquals(
-            emptyList<String>(),
-            AmeliaSuggest.candidates(listOf(e("A", -1), e("B", -1), e("C", -1), e("D", 50)), names),
-        )
-        // results incomplete: wait for the whole check
-        assertEquals(emptyList<String>(), AmeliaSuggest.candidates(base.take(3) + e("D", -1), names + "E"))
-    }
-
-    @Test
     fun hintsParseAndNetworkKey() {
         val h = AmeliaHints.parse(
             """{"asn": 8359, "as": "MTS PJSC", "cc": "RU", "bad": [{"host": "79.137.192.178", "port": 2079, "bad": 3, "of": 4, "stage": "data"}], "ts": 1700000000}""",

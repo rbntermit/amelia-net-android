@@ -225,34 +225,3 @@ object AmeliaQueue {
         return order(locations(), known, AmeliaHints.badHostPorts(AmeliaHints.current(sim)), AmeliaBest.get(net), exclude)
     }
 }
-
-/**
- * "Сообщить, что Нидерланды 1 не работает?": offered when one or two regular locations connect
- * but pass no data while all the others work; at most once a day per location.
- */
-object AmeliaSuggest {
-    const val GAP_MS = 24L * 60 * 60 * 1000
-    private const val PREF = "amelia_suggested"
-
-    /** Names to offer, from fresh results of the regular (non-reserve) locations. */
-    fun candidates(known: Collection<AmeliaChecks.Entry>, names: List<String>): List<String> {
-        val regular = names.filter { !AmeliaReserve.isReserve(it) }
-        val results = regular.mapNotNull { n -> known.firstOrNull { it.name == n } }
-        if (results.size < regular.size || results.size < 3) return emptyList()
-        val dataCut = results.filter { !it.ok && it.stage == AmeliaPingStage.DATA }
-        val others = results - dataCut.toSet()
-        return if (dataCut.size in 1..2 && others.isNotEmpty() && others.all { it.ok }) dataCut.map { it.name } else emptyList()
-    }
-
-    private fun load(): Map<String, Long> =
-        MmkvManager.decodeSettingsString(PREF)?.takeIf { it.isNotBlank() }
-            ?.let { runCatching { JsonUtil.parseString(it)?.entrySet()?.associate { e -> e.key to e.value.asLong } }.getOrNull() }
-            .orEmpty()
-
-    fun due(name: String, now: Long): Boolean = now - (load()[name] ?: 0L) >= GAP_MS
-
-    fun mark(name: String, now: Long) {
-        val m = load().filterValues { now - it < GAP_MS } + (name to now)
-        MmkvManager.encodeSettings(PREF, JsonUtil.toJson(m))
-    }
-}

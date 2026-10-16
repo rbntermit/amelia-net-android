@@ -50,6 +50,11 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Android 12+: the app updates itself without the system confirmation screen -->
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
+    <!-- Amelia.Net 1.3.0: ask to be let off battery optimisation so the VPN is not put to sleep
+         (not distributed through Google Play, where this permission is restricted) -->
+    <uses-permission
+        android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
+        tools:ignore="BatteryLife" />
 
     <!-- Amelia.Net: apps with a launcher icon are visible to the app picker and to
          VpnService.Builder.addDisallowedApplication (package visibility, Android 11+) -->

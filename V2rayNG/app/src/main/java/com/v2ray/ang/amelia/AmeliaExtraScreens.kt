@@ -76,10 +76,14 @@ class ExtraCallbacks(
     val onAppsClosed: () -> Unit,
     val onProbe: (Boolean) -> Unit,
     val onDismissAnnounce: () -> Unit,
+    /** Opens the system dialog that lets the app run in the background. */
+    val onAllowBackground: () -> Unit,
+    val onBatteryCardDone: () -> Unit,
+    val onCrashReports: (Boolean) -> Unit,
+    /** Long press on a location → speed test through it. */
+    val onMeasureSpeed: (String) -> Unit,
     /** "⚡ Подключить лучший". */
     val onConnectBest: () -> Unit,
-    /** Answer to "Сообщить, что … не работает?": true = send. */
-    val onAnswerSuggestion: (Boolean) -> Unit,
 )
 
 // ---- shared pieces ---------------------------------------------------------------------------
@@ -209,16 +213,18 @@ internal fun AnnounceBanner(text: String, onOpenUrl: (String) -> Unit, onClose: 
     }
 }
 
-/** Shown on the main screen when the connection failed or no data comes through it. */
+/**
+ * 1.3.0: a quiet link on the main screen when the connection failed or no data comes through.
+ * It opens the report only when tapped; nothing offers a report on its own.
+ */
 @Composable
 internal fun ReportButton(onClick: () -> Unit) {
-    Glass(Modifier.fillMaxWidth(), tint = Color(0x33FFB547), onClick = onClick) {
+    TextButton(onClick = onClick) {
         Text(
-            "🩺  " + stringResource(R.string.amelia_report_button),
-            color = Brand.Text,
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
+            stringResource(R.string.amelia_report_link),
+            color = Brand.Muted,
+            style = MaterialTheme.typography.bodySmall,
+            textDecoration = TextDecoration.Underline,
         )
     }
 }
@@ -570,14 +576,60 @@ internal fun ConnectBestButton(onClick: () -> Unit) {
     }
 }
 
-/** Offered by the app when one or two locations pass no data while the others work. */
+/** Once after the first connection while the phone may put the app to sleep. */
 @Composable
-internal fun SuggestReportDialog(name: String, onAnswer: (Boolean) -> Unit) {
-    AlertDialog(
-        onDismissRequest = { onAnswer(false) },
-        title = { Text(stringResource(R.string.amelia_suggest_title, name)) },
-        text = { Text(stringResource(R.string.amelia_suggest_text)) },
-        confirmButton = { TextButton(onClick = { onAnswer(true) }) { Text(stringResource(R.string.amelia_suggest_send)) } },
-        dismissButton = { TextButton(onClick = { onAnswer(false) }) { Text(stringResource(R.string.amelia_suggest_no)) } },
-    )
+internal fun BatteryCard(onAllow: () -> Unit, onClose: () -> Unit) {
+    Glass(Modifier.fillMaxWidth(), tint = Color(0x33FFB547)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.Top) {
+                Text(
+                    stringResource(R.string.amelia_battery_card_title),
+                    color = Brand.Text,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+                val closeLabel = stringResource(R.string.amelia_close)
+                IconButton(onClick = onClose, modifier = Modifier.semantics { contentDescription = closeLabel }) {
+                    Text("✕", color = Brand.Muted, fontSize = 16.sp)
+                }
+            }
+            Text(stringResource(R.string.amelia_battery_card_text), color = Brand.Muted, style = MaterialTheme.typography.bodySmall)
+            if (AmeliaBattery.isSamsung()) {
+                Text(stringResource(R.string.amelia_battery_samsung), color = Brand.Muted, style = MaterialTheme.typography.bodySmall)
+            }
+            GradientButton(text = stringResource(R.string.amelia_battery_allow), enabled = true, onClick = onAllow)
+        }
+    }
+}
+
+/** Settings: background work allowed or not, and how to allow it. */
+@Composable
+internal fun SettingsBatterySection(state: AmeliaUiState, extra: ExtraCallbacks) {
+    Glass(Modifier.fillMaxWidth(), onClick = if (state.batteryOk) null else extra.onAllowBackground) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(stringResource(R.string.amelia_battery_setting), color = Brand.Text, style = MaterialTheme.typography.titleSmall)
+            if (state.batteryOk) {
+                Text(stringResource(R.string.amelia_battery_ok), color = Brand.Green, style = MaterialTheme.typography.bodyMedium)
+            } else {
+                Text(stringResource(R.string.amelia_battery_not_ok), color = Brand.Muted, style = MaterialTheme.typography.bodySmall)
+                if (AmeliaBattery.isSamsung()) {
+                    Text(stringResource(R.string.amelia_battery_samsung), color = Brand.Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                TextButton(onClick = extra.onAllowBackground) {
+                    Text(stringResource(R.string.amelia_battery_allow), color = Brand.Sky)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun SettingsCrashSection(state: AmeliaUiState, extra: ExtraCallbacks) {
+    Glass(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SwitchRow(stringResource(R.string.amelia_crash_title), state.crashEnabled, extra.onCrashReports)
+            Text(stringResource(R.string.amelia_crash_text), color = Brand.Muted, style = MaterialTheme.typography.bodySmall)
+        }
+    }
 }

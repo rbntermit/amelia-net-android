@@ -54,13 +54,24 @@ class AmeliaActivity : HelperBaseComponentActivity() {
             AmeliaProbe.schedule(applicationContext)
         }
         checkAndRequestPermission(PermissionType.POST_NOTIFICATIONS) {}
-        if (savedInstanceState == null) handleDeepLink(intent)
+        if (savedInstanceState == null) {
+            handleDeepLink(intent)
+            handleInstallRequest(intent)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         handleDeepLink(intent)
+        handleInstallRequest(intent)
+    }
+
+    /** From the notification "Обновление … готово — установить": one tap installs. */
+    private fun handleInstallRequest(intent: Intent?) {
+        if (intent?.getBooleanExtra(AmeliaUpdateWorker.EXTRA_INSTALL, false) != true) return
+        intent.removeExtra(AmeliaUpdateWorker.EXTRA_INSTALL)
+        viewModel.installWhenReady(::installUpdate)
     }
 
     /** amelia://key/<key> — sent by the bot through an https redirect. */
@@ -111,9 +122,21 @@ class AmeliaActivity : HelperBaseComponentActivity() {
                 onProbe = viewModel::setProbeEnabled,
                 onDismissAnnounce = viewModel::dismissAnnounce,
                 onConnectBest = { viewModel.connectBest(::toggle) },
-                onAnswerSuggestion = viewModel::answerSuggestion,
+                onMeasureSpeed = viewModel::measureSpeed,
+                onAllowBackground = ::openBatterySettings,
+                onBatteryCardDone = viewModel::batteryCardDone,
+                onCrashReports = viewModel::setCrashEnabled,
             ),
         )
+    }
+
+    /** "Разрешить работу в фоне": the system asks to let the app off battery optimisation. */
+    private fun openBatterySettings() {
+        try {
+            startActivity(AmeliaBattery.requestIntent(this))
+        } catch (e: Exception) {
+            LogUtil.e(AppConfig.TAG, "Amelia: cannot open the battery settings", e)
+        }
     }
 
     override fun onResume() {
@@ -142,6 +165,7 @@ class AmeliaActivity : HelperBaseComponentActivity() {
                 AmeliaInstaller.install(applicationContext, apk, vpnRunning)
             } catch (e: Exception) {
                 LogUtil.e(AppConfig.TAG, "Amelia: session install failed, falling back to the system installer", e)
+                AmeliaCrash.nonFatal("update", e)
                 kotlinx.coroutines.withContext(Dispatchers.Main) { installViaSystemScreen(apk) }
             }
         }

@@ -14,6 +14,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -33,7 +34,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -83,6 +83,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -219,9 +220,6 @@ fun AmeliaApp(
                 state, updates,
                 onLater = if (state.updateRequired) null else ({ postponed = update.versionCode }),
             )
-        }
-        state.suggestReport?.takeIf { state.report == null }?.let { name ->
-            SuggestReportDialog(name, extra.onAnswerSuggestion)
         }
         state.report?.let { r ->
             ReportDialog(
@@ -436,6 +434,13 @@ private fun HomeScreen(
         } else {
             ExpiryBanner(state.info, onRenew = { onOpenUrl(AmeliaConfig.botUrl(BotScreen.PAY)) })
         }
+        if (state.showBatteryCard) {
+            Spacer(Modifier.height(10.dp))
+            BatteryCard(
+                onAllow = { extra.onBatteryCardDone(); extra.onAllowBackground() },
+                onClose = extra.onBatteryCardDone,
+            )
+        }
 
         Spacer(Modifier.height(16.dp))
         PowerButton(state.phase, enabled = state.locations.isNotEmpty(), onClick = onToggle)
@@ -485,6 +490,7 @@ private fun HomeScreen(
             onSelect = { onSelect(it); showLocations = false },
             onRefresh = onRefresh,
             onPingAll = onPingAll,
+            onMeasureSpeed = extra.onMeasureSpeed,
             onDismiss = { showLocations = false },
         )
     }
@@ -811,6 +817,7 @@ private fun LocationsSheet(
     onSelect: (String) -> Unit,
     onRefresh: () -> Unit,
     onPingAll: () -> Unit,
+    onMeasureSpeed: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     ModalBottomSheet(
@@ -863,12 +870,20 @@ private fun LocationsSheet(
             items(state.locations, key = { it.guid }) { location ->
                 val selected = location.guid == state.selectedGuid
                 val shape = RoundedCornerShape(16.dp)
+                var menu by remember { mutableStateOf(false) }
+                Box {
                 Row(
                     Modifier
                         .fillMaxWidth()
                         .clip(shape)
                         .background(if (selected) Color(0x3359ABFF) else Brand.Glass, shape)
-                        .selectable(selected = selected, role = Role.RadioButton, onClick = { onSelect(location.guid) })
+                        // long press: "Замерить скорость" (1.3.0), never automatic
+                        .combinedClickable(
+                            role = Role.RadioButton,
+                            onClick = { onSelect(location.guid) },
+                            onLongClick = { menu = true },
+                        )
+                        .semantics { this.selected = selected }
                         .padding(start = 8.dp, end = 16.dp, top = 6.dp, bottom = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -888,10 +903,34 @@ private fun LocationsSheet(
                             )
                         }
                     }
-                    PingBadge(state.pings[location.guid], state.pinging, AmeliaReserve.isReserve(location.name))
+                    Column(horizontalAlignment = Alignment.End) {
+                        PingBadge(state.pings[location.guid], state.pinging, AmeliaReserve.isReserve(location.name))
+                        SpeedBadge(state.speeds[location.guid], state.speedTesting == location.guid)
+                    }
+                }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.amelia_speed_measure)) },
+                        enabled = state.speedTesting == null,
+                        onClick = { menu = false; onMeasureSpeed(location.guid) },
+                    )
+                }
                 }
             }
         }
+    }
+}
+
+/** "≈ 48 Мбит/с" from a speed test in the last 24 h, or "замеряю…" while it runs. */
+@Composable
+private fun SpeedBadge(mbps: Double?, testing: Boolean) {
+    when {
+        testing -> Text(stringResource(R.string.amelia_speed_testing), color = Brand.Muted, style = MaterialTheme.typography.labelSmall)
+        mbps != null -> Text(
+            stringResource(R.string.amelia_speed_value, AmeliaSpeed.format(mbps)),
+            color = Brand.Muted,
+            style = MaterialTheme.typography.labelSmall,
+        )
     }
 }
 // ---- Bot actions -----------------------------------------------------------------------------
@@ -962,7 +1001,11 @@ private fun UpdateActions(state: AmeliaUiState, updates: UpdateCallbacks) {
             Text(stringResource(R.string.amelia_update_install))
         }
         else -> Button(onClick = updates.onDownload, colors = colors) {
-            Text(stringResource(R.string.amelia_update_download))
+            // on mobile data people see how much it costs before downloading
+            Text(
+                state.updateSize?.let { stringResource(R.string.amelia_update_download_size, AmeliaFormat.megabytes(it)) }
+                    ?: stringResource(R.string.amelia_update_download),
+            )
         }
     }
 }
@@ -1083,9 +1126,11 @@ private fun SettingsScreen(
 
         SettingsSubscriptionSection(state, settings)
         SettingsAppsSection(state, extra, onOpenApps)
+        SettingsBatterySection(state, extra)
         SettingsUpdateSection(state, updates, onAbout)
         SettingsBypassSection(state, settings)
         SettingsProbeSection(state, extra)
+        SettingsCrashSection(state, extra)
         TextButton(onClick = extra.onStartReport) {
             Text(stringResource(R.string.amelia_menu_report), color = Brand.Sky)
         }

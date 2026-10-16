@@ -80,6 +80,8 @@ data class AmeliaUiState(
     val updateProgress: Int? = null,
     /** Verified APK ready to install. */
     val updateApkPath: String? = null,
+    /** What this phone will download for the update (arm64 APK when it can), bytes. */
+    val updateSize: Long? = null,
     // ---- 1.1.0 ----
     /** "О программе" facts, loaded when the screen opens. */
     val about: AmeliaAbout.Info? = null,
@@ -97,6 +99,16 @@ data class AmeliaUiState(
     val bypassCount: Int = 0,
     /** Connected to a reserve location (only Telegram) because no regular one works. */
     val reserveFallback: Boolean = false,
+    // ---- 1.3.0 ----
+    val crashEnabled: Boolean = true,
+    /** The app is not under battery optimisation (may run in the background). */
+    val batteryOk: Boolean = true,
+    /** Once after the first connection while battery optimisation is on. */
+    val showBatteryCard: Boolean = false,
+    /** Speed per location guid from the last 24 h, Mbit/s. */
+    val speeds: Map<String, Double> = emptyMap(),
+    /** Guid of the location whose speed is being measured. */
+    val speedTesting: String? = null,
     // ---- 1.2.0 ----
     /** When the newest shown result was measured, epoch millis; 0 = never. */
     val checkedAt: Long = 0L,
@@ -104,8 +116,6 @@ data class AmeliaUiState(
     val lastCheckMs: Long = 0L,
     /** Locations the server says do not work for this provider (and our check does not contradict). */
     val providerBad: Set<String> = emptySet(),
-    /** "Сообщить, что <name> не работает?" */
-    val suggestReport: String? = null,
 ) {
     val selectedName: String?
         get() = locations.firstOrNull { it.guid == selectedGuid }?.name
@@ -188,11 +198,14 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             if (_state.value.hasKey) refresh(silent = true)
             refreshInBackground()
         }
+        // crash reports saved by an earlier run (any process), around the tunnel
+        viewModelScope.launch(Dispatchers.IO) { AmeliaCrash.sendPending(getApplication()) }
         updateGeoIfDue()
         viewModelScope.launch {
             // A forced update found earlier must hold even when the server is unreachable now
             val cached = withContext(Dispatchers.IO) { AmeliaUpdater.cached() }
             if (cached != null) _state.update { it.copy(update = it.update ?: cached) }
+            cached?.let { onUpdateFound(it) }
             if (AmeliaUpdater.isCheckDue()) checkUpdate(manual = false)
         }
     }
@@ -209,6 +222,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             _state.update {
                 it.copy(update = current, updateChecking = false, lastUpdateCheck = AmeliaUpdater.lastCheck())
             }
+            current?.let { onUpdateFound(it) }
             if (manual && current == null) {
                 showMessage(if (answered) R.string.amelia_update_none else R.string.amelia_update_check_failed)
             }
@@ -399,6 +413,10 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
     /** Back from the bot after paying: if the end was near, see whether it moved. */
     fun onResume() {
         val s = _state.value
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) { AmeliaBattery.isAllowed(getApplication()) }
+            _state.update { it.copy(batteryOk = ok, showBatteryCard = it.showBatteryCard && !ok) }
+        }
         val now = System.currentTimeMillis()
         if (!s.hasKey || s.busy || now - lastResumeRefresh < 60_000L) return
         if (!AmeliaExpiry.needsRefresh(s.info, now)) return
@@ -407,7 +425,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---------------------------------------------------------------------------------------
-    // 1.2.0: last known results, hints, best location, report suggestion
+    // 1.2.0: last known results, hints, best location
     // ---------------------------------------------------------------------------------------
 
     private class ChecksSnapshot(
@@ -436,9 +454,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
-    private var seenFullAt = 0L
-
-    /** New results from the daemon (or a finished round): refresh the list, maybe offer a report. */
+    /** New results from the daemon (or a finished round): refresh the list. */
     private fun reloadChecks() {
         viewModelScope.launch {
             val c = withContext(Dispatchers.IO) { checksSnapshot() }
@@ -449,10 +465,6 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                     lastCheckMs = c.lastCheckMs,
                     providerBad = c.providerBad,
                 )
-            }
-            if (c.lastFullAt > seenFullAt) {
-                seenFullAt = c.lastFullAt
-                evaluateSuggestion()
             }
         }
     }
@@ -490,42 +502,32 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun evaluateSuggestion() {
-        if (_state.value.suggestReport != null || _state.value.report != null) return
-        viewModelScope.launch {
-            val name = withContext(Dispatchers.IO) {
-                val now = System.currentTimeMillis()
-                val fresh = AmeliaChecks.fresh(AmeliaChecks.load(), now)
-                AmeliaSuggest.candidates(fresh.values, _state.value.locations.map { it.name })
-                    .firstOrNull { AmeliaSuggest.due(it, now) }
-            }
-            if (name != null) _state.update { it.copy(suggestReport = name) }
-        }
+    // ---------------------------------------------------------------------------------------
+    // 1.3.0: crash reports, background work, speed test
+    // ---------------------------------------------------------------------------------------
+
+    fun setCrashEnabled(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) { AmeliaCrash.setEnabled(enabled) }
+        _state.update { it.copy(crashEnabled = enabled) }
     }
 
-    /** Answer to "Сообщить, что … не работает?". Either way not asked again for this location today. */
-    fun answerSuggestion(send: Boolean) {
-        val name = _state.value.suggestReport ?: return
-        _state.update { it.copy(suggestReport = null) }
-        viewModelScope.launch {
-            val app = getApplication<Application>()
-            withContext(Dispatchers.IO) { AmeliaSuggest.mark(name, System.currentTimeMillis()) }
-            if (!send) return@launch
-            val id = withContext(Dispatchers.IO) {
-                val store = AmeliaChecks.load()
-                val checks = AmeliaReport.locations().mapNotNull { l ->
-                    store.entries[l.name]?.let { l.guid to AmeliaReport.Check(l.guid, it.ms, it.stage, null) }
-                }.toMap()
-                AmeliaReport.send(
-                    app, AmeliaManager.getKey().orEmpty(), AmeliaReport.servers(AmeliaReport.locations(), checks),
-                    _state.value.selectedName, app.getString(R.string.amelia_suggest_comment, name),
-                    store.lastFullMs.takeIf { it > 0 },
-                )
-            }
-            _state.update {
-                it.copy(messageText = if (id != null) app.getString(R.string.amelia_report_sent, id) else null,
-                    message = if (id == null) R.string.amelia_suggest_failed else null)
-            }
+    /** The card was closed or its button pressed: not shown again (settings keep the entry). */
+    fun batteryCardDone() {
+        viewModelScope.launch(Dispatchers.IO) { MmkvManager.encodeSettings(AmeliaBattery.PREF_CARD_SHOWN, true) }
+        _state.update { it.copy(showBatteryCard = false) }
+    }
+
+    private var speedJob: Job? = null
+
+    /** Long press → "Замерить скорость": 10 MB through that location, only when asked. */
+    fun measureSpeed(guid: String) {
+        if (speedJob?.isActive == true) return
+        speedJob = viewModelScope.launch {
+            _state.update { it.copy(speedTesting = guid) }
+            val mbps = withContext(Dispatchers.IO) { AmeliaSpeed.measure(getApplication(), guid) }
+            val speeds = withContext(Dispatchers.IO) { AmeliaSpeed.byGuid() }
+            _state.update { it.copy(speedTesting = null, speeds = speeds) }
+            if (mbps == null) showMessage(R.string.amelia_speed_failed)
         }
     }
 
@@ -577,6 +579,35 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 withContext(Dispatchers.IO) { AmeliaFailover.directReachMs(result.host) }
             } else null
             _state.update { it.copy(routeChecking = false, routeDirectMs = directMs) }
+        }
+    }
+
+    /**
+     * 1.3.0: an APK downloaded earlier (Wi-Fi in the background) is offered right away; on Wi-Fi
+     * the download starts by itself; on mobile data the dialog asks and shows the size.
+     */
+    private fun onUpdateFound(v: AmeliaUpdater.AppVersion) {
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            val (ready, size, unmetered) = withContext(Dispatchers.IO) {
+                Triple(AmeliaUpdater.readyApk(app, v), AmeliaUpdater.downloadSize(v), AmeliaUpdater.isUnmetered(app))
+            }
+            _state.update { it.copy(updateSize = size, updateApkPath = ready?.absolutePath ?: it.updateApkPath) }
+            if (ready == null && unmetered) {
+                updateJob?.join() // the check that found it must finish first
+                if (_state.value.updateProgress == null && _state.value.updateApkPath == null) downloadUpdate()
+            }
+        }
+    }
+
+    /** Opened from "Обновление … готово — установить": [install] once the APK is known. */
+    fun installWhenReady(install: (String) -> Unit) {
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            val v = _state.value.update ?: withContext(Dispatchers.IO) { AmeliaUpdater.cached() } ?: return@launch
+            val f = withContext(Dispatchers.IO) { AmeliaUpdater.readyApk(app, v) } ?: return@launch
+            _state.update { it.copy(update = it.update ?: v, updateApkPath = f.absolutePath) }
+            install(f.absolutePath)
         }
     }
 
@@ -701,6 +732,8 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         serviceEvents.requestRecheck()
     }
 
+    private var batteryChecked = false
+
     private fun onHealth(h: AmeliaDaemon.Health) {
         val phase = when (h.phase) {
             AmeliaDaemon.Phase.CHECKING.name -> ConnPhase.CHECKING
@@ -711,6 +744,15 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             else -> return
         }
         if (phase == ConnPhase.SWITCHING) expectRestart = true
+        if (phase == ConnPhase.CONNECTED && !batteryChecked) {
+            batteryChecked = true
+            viewModelScope.launch {
+                val show = withContext(Dispatchers.IO) {
+                    !AmeliaBattery.isAllowed(getApplication()) && !MmkvManager.decodeSettingsBool(AmeliaBattery.PREF_CARD_SHOWN, false)
+                }
+                if (show) _state.update { it.copy(showBatteryCard = true, batteryOk = false) }
+            }
+        }
         _state.update {
             it.copy(
                 phase = phase,
@@ -773,6 +815,9 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 bypassRu = AmeliaApps.isEnabled(),
                 bypassCount = AmeliaApps.bypassed().size,
                 probeEnabled = AmeliaProbe.isEnabled(),
+                crashEnabled = AmeliaCrash.isEnabled(),
+                batteryOk = AmeliaBattery.isAllowed(getApplication()),
+                speeds = AmeliaSpeed.byGuid(),
                 announceDismissed = AmeliaAnnounce.dismissed(),
             ).also { AmeliaExpiry.check(getApplication(), it.info) }
         }
@@ -790,6 +835,9 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 bypassRu = snapshot.bypassRu,
                 bypassCount = snapshot.bypassCount,
                 probeEnabled = snapshot.probeEnabled,
+                crashEnabled = snapshot.crashEnabled,
+                batteryOk = snapshot.batteryOk,
+                speeds = snapshot.speeds,
                 announceDismissed = snapshot.announceDismissed,
                 checkedAt = checks.checkedAt,
                 lastCheckMs = checks.lastCheckMs,

@@ -13,6 +13,7 @@ import android.system.OsConstants
 import androidx.core.content.ContextCompat
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.amelia.AmeliaConfig
+import com.v2ray.ang.amelia.AmeliaCrash
 import com.v2ray.ang.amelia.AmeliaDaemon
 import com.v2ray.ang.amelia.AmeliaReserve
 import com.v2ray.ang.contracts.IDialerService
@@ -109,6 +110,8 @@ object CoreServiceManager {
         } catch (e: Exception) {
             val message = e.message?.takeUnless { it.isBlank() } ?: e.javaClass.simpleName
             LogUtil.e(AppConfig.TAG, "StartCore-Manager: $message", e)
+            // Amelia.Net: crash report (non-fatal), sent with the next app start
+            AmeliaCrash.nonFatal("core_start", e)
             MessageHelper.sendMsg2UI(service, AppConfig.MSG_STATE_START_FAILURE, message)
             NotificationManager.cancelNotification()
             return false

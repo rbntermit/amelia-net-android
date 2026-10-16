@@ -30,7 +30,11 @@ class AmeliaUpdateWorker(context: Context, params: WorkerParameters) : Coroutine
     override suspend fun doWork(): Result {
         checkSubscriptionEnd()
         val v = AmeliaUpdater.check() ?: return Result.success()
-        if (AmeliaUpdater.markNotified(v)) notify(applicationContext, v)
+        val ctx = applicationContext
+        // 1.3.0: on Wi-Fi (no data limit) the update is downloaded right away; on mobile data we ask first
+        val ready = AmeliaUpdater.readyApk(ctx, v)
+            ?: if (AmeliaUpdater.isUnmetered(ctx)) AmeliaUpdater.download(ctx, v) {} else null
+        if (AmeliaUpdater.markNotified(v, ready != null)) notify(ctx, v, ready != null)
         return Result.success()
     }
 
@@ -63,7 +67,10 @@ class AmeliaUpdateWorker(context: Context, params: WorkerParameters) : Coroutine
                 .enqueueUniquePeriodicWork(WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, request)
         }
 
-        private fun notify(context: Context, v: AmeliaUpdater.AppVersion) {
+        /** Opens the app straight into installing the downloaded update. */
+        const val EXTRA_INSTALL = "amelia_install_update"
+
+        private fun notify(context: Context, v: AmeliaUpdater.AppVersion, ready: Boolean) {
             val nm = NotificationManagerCompat.from(context)
             if (!nm.areNotificationsEnabled()) return
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -76,18 +83,28 @@ class AmeliaUpdateWorker(context: Context, params: WorkerParameters) : Coroutine
             }
             val open = PendingIntent.getActivity(
                 context, 0,
-                Intent(context, AmeliaActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                Intent(context, AmeliaActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    .putExtra(EXTRA_INSTALL, ready),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
-            val title = context.getString(
-                if (AmeliaUpdater.isRequired(v)) R.string.amelia_update_required_title else R.string.amelia_update_available,
-                v.versionName ?: v.versionCode.toString(),
-            )
+            val name = v.versionName ?: v.versionCode.toString()
+            val title = when {
+                ready -> context.getString(R.string.amelia_update_ready, name)
+                AmeliaUpdater.isRequired(v) -> context.getString(R.string.amelia_update_required_title, name)
+                else -> context.getString(R.string.amelia_update_available, name)
+            }
+            val text = if (ready) {
+                v.notes?.takeIf { it.isNotBlank() } ?: context.getString(R.string.amelia_update_tap)
+            } else {
+                AmeliaUpdater.downloadSize(v)?.let { context.getString(R.string.amelia_update_tap_size, AmeliaFormat.megabytes(it)) }
+                    ?: context.getString(R.string.amelia_update_tap)
+            }
             val notification = NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_stat_name)
                 .setContentTitle(title)
-                .setContentText(v.notes?.takeIf { it.isNotBlank() } ?: context.getString(R.string.amelia_update_tap))
-                .setStyle(NotificationCompat.BigTextStyle().bigText(v.notes))
+                .setContentText(text)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(text))
                 .setContentIntent(open)
                 .setAutoCancel(true)
                 .build()

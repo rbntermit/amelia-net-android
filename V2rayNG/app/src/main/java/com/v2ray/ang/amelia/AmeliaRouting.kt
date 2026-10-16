@@ -92,6 +92,9 @@ object AmeliaRouting {
         MmkvManager.encodeSettings(AppConfig.PREF_FAKE_DNS_ENABLED, false)
         MmkvManager.encodeSettings(AppConfig.PREF_LOCAL_DNS_ENABLED, false)
         MmkvManager.encodeSettings(AppConfig.PREF_MODE, AppConfig.VPN)
+        // No IPv6 in the VPN: Android then blocks IPv6 of the apps inside it, so nothing leaks around
+        // the tunnel when the provider has IPv6 (VpnService.Builder.allowFamily)
+        MmkvManager.encodeSettings(AppConfig.PREF_IPV6_ENABLED, false)
         // Fixed local inbound port: the app reaches the tunnel through it from any process
         // (a dynamic port is generated per process and would differ from the daemon's)
         MmkvManager.encodeSettings(AppConfig.PREF_DYNAMIC_SOCKS_PORT, false)

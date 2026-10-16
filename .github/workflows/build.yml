@@ -151,11 +151,16 @@ jobs:
           FILE=$(basename "$APK")
           [ -s "$NOTES_FILE" ] || : > "$RUNNER_TEMP/empty.txt"
           NOTES_SRC=$([ -s "$NOTES_FILE" ] && echo "$NOTES_FILE" || echo "$RUNNER_TEMP/empty.txt")
+          # 1.3.0: smaller per-ABI APKs, file name only: the server puts them next to the universal
+          # one in /app/, the app builds the address from where version.json came from
+          ARM=$(ls out/*arm64-v8a*.apk | head -n1)
+          ABIS=$(jq -n --arg file "$(basename "$ARM")" --arg sha "$(sha256sum "$ARM" | cut -d' ' -f1)" \
+                --argjson size "$(stat -c%s "$ARM")" '{"arm64-v8a": {file:$file, sha256:$sha, size:$size}}')
           jq -n --argjson code "$CODE" --arg name "$NAME" --arg url "${APK_BASE_URL%/}/$FILE" \
                 --arg sha "$(sha256sum "$APK" | cut -d' ' -f1)" --argjson size "$(stat -c%s "$APK")" \
-                --rawfile notes "$NOTES_SRC" --argjson min "$MIN_CODE" \
+                --rawfile notes "$NOTES_SRC" --argjson min "$MIN_CODE" --argjson abis "$ABIS" \
                 '{versionCode:$code, versionName:$name, url:$url, sha256:$sha, size:$size,
-                  notes:($notes|gsub("\r";"")|sub("\\s+$";"")), minVersionCode:$min}' \
+                  notes:($notes|gsub("\r";"")|sub("\\s+$";"")), minVersionCode:$min, abis:$abis}' \
                 > out/version.json
           cat out/version.json
 
