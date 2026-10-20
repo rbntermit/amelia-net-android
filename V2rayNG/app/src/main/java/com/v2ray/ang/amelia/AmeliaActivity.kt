@@ -126,8 +126,39 @@ class AmeliaActivity : HelperBaseComponentActivity() {
                 onAllowBackground = ::openBatterySettings,
                 onBatteryCardDone = viewModel::batteryCardDone,
                 onCrashReports = viewModel::setCrashEnabled,
+                onAutoMode = viewModel::setAutoMode,
+                onOpenJournal = viewModel::loadJournal,
+                onCopyJournal = { copy(viewModel.journalText()) },
+                onInstallPermissionOpen = {
+                    runCatching { startActivity(AmeliaUpdater.unknownSourcesSettingsIntent(this)) }
+                        .onFailure { LogUtil.e(AppConfig.TAG, "Amelia: cannot open the install permission", it) }
+                },
+                onInstallPermissionDismiss = viewModel::installPermissionDismissed,
+                onInstallRetry = {
+                    viewModel.state.value.updateApkPath?.let { installViaSystemScreen(File(it)) }
+                        ?: viewModel.downloadUpdate()
+                },
+                onInstallHelpDone = viewModel::installHelpDone,
+                onOpenSecurity = ::openSecuritySettings,
+                onDownloadInBrowser = { viewModel.manualDownloadUrl()?.let { Utils.openUri(this, it) } },
+                onGetInTelegram = { Utils.openUri(this, AmeliaConfig.botUrl(AmeliaConfig.BotScreen.APP)) },
             ),
         )
+    }
+
+    /**
+     * Where the phone's install protection is switched off: Samsung Auto Blocker
+     * (One UI 6+), otherwise the general security settings.
+     */
+    private fun openSecuritySettings() {
+        val intents = listOf(
+            Intent().setClassName("com.android.settings", "com.android.settings.Settings\$AutoBlockerSettingsActivity"),
+            Intent(android.provider.Settings.ACTION_SECURITY_SETTINGS),
+            Intent(android.provider.Settings.ACTION_SETTINGS),
+        )
+        for (i in intents) {
+            if (runCatching { startActivity(i) }.isSuccess) return
+        }
     }
 
     /** "Разрешить работу в фоне": the system asks to let the app off battery optimisation. */
@@ -142,6 +173,8 @@ class AmeliaActivity : HelperBaseComponentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.onResume()
+        // back from "allow installing apps": continue the install the person started
+        viewModel.pendingInstall(AmeliaUpdater.canInstall(this))?.let { installUpdate(it) }
     }
 
     /** Puts [text] on the clipboard and says so (support text, or a report the server did not take). */
@@ -152,17 +185,33 @@ class AmeliaActivity : HelperBaseComponentActivity() {
     }
 
     private fun installUpdate(apkPath: String) {
+        // 1.4.0: the permission first, with an explanation; installing continues on return (onResume)
         if (!AmeliaUpdater.canInstall(this)) {
-            viewModel.showMessage(R.string.amelia_update_allow_install)
-            startActivity(AmeliaUpdater.unknownSourcesSettingsIntent(this))
+            viewModel.askInstallPermission(apkPath)
             return
         }
         val apk = File(apkPath)
         val vpnRunning = viewModel.state.value.isRunning
+        val expected = viewModel.state.value.update?.versionCode ?: 0
         lifecycleScope.launch(Dispatchers.IO) {
+            // ours, signed with our key, the promised version: otherwise say so instead of a system error
+            val check = AmeliaApkCheck.check(applicationContext, apk, expected)
+            when (check.verdict) {
+                AmeliaApkCheck.Verdict.BAD_SIGNATURE -> {
+                    apk.delete()
+                    viewModel.apkRejected(getString(R.string.amelia_install_bad_signature))
+                    return@launch
+                }
+                AmeliaApkCheck.Verdict.BAD_VERSION -> {
+                    apk.delete()
+                    viewModel.apkRejected(getString(R.string.amelia_install_bad_version, check.versionName ?: "?"))
+                    return@launch
+                }
+                else -> Unit // unreadable: the system installer will tell
+            }
             try {
                 // Android 12+: installs without the confirmation screen; the app restarts updated
-                AmeliaInstaller.install(applicationContext, apk, vpnRunning)
+                AmeliaInstaller.install(applicationContext, apk, vpnRunning, expected)
             } catch (e: Exception) {
                 LogUtil.e(AppConfig.TAG, "Amelia: session install failed, falling back to the system installer", e)
                 AmeliaCrash.nonFatal("update", e)

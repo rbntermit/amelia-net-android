@@ -224,6 +224,10 @@
         <receiver
             android:name=".amelia.AmeliaInstaller$StatusReceiver"
             android:exported="false" />
+        <!-- Amelia.Net 1.4.0: "Вернуться на …" from the switch notification -->
+        <receiver
+            android:name=".amelia.AmeliaDaemon$ReturnReceiver"
+            android:exported="false" />
         <!-- Amelia.Net: turn the VPN back on after an in-app update -->
         <receiver
             android:name=".amelia.AmeliaInstaller$PackageReplacedReceiver"

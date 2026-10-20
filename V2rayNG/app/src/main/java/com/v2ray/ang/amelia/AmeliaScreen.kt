@@ -171,7 +171,9 @@ fun AmeliaApp(
         var showAbout by rememberSaveable { mutableStateOf(false) }
         var showSettings by rememberSaveable { mutableStateOf(false) }
         var showApps by rememberSaveable { mutableStateOf(false) }
+        var showJournal by rememberSaveable { mutableStateOf(false) }
         val openAbout = { extra.onOpenAbout(); showAbout = true }
+        val openJournal = { extra.onOpenJournal(); showJournal = true }
 
         BrandBackground {
             when {
@@ -184,6 +186,10 @@ fun AmeliaApp(
                     )
                 }
                 !state.hasKey -> KeyScreen(state.busy, onSubmitKey, onOpenUrl, onAbout = openAbout)
+                showJournal -> {
+                    BackHandler { showJournal = false }
+                    JournalScreen(state.journal, onBack = { showJournal = false }, onCopy = extra.onCopyJournal)
+                }
                 showApps -> {
                     val close = { showApps = false; extra.onAppsClosed() }
                     BackHandler(onBack = close)
@@ -195,12 +201,14 @@ fun AmeliaApp(
                         state, updates, settings, extra,
                         onAbout = openAbout,
                         onOpenApps = { extra.onOpenApps(); showApps = true },
+                        onOpenJournal = openJournal,
                         onBack = { showSettings = false },
                     )
                 }
                 else -> HomeScreen(
                     state, onToggle, onSelect, onRefresh, onRecheck, onPingAll, onLogout, onOpenUrl, updates, extra,
                     onAbout = openAbout,
+                    onJournal = openJournal,
                     onSettings = { settings.onOpen(); showSettings = true },
                 )
             }
@@ -220,6 +228,12 @@ fun AmeliaApp(
                 state, updates,
                 onLater = if (state.updateRequired) null else ({ postponed = update.versionCode }),
             )
+        }
+        state.installPermissionFor?.let {
+            InstallPermissionDialog(onOpen = extra.onInstallPermissionOpen, onDismiss = extra.onInstallPermissionDismiss)
+        }
+        if (state.installBlocked && state.update != null) {
+            InstallBlockedDialog(extra, canDownload = state.update.url != null)
         }
         state.report?.let { r ->
             ReportDialog(
@@ -400,6 +414,7 @@ private fun HomeScreen(
     updates: UpdateCallbacks,
     extra: ExtraCallbacks,
     onAbout: () -> Unit,
+    onJournal: () -> Unit,
     onSettings: () -> Unit,
 ) {
     var showLocations by remember { mutableStateOf(false) }
@@ -424,6 +439,7 @@ private fun HomeScreen(
             onAbout = onAbout,
             onSettings = onSettings,
             onReport = extra.onStartReport,
+            onJournal = onJournal,
         )
         if (state.update != null) {
             UpdateCard(state, updates)
@@ -523,6 +539,7 @@ private fun TopBar(
     onAbout: () -> Unit,
     onSettings: () -> Unit,
     onReport: () -> Unit,
+    onJournal: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     Row(
@@ -573,6 +590,10 @@ private fun TopBar(
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.amelia_menu_report)) },
                     onClick = { menuOpen = false; onReport() },
+                )
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.amelia_journal)) },
+                    onClick = { menuOpen = false; onJournal() },
                 )
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.amelia_menu_check_update)) },
@@ -644,7 +665,7 @@ private fun phaseColor(phase: ConnPhase): Color = when (phase) {
     ConnPhase.OFF -> Brand.Muted
     ConnPhase.STARTING, ConnPhase.CHECKING, ConnPhase.SWITCHING -> Brand.Sky
     ConnPhase.CONNECTED -> Brand.Green
-    ConnPhase.NO_INTERNET, ConnPhase.ALL_FAILED -> Brand.Amber
+    ConnPhase.NO_INTERNET, ConnPhase.ALL_FAILED, ConnPhase.MANUAL_FAILED -> Brand.Amber
 }
 
 private fun ConnPhase.inProgress() =
@@ -745,8 +766,18 @@ private fun PhaseText(state: AmeliaUiState) {
         ConnPhase.STARTING -> stringResource(R.string.amelia_phase_starting)
         ConnPhase.CHECKING -> stringResource(R.string.amelia_phase_checking)
         ConnPhase.SWITCHING -> stringResource(R.string.amelia_phase_switching)
-        ConnPhase.CONNECTED -> state.pingMs?.let { stringResource(R.string.amelia_phase_connected_ping, it.toInt()) }
-            ?: stringResource(R.string.amelia_phase_connected)
+        // 1.4.0: which location, and its ping, right under the button
+        ConnPhase.CONNECTED -> {
+            val name = state.selectedName
+            val ping = state.pingMs
+            when {
+                name != null && ping != null -> stringResource(R.string.amelia_phase_connected_on_ping, name, ping.toInt())
+                name != null -> stringResource(R.string.amelia_phase_connected_on, name)
+                ping != null -> stringResource(R.string.amelia_phase_connected_ping, ping.toInt())
+                else -> stringResource(R.string.amelia_phase_connected)
+            }
+        }
+        ConnPhase.MANUAL_FAILED -> stringResource(R.string.amelia_phase_manual_failed)
         ConnPhase.NO_INTERNET -> stringResource(R.string.amelia_phase_no_internet)
         ConnPhase.ALL_FAILED -> stringResource(R.string.amelia_phase_all_failed)
     }
@@ -1118,6 +1149,7 @@ private fun SettingsScreen(
     extra: ExtraCallbacks,
     onAbout: () -> Unit,
     onOpenApps: () -> Unit,
+    onOpenJournal: () -> Unit,
     onBack: () -> Unit,
 ) {
     Column(
@@ -1134,6 +1166,7 @@ private fun SettingsScreen(
         SettingsSubscriptionSection(state, settings)
         SettingsAppsSection(state, extra, onOpenApps)
         SettingsBatterySection(state, extra)
+        SettingsAutoSwitchSection(state, extra, onOpenJournal)
         SettingsUpdateSection(state, updates, onAbout)
         SettingsBypassSection(state, settings)
         SettingsProbeSection(state, extra)

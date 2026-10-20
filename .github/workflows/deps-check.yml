@@ -126,5 +126,7 @@ jobs:
                 gh workflow run build.yml --ref "$branch" || true
               fi
             } > "$body.issue"
-            gh issue create --title "$title" --body-file "$body.issue"
+            # assigned to the owner: GitHub then notifies them (1.4.0: the 26.10.17 issue went unnoticed)
+            gh issue create --title "$title" --body-file "$body.issue" --assignee "${{ github.repository_owner }}" \
+              || gh issue create --title "$title" --body-file "$body.issue"
           fi

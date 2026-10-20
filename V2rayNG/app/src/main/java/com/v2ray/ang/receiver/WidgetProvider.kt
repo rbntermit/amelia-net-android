@@ -45,6 +45,11 @@ class WidgetProvider : AppWidgetProvider() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         remoteViews.setOnClickPendingIntent(R.id.layout_switch, pendingIntent)
+        // Amelia.Net 1.4.0: the current location under the button while connected
+        remoteViews.setTextViewText(
+            R.id.widget_name,
+            CoreServiceManager.getRunningServerName().takeIf { isRunning && it.isNotBlank() } ?: context.getString(R.string.app_name),
+        )
         if (isRunning) {
             remoteViews.setInt(R.id.image_switch, "setImageResource", R.drawable.ic_stop_24dp)
             remoteViews.setInt(R.id.layout_background, "setBackgroundResource", R.drawable.ic_rounded_corner_active)

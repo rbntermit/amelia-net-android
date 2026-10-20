@@ -72,6 +72,16 @@ object AmeliaNetwork {
         return allNetworksCompat(cm).firstOrNull { n -> cm.getNetworkCapabilities(n)?.let(::isPhysical) == true }
     }
 
+    /**
+     * 1.4.0: the phone's own network is up and Android has checked that it reaches the internet
+     * (NET_CAPABILITY_VALIDATED). Without it locations are not judged and nothing is switched.
+     */
+    fun validated(context: Context): Boolean {
+        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return false
+        val n = physicalNetwork(context) ?: return false
+        return cm.getNetworkCapabilities(n)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+    }
+
     private fun isPhysical(caps: NetworkCapabilities) =
         !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
             caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)

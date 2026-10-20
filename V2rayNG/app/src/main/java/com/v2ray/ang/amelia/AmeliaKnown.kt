@@ -185,8 +185,10 @@ object AmeliaQueue {
         bad: Set<String>,
         preferred: String?,
         exclude: Set<String> = emptySet(),
+        /** 1.4.0: reserve and Moscow only after the subscription ended (AmeliaPolicy). */
+        allowLastResort: Boolean = true,
     ): List<String> {
-        val pool = locations.filter { it.guid !in exclude }
+        val pool = locations.filter { it.guid !in exclude && (allowLastResort || !AmeliaPolicy.isLastResort(it.name)) }
         // Reserve ("только Telegram") and Russian-exit ("Москва 🇷🇺") locations do not get around
         // blocks: chosen automatically only when no foreign one works
         val (lastResort, regular) = pool.partition { AmeliaReserve.isReserve(it.name) || AmeliaReserve.isRussianExit(it.name) }
@@ -221,7 +223,11 @@ object AmeliaQueue {
     fun current(context: Context, exclude: Set<String> = emptySet()): List<String> {
         val net = AmeliaHints.netKey(context)
         val sim = AmeliaProbe.netKey(AmeliaNetwork.info(context))
-        val known = AmeliaChecks.fresh(AmeliaChecks.load(), System.currentTimeMillis())
-        return order(locations(), known, AmeliaHints.badHostPorts(AmeliaHints.current(sim)), AmeliaBest.get(net), exclude)
+        val now = System.currentTimeMillis()
+        val known = AmeliaChecks.fresh(AmeliaChecks.load(), now)
+        return order(
+            locations(), known, AmeliaHints.badHostPorts(AmeliaHints.current(sim)), AmeliaBest.get(net), exclude,
+            allowLastResort = AmeliaPolicy.lastResortAllowed(AmeliaManager.getSubInfo(), now),
+        )
     }
 }

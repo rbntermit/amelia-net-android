@@ -76,6 +76,17 @@ class ExtraCallbacks(
     val onAppsClosed: () -> Unit,
     val onProbe: (Boolean) -> Unit,
     val onDismissAnnounce: () -> Unit,
+    // 1.4.0
+    val onAutoMode: (AmeliaPolicy.Mode) -> Unit,
+    val onOpenJournal: () -> Unit,
+    val onCopyJournal: () -> Unit,
+    val onInstallPermissionOpen: () -> Unit,
+    val onInstallPermissionDismiss: () -> Unit,
+    val onInstallRetry: () -> Unit,
+    val onInstallHelpDone: () -> Unit,
+    val onOpenSecurity: () -> Unit,
+    val onDownloadInBrowser: () -> Unit,
+    val onGetInTelegram: () -> Unit,
     /** Opens the system dialog that lets the app run in the background. */
     val onAllowBackground: () -> Unit,
     val onBatteryCardDone: () -> Unit,
@@ -632,4 +643,111 @@ internal fun SettingsCrashSection(state: AmeliaUiState, extra: ExtraCallbacks) {
             Text(stringResource(R.string.amelia_crash_text), color = Brand.Muted, style = MaterialTheme.typography.bodySmall)
         }
     }
+}
+
+// ---- 1.4.0 -----------------------------------------------------------------------------------
+
+@Composable
+internal fun SettingsAutoSwitchSection(state: AmeliaUiState, extra: ExtraCallbacks, onOpenJournal: () -> Unit) {
+    Glass(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            SectionTitle(stringResource(R.string.amelia_autoswitch_title))
+            listOf(
+                AmeliaPolicy.Mode.ALWAYS to R.string.amelia_autoswitch_always,
+                AmeliaPolicy.Mode.UNLESS_MANUAL to R.string.amelia_autoswitch_unless_manual,
+                AmeliaPolicy.Mode.OFF to R.string.amelia_autoswitch_off,
+            ).forEach { (mode, label) ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable(role = Role.RadioButton) { extra.onAutoMode(mode) }
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    androidx.compose.material3.RadioButton(
+                        selected = state.autoMode == mode,
+                        onClick = null,
+                        colors = androidx.compose.material3.RadioButtonDefaults.colors(selectedColor = Brand.Sky, unselectedColor = Brand.Muted),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(stringResource(label), color = Brand.Text, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+            Text(stringResource(R.string.amelia_autoswitch_text), color = Brand.Muted, style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = onOpenJournal) { Text(stringResource(R.string.amelia_journal), color = Brand.Sky) }
+        }
+    }
+}
+
+/** "Журнал": the last switches and checks, newest first, with a copy button for support. */
+@Composable
+internal fun JournalScreen(entries: List<AmeliaJournal.Entry>?, onBack: () -> Unit, onCopy: () -> Unit) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .systemBarsPadding()
+            .padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        ScreenHeader(stringResource(R.string.amelia_journal), onBack)
+        if (entries == null) {
+            CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally), color = Brand.Sky)
+            return@Column
+        }
+        if (entries.isEmpty()) {
+            Text(stringResource(R.string.amelia_journal_empty), color = Brand.Muted)
+        } else {
+            GradientButton(text = stringResource(R.string.amelia_about_copy), enabled = true, onClick = onCopy)
+        }
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
+            items(entries) { e ->
+                Row {
+                    Text(
+                        java.text.SimpleDateFormat("dd.MM HH:mm", java.util.Locale.US).format(java.util.Date(e.ts)),
+                        color = Brand.Muted,
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.width(84.dp),
+                    )
+                    Text(e.text, color = Brand.Text, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+    }
+}
+
+/** Before installing: why Android asks, and the button to the switch (1.4.0). */
+@Composable
+internal fun InstallPermissionDialog(onOpen: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.amelia_install_permission_title)) },
+        text = { Text(stringResource(R.string.amelia_install_permission_text)) },
+        confirmButton = { TextButton(onClick = onOpen) { Text(stringResource(R.string.amelia_install_permission_open)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.amelia_cancel)) } },
+    )
+}
+
+/** The phone refused the update: how to let it through, or other ways to get it (1.4.0). */
+@Composable
+internal fun InstallBlockedDialog(extra: ExtraCallbacks, canDownload: Boolean) {
+    AlertDialog(
+        onDismissRequest = extra.onInstallHelpDone,
+        title = { Text(stringResource(R.string.amelia_install_blocked_title)) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.amelia_install_blocked_text))
+                Text(
+                    stringResource(if (AmeliaBattery.isSamsung()) R.string.amelia_install_blocked_samsung else R.string.amelia_install_blocked_play),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                TextButton(onClick = extra.onOpenSecurity) { Text(stringResource(R.string.amelia_install_open_security)) }
+                TextButton(onClick = extra.onInstallRetry) { Text(stringResource(R.string.amelia_install_retry)) }
+                if (canDownload) {
+                    TextButton(onClick = extra.onDownloadInBrowser) { Text(stringResource(R.string.amelia_install_download_browser)) }
+                }
+                TextButton(onClick = extra.onGetInTelegram) { Text(stringResource(R.string.amelia_install_telegram)) }
+            }
+        },
+        confirmButton = { TextButton(onClick = extra.onInstallHelpDone) { Text(stringResource(R.string.amelia_close)) } },
+    )
 }

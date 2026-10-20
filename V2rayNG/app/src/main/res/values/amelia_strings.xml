@@ -81,7 +81,6 @@
     <string name="amelia_update_channel">Обновления приложения</string>
     <string name="amelia_update_tap">Нажмите, чтобы обновить</string>
     <string name="amelia_version">Версия %1$s (%2$d)</string>
-    <string name="amelia_update_allow_install">Разрешите Amelia.Net устанавливать приложения и нажмите «Установить» ещё раз</string>
 
     <!-- session traffic -->
     <string name="amelia_traffic_session">↓ %1$s   ↑ %2$s</string>
@@ -250,4 +249,30 @@
     <string name="amelia_ago_now">только что</string>
     <string name="amelia_ago_min">%1$d мин назад</string>
     <string name="amelia_ago_hours">%1$d ч назад</string>
+    <!-- 1.4.0 -->
+    <string name="amelia_switch_text_manual">%1$s не отвечает — переключились на %2$s</string>
+    <string name="amelia_switch_return">Вернуться на %1$s</string>
+    <string name="amelia_phase_manual_failed">Выбранная локация не отвечает. Выберите другую или нажмите «⚡ Подключить лучший».</string>
+    <string name="amelia_phase_connected_on">Подключено · %1$s</string>
+    <string name="amelia_phase_connected_on_ping">Подключено · %1$s · %2$d мс</string>
+    <string name="amelia_autoswitch_title">Автопереключение</string>
+    <string name="amelia_autoswitch_always">Всегда</string>
+    <string name="amelia_autoswitch_unless_manual">Только если я не выбирал сервер сам</string>
+    <string name="amelia_autoswitch_off">Выключено</string>
+    <string name="amelia_autoswitch_text">Если локация перестала отвечать, приложение переходит на самую быструю из работающих. Резервные и «Москва» берутся сами только после окончания подписки.</string>
+    <string name="amelia_journal">Журнал</string>
+    <string name="amelia_journal_empty">Пока ничего не происходило</string>
+    <string name="amelia_install_blocked_title">Телефон не дал установить обновление</string>
+    <string name="amelia_install_blocked_text">Обычно это защита телефона: она не пускает приложения не из магазина. Её можно выключить на время установки.</string>
+    <string name="amelia_install_blocked_samsung">Samsung: Настройки → Безопасность и конфиденциальность → Автоблокировщик → выключить на время установки.</string>
+    <string name="amelia_install_blocked_play">Play Маркет → значок профиля → Play Защита → ⚙ → временно отключить проверку приложений.</string>
+    <string name="amelia_install_open_security">Открыть настройки безопасности</string>
+    <string name="amelia_install_retry">Установить ещё раз</string>
+    <string name="amelia_install_download_browser">Скачать вручную</string>
+    <string name="amelia_install_telegram">Получить файл в Telegram</string>
+    <string name="amelia_install_permission_title">Разрешите установку обновлений</string>
+    <string name="amelia_install_permission_text">Android спросит, можно ли Amelia.Net устанавливать приложения. Включите переключатель и вернитесь — установка продолжится.</string>
+    <string name="amelia_install_permission_open">Открыть настройки</string>
+    <string name="amelia_install_bad_signature">Скачанный файл подписан не нашим ключом. Устанавливать его нельзя — скачайте обновление в боте.</string>
+    <string name="amelia_install_bad_version">Скачанный файл — не та версия (%1$s). Попробуйте проверить обновления ещё раз.</string>
 </resources>

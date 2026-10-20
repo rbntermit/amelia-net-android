@@ -26,6 +26,8 @@
     </FrameLayout>
 
     <TextView
+        android:id="@+id/widget_name"
+        android:maxWidth="72dp"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="4dp"

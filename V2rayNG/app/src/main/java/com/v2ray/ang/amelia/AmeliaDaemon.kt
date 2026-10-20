@@ -4,49 +4,63 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.PowerManager
+import android.service.quicksettings.TileService
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.core.CoreServiceManager
+import com.v2ray.ang.core.LauncherManager
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.helper.MessageHelper
+import com.v2ray.ang.service.QSTileService
 import com.v2ray.ang.util.LogUtil
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
 import java.io.Serializable
 import java.util.concurrent.TimeUnit
 
 /**
- * Amelia.Net logic in the VPN daemon process, next to the core (1.2.0):
+ * Amelia.Net logic in the VPN daemon process, next to the core (1.4.0, see docs/LOGIC.md):
  *
  * - **Watch**: every [INTERVAL_SCREEN_ON_MS] ([INTERVAL_SCREEN_OFF_MS] with the screen off) a
- *   short request through the current location (generate_204 via the core's local HTTP inbound,
- *   [PROBE_TIMEOUT_MS]). Two failures in a row — or one when no data has come in at all — and
- *   the location counts as broken.
- * - **Fast switch**: no full re-check first. The next location comes from the known results
- *   (AmeliaQueue: working by ping, bad-for-this-provider later, reserve last); the core is
- *   restarted in place with it (the VPN interface stays up) and checked the same way. The full
- *   check of every location runs in parallel and refines the queue as results come.
- * - **No internet** (ya.ru around the tunnel fails too): "Нет интернета", checks back off to
- *   30 s, 1, 2, 5 min, and locations are not switched.
- * - **Network change** (from upstream's handover): hints refreshed, full check, immediate watch.
+ *   request through the current location to two generate_204 addresses ([PROBE_URLS], any one
+ *   is enough, [PROBE_TIMEOUT_MS]). Broken: two failures in a row for an automatic choice (one
+ *   when no data came back at all); for a location chosen by hand three failures over at least
+ *   30 s and a last 10 s attempt (AmeliaPolicy).
+ * - **No internet**: without a validated network, or when ya.ru / google do not answer around
+ *   the tunnel, nothing is judged or switched; checks back off (30 s … 5 min), and after the
+ *   network is back the daemon waits [SETTLE_MS] before the next check.
+ * - **Switch** (AmeliaPolicy.Mode): from the known results (AmeliaQueue); reserve and Moscow only
+ *   when the subscription ended. The core restarts in place; the new location is judged only
+ *   after the tunnel is up, [SETTLE_MS] and one warm-up request. Nothing works: back to where
+ *   it was. One switch at a time ([switching]); nothing interrupts it.
+ * - **Leaving reserve/Moscow**: on such a location with a valid subscription and not chosen by
+ *   hand, foreign locations are checked every minute and the first working one is taken.
+ * - **Network change** (upstream handover): hints, full check, watch after [SETTLE_MS].
  * - **Session traffic**: fed by the upstream speed-notification loop.
  */
 object AmeliaDaemon {
 
     /** Same names as the app's ConnPhase where they overlap. */
-    enum class Phase { CHECKING, CONNECTED, SWITCHING, NO_INTERNET, ALL_FAILED }
+    enum class Phase { CHECKING, CONNECTED, SWITCHING, NO_INTERNET, ALL_FAILED, MANUAL_FAILED }
 
     data class Health(
         val phase: String,
@@ -65,18 +79,27 @@ object AmeliaDaemon {
         val startedAt: Long,
     ) : Serializable
 
-    const val PROBE_URL = "https://www.gstatic.com/generate_204"
-    const val PROBE_TIMEOUT_MS = 4_000L
-    const val FIRST_CHECK_DELAY_MS = 1_500L
+    /** Any one answering is enough (1.4.0). */
+    val PROBE_URLS = listOf("https://www.gstatic.com/generate_204", "https://cp.cloudflare.com/generate_204")
+    const val PROBE_TIMEOUT_MS = 6_000L
+    /** Last attempt before leaving a location chosen by hand. */
+    const val FINAL_PROBE_TIMEOUT_MS = 10_000L
+    /** After the tunnel is up (connect, switch, network back) before the first real check. */
+    const val SETTLE_MS = 3_000L
+    /** After the network comes back, before anything is judged. */
+    const val NETWORK_SETTLE_MS = 5_000L
     const val INTERVAL_SCREEN_ON_MS = 30_000L
     const val INTERVAL_SCREEN_OFF_MS = 120_000L
-    /** Pause before the confirming second probe. */
+    /** While failures are being counted. */
+    const val FAILING_RETRY_MS = 10_000L
+    /** Pause before the confirming second probe of an automatic choice. */
     const val CONFIRM_DELAY_MS = 1_000L
     /** Uplink without any downlink for this long: no traffic at all, one failure is enough. */
     const val NO_TRAFFIC_MS = 20_000L
-    val NO_INTERNET_BACKOFF_MS = listOf(30_000L, 60_000L, 120_000L, 300_000L)
     /** Nothing works although the phone is online: try again after this. */
     const val ALL_FAILED_RETRY_MS = 120_000L
+    /** On reserve/Moscow with a valid subscription: how often foreign locations are tried. */
+    const val LEAVE_LAST_RESORT_MS = 60_000L
 
     private const val SWITCH_CHANNEL = "amelia_switch"
     private const val SWITCH_NOTIFICATION_ID = 7303
@@ -86,9 +109,19 @@ object AmeliaDaemon {
     private var watchJob: Job? = null
     private var checkJob: Job? = null
 
+    /** Held for a whole check or switch: a second one waits instead of interrupting it. */
+    private val switching = Mutex()
+
     @Volatile private var lastHealth: Health? = null
     @Volatile private var lastTraffic: Traffic? = null
     @Volatile private var noInternetStep = 0
+    /** Offline seen: wait [NETWORK_SETTLE_MS] before judging again. */
+    @Volatile private var settleNetwork = false
+    /** The core was (re)started: the next check waits [SETTLE_MS] and warms the connection up. */
+    @Volatile private var freshTunnel = true
+    @Volatile private var failures = 0
+    @Volatile private var firstFailAt = 0L
+    @Volatile private var lastLeaveTry = 0L
 
     // session traffic
     private var startedAt = 0L
@@ -108,14 +141,18 @@ object AmeliaDaemon {
         lastProxyDownAt = startedAt
         lastProxyUpAt = 0L
         noInternetStep = 0
+        resetFailures()
+        freshTunnel = true
+        lastLeaveTry = 0L
         lastTraffic = Traffic(0, 0, 0, 0, startedAt)
-        startWatch(service, FIRST_CHECK_DELAY_MS)
+        startWatch(service, 0L)
         bgScope.launch {
             // the native library is loaded here anyway: cache the core's own version for the app
             AmeliaVersions.xray()
             AmeliaHints.refreshIfStale(service)
         }
         if (System.currentTimeMillis() - AmeliaChecks.load().lastFullAt > AmeliaChecks.FRESH_MS) startFullCheck(service)
+        refreshTile(service)
     }
 
     fun onCoreStopped() {
@@ -143,12 +180,16 @@ object AmeliaDaemon {
     /** The phone moved to another network (upstream handover reloaded the core). */
     fun onNetworkChanged(service: Service) {
         LogUtil.i(AppConfig.TAG, "Amelia watch: network changed, checking again")
+        AmeliaJournal.add("Сеть сменилась — проверяю заново")
         noInternetStep = 0
+        resetFailures()
+        settleNetwork = true
+        freshTunnel = true
         bgScope.launch {
             // the hints tell this provider's AS: the network key and what is cut here
             AmeliaHints.refreshIfStale(service, force = true)
-            startWatch(service, 0L)
         }
+        startWatch(service, 0L)
         startFullCheck(service)
     }
 
@@ -174,53 +215,117 @@ object AmeliaDaemon {
 
     // ---- watch ----------------------------------------------------------------------------
 
+    /**
+     * (Re)starts the watch loop. A check or switch in progress is not interrupted: the new loop
+     * waits for it ([switching]) and checks right after.
+     */
     private fun startWatch(service: Service, firstDelay: Long) {
+        if (switching.isLocked && watchJob?.isActive == true) {
+            // a check or switch is running: let it finish, then check again right away
+            nextSoon = true
+            return
+        }
         watchJob?.cancel()
         watchJob = watchScope.launch {
             delay(firstDelay)
             while (isActive) {
-                val next = runCatching { tick(service) }.getOrElse {
+                val next = runCatching { switching.withLock { tick(service) } }.getOrElse {
                     LogUtil.w(AppConfig.TAG, "Amelia watch: check failed", it)
                     INTERVAL_SCREEN_ON_MS
                 }
-                delay(next)
+                delay(if (nextSoon) 0L.also { nextSoon = false } else next)
             }
         }
     }
+
+    @Volatile private var nextSoon = false
 
     private fun interval(context: Context): Long =
         if (context.getSystemService(PowerManager::class.java)?.isInteractive != false) INTERVAL_SCREEN_ON_MS
         else INTERVAL_SCREEN_OFF_MS
 
-    /** One round; returns how long to wait before the next one. */
+    private fun resetFailures() {
+        failures = 0
+        firstFailAt = 0L
+    }
+
+    /** One round; returns how long to wait before the next one. Runs under [switching]. */
     private suspend fun tick(service: Service): Long {
         if (!waitCoreReady()) return 2_000L
+        // No internet on the phone itself: nothing is judged or switched. Android's own check
+        // (VALIDATED) can fail on some vendor builds, so ya.ru / google around the tunnel decide too.
+        if (AmeliaPolicy.isOffline(AmeliaNetwork.validated(service), AmeliaFailover.directInternetOk(service))) {
+            return offline(service, "сеть без интернета")
+        }
+        if (settleNetwork) {
+            settleNetwork = false
+            delay(NETWORK_SETTLE_MS)
+        }
+        if (freshTunnel) warmUp()
+
         val selected = MmkvManager.getSelectServer()
-        val reserve = AmeliaReserveState.isReserveGuid(selected)
+        val name = selected?.let { MmkvManager.decodeServerConfig(it)?.remarks }
+        val reserve = AmeliaReserve.isReserve(name)
+        val manual = AmeliaManual.isManual(selected)
         if (lastHealth?.phase != Phase.CONNECTED.name) report(service, Health(Phase.CHECKING.name, guid = selected))
 
         var ms = probe(reserve)
-        val silent = noTraffic(System.currentTimeMillis(), lastProxyUpAt, lastProxyDownAt, lastTrafficAt)
-        if (ms < 0 && !silent) {
+        val now0 = System.currentTimeMillis()
+        val silent = noTraffic(now0, lastProxyUpAt, lastProxyDownAt, lastTrafficAt)
+        if (ms < 0 && !manual && !silent && failures == 0) {
             // one slow answer is not a dead server: confirm right away
             delay(CONFIRM_DELAY_MS)
             ms = probe(reserve)
         }
         if (ms >= 0) {
+            resetFailures()
             onWorking(service, selected, ms)
+            val subActive = AmeliaPolicy.subscriptionActive(AmeliaManager.getSubInfo(), System.currentTimeMillis())
+            if (AmeliaPolicy.shouldLeaveLastResort(name, manual, subActive)) return leaveLastResort(service, selected)
             return interval(service)
         }
 
-        // The location does not answer. Is it the location or the phone's internet?
-        if (!AmeliaFailover.directInternetOk(service)) {
-            report(service, Health(Phase.NO_INTERNET.name, guid = selected))
-            val wait = NO_INTERNET_BACKOFF_MS[noInternetStep.coerceAtMost(NO_INTERNET_BACKOFF_MS.lastIndex)]
-            noInternetStep++
-            return wait
+        val now = System.currentTimeMillis()
+        if (failures == 0) firstFailAt = now
+        failures += if (!manual && failures == 0 && !silent) 2 else 1 // the confirming probe above counted too
+        if (!AmeliaPolicy.broken(manual, failures, firstFailAt, now, silent)) return FAILING_RETRY_MS
+        if (manual) {
+            // last chance with a longer wait before leaving what the person chose
+            val last = probe(reserve, FINAL_PROBE_TIMEOUT_MS)
+            if (last >= 0) {
+                resetFailures()
+                onWorking(service, selected, last)
+                return interval(service)
+            }
         }
+
+        // The location does not answer. Is it the location or the phone's internet?
+        if (!AmeliaFailover.directInternetOk(service)) return offline(service, "нет интернета")
         noInternetStep = 0
         selected?.let { putFailure(service, it) }
-        return switchFast(service, selected, if (silent) "трафика нет" else "нет ответа 2 раза")
+        val why = when {
+            silent -> "трафика нет"
+            manual -> "не ответил ${AmeliaPolicy.MANUAL_FAILURES} раза"
+            else -> "нет ответа 2 раза"
+        }
+        val respect = AmeliaManual.load().respectUntil
+        if (!AmeliaPolicy.maySwitch(AmeliaPolicy.mode(), manual, respect, now)) {
+            AmeliaJournal.add("${name.orEmpty()} $why — автопереключение не трогает этот выбор")
+            report(service, Health(if (manual) Phase.MANUAL_FAILED.name else Phase.ALL_FAILED.name, guid = selected))
+            return INTERVAL_SCREEN_ON_MS
+        }
+        val result = switchFast(service, selected, why)
+        resetFailures()
+        return result
+    }
+
+    private fun offline(service: Service, why: String): Long {
+        val selected = MmkvManager.getSelectServer()
+        if (lastHealth?.phase != Phase.NO_INTERNET.name) AmeliaJournal.add("Нет интернета ($why) — локации не меняю")
+        report(service, Health(Phase.NO_INTERNET.name, guid = selected))
+        settleNetwork = true
+        resetFailures()
+        return AmeliaPolicy.offlineWait(noInternetStep++)
     }
 
     private fun onWorking(service: Service, guid: String?, ms: Long) {
@@ -235,9 +340,7 @@ object AmeliaDaemon {
             net,
         )
         // only foreign locations are worth starting with on this network
-        if (!AmeliaReserve.isReserve(config.remarks) && !AmeliaReserve.isRussianExit(config.remarks)) {
-            AmeliaBest.remember(net, config.remarks)
-        }
+        if (!AmeliaPolicy.isLastResort(config.remarks)) AmeliaBest.remember(net, config.remarks)
         bgScope.launch { AmeliaHints.refreshIfStale(service) }
     }
 
@@ -253,8 +356,39 @@ object AmeliaDaemon {
     }
 
     /**
+     * On reserve / Moscow with a valid subscription: once a minute check the foreign locations
+     * (outside the tunnel, in parallel) and move to the first one that works through the tunnel.
+     */
+    private suspend fun leaveLastResort(service: Service, current: String?): Long {
+        val now = System.currentTimeMillis()
+        if (now - lastLeaveTry < LEAVE_LAST_RESORT_MS) return LEAVE_LAST_RESORT_MS
+        lastLeaveTry = now
+        val locations = AmeliaQueue.locations()
+        val guids = AmeliaQuickPick.candidates(locations, AmeliaChecks.load().entries, setOfNotNull(current))
+        if (guids.isEmpty()) return LEAVE_LAST_RESORT_MS
+        val net = AmeliaHints.netKey(service)
+        AmeliaQuickPick.quickest(guids, deadlineMs = PROBE_TIMEOUT_MS, check = { AmeliaCheck.checkOne(service, it) }) { r ->
+            AmeliaChecks.put(service, r, net)
+        }
+        val fromName = current?.let { MmkvManager.decodeServerConfig(it)?.remarks }.orEmpty()
+        val queue = AmeliaQueue.current(service, exclude = setOfNotNull(current))
+            .filter { g -> !AmeliaPolicy.isLastResort(MmkvManager.decodeServerConfig(g)?.remarks) }
+        val known = AmeliaChecks.fresh(AmeliaChecks.load(), System.currentTimeMillis())
+        val target = queue.firstOrNull { g -> known[MmkvManager.decodeServerConfig(g)?.remarks]?.ok == true }
+            ?: return LEAVE_LAST_RESORT_MS
+        val ms = switchTo(service, target)
+        if (ms >= 0) {
+            done(service, current, target, fromName, "подписка действует — ушли с «$fromName»", now, ms)
+            return interval(service)
+        }
+        restore(service, current)
+        return LEAVE_LAST_RESORT_MS
+    }
+
+    /**
      * Moves to the first location of the queue that answers, without a full re-check first.
-     * The full check runs at the same time and its results reorder what is left.
+     * The full check runs at the same time and its results reorder what is left. Nothing
+     * works: back to the location it started from.
      */
     private suspend fun switchFast(service: Service, failed: String?, why: String): Long {
         val t0 = System.currentTimeMillis()
@@ -263,33 +397,63 @@ object AmeliaDaemon {
         startFullCheck(service)
         val tried = mutableSetOf<String>().apply { failed?.let { add(it) } }
         while (true) {
+            // the person picked a location meanwhile: their choice wins, nothing is restored
+            if (AmeliaManual.load().at > t0) return interval(service)
             // locations the parallel check has just seen failing are skipped
             val failedNow = AmeliaChecks.load().entries.values.filter { !it.ok && it.ts >= t0 }.map { it.name }.toSet()
             val skip = tried + AmeliaQueue.locations().filter { it.name in failedNow }.map { it.guid }
             val next = AmeliaQueue.current(service, exclude = skip).firstOrNull() ?: break
             tried += next
-            val reserve = AmeliaReserveState.isReserveGuid(next)
-            MmkvManager.setSelectServer(next)
-            AmeliaReserveState.setAuto(reserve)
-            report(service, Health(Phase.SWITCHING.name, guid = next))
-            if (!CoreServiceManager.reloadForAmelia()) {
-                delay(500)
-                if (!CoreServiceManager.reloadForAmelia()) continue
-            }
-            val ms = if (waitCoreReady()) probe(reserve) else -1L
+            val ms = switchTo(service, next)
             if (ms >= 0) {
-                val toName = MmkvManager.decodeServerConfig(next)?.remarks.orEmpty()
-                val secs = (System.currentTimeMillis() - t0 + 999) / 1000
-                LogUtil.i(AppConfig.TAG, "Amelia watch: switched in $secs s")
-                AmeliaEvents.add(AmeliaEvents.Event(System.currentTimeMillis() / 1000, fromName, toName, "$why · $secs с"))
-                notifySwitch(service, fromName, toName)
-                onWorking(service, next, ms)
+                done(service, failed, next, fromName, why, t0, ms)
                 return interval(service)
             }
             putFailure(service, next)
         }
+        restore(service, failed)
+        AmeliaJournal.add("$fromName $why — ни одна локация не ответила")
         report(service, Health(Phase.ALL_FAILED.name, guid = MmkvManager.getSelectServer()))
         return ALL_FAILED_RETRY_MS
+    }
+
+    /** Selects [guid], restarts the core in place and judges it once it has settled. */
+    private suspend fun switchTo(service: Service, guid: String): Long {
+        val reserve = AmeliaReserveState.isReserveGuid(guid)
+        MmkvManager.setSelectServer(guid)
+        AmeliaReserveState.setAuto(reserve)
+        report(service, Health(Phase.SWITCHING.name, guid = guid))
+        if (!CoreServiceManager.reloadForAmelia()) {
+            delay(500)
+            if (!CoreServiceManager.reloadForAmelia()) return -1L
+        }
+        if (!waitCoreReady()) return -1L
+        warmUp()
+        return probe(reserve)
+    }
+
+    /** Nothing worked: the core goes back to [guid] (not left on the last one tried). */
+    private suspend fun restore(service: Service, guid: String?) {
+        if (guid == null || MmkvManager.getSelectServer() == guid) return
+        MmkvManager.setSelectServer(guid)
+        AmeliaReserveState.setAuto(AmeliaReserveState.isReserveGuid(guid) && AmeliaReserveState.isAuto())
+        CoreServiceManager.reloadForAmelia()
+        waitCoreReady()
+        freshTunnel = true
+        refreshTile(service)
+    }
+
+    private fun done(service: Service, from: String?, to: String, fromName: String, why: String, t0: Long, ms: Long) {
+        val toName = MmkvManager.decodeServerConfig(to)?.remarks.orEmpty()
+        val secs = (System.currentTimeMillis() - t0 + 999) / 1000
+        val wasManual = AmeliaManual.isManual(from)
+        AmeliaManual.markLeft(from)
+        LogUtil.i(AppConfig.TAG, "Amelia watch: switched in $secs s")
+        AmeliaEvents.add(AmeliaEvents.Event(System.currentTimeMillis() / 1000, fromName, toName, "$why · $secs с"))
+        AmeliaJournal.add("$fromName $why → $toName")
+        notifySwitch(service, fromName, toName, if (wasManual) from else null)
+        onWorking(service, to, ms)
+        refreshTile(service)
     }
 
     /**
@@ -302,8 +466,7 @@ object AmeliaDaemon {
         val fresh = AmeliaChecks.fresh(store, now)
         val locations = AmeliaQueue.locations()
         val haveFresh = locations.any {
-            it.guid != failed && fresh[it.name]?.ok == true &&
-                !AmeliaReserve.isReserve(it.name) && !AmeliaReserve.isRussianExit(it.name)
+            it.guid != failed && fresh[it.name]?.ok == true && !AmeliaPolicy.isLastResort(it.name)
         }
         if (haveFresh) return
         val guids = AmeliaQuickPick.candidates(locations, store.entries, setOfNotNull(failed))
@@ -326,32 +489,49 @@ object AmeliaDaemon {
         return CoreServiceManager.isReadyForAmelia()
     }
 
-    private val probeClient: OkHttpClient by lazy {
-        AmeliaHttp.clientFor(AmeliaHttp.Route.TUNNEL).newBuilder()
-            .connectTimeout(PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-            .readTimeout(PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-            .callTimeout(PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-            .followRedirects(false)
-            .build()
+    /**
+     * After the tunnel came up: wait [SETTLE_MS], then one request whose result is ignored
+     * (the first one through a fresh XHTTP/QUIC connection pays for its setup).
+     */
+    private suspend fun warmUp() {
+        freshTunnel = false
+        delay(SETTLE_MS)
+        probe(reserve = AmeliaReserveState.isReserveGuid(MmkvManager.getSelectServer()))
     }
 
+    private fun client(timeoutMs: Long): OkHttpClient =
+        AmeliaHttp.clientFor(AmeliaHttp.Route.TUNNEL).newBuilder()
+            .connectTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+            .readTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+            .callTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+            .followRedirects(false)
+            .build()
+
+    private val probeClient: OkHttpClient by lazy { client(PROBE_TIMEOUT_MS) }
+    private val finalProbeClient: OkHttpClient by lazy { client(FINAL_PROBE_TIMEOUT_MS) }
+
     /**
-     * One request through the current location (the core's local HTTP inbound), at most
-     * [PROBE_TIMEOUT_MS]. Reserve locations: Telegram, any HTTP answer counts.
-     * @return delay in ms, -1 when it did not answer
+     * Requests through the current location (the core's local HTTP inbound) to [PROBE_URLS] at
+     * the same time; the first answer counts. Reserve locations: Telegram, any HTTP answer.
+     * @return delay in ms, -1 when none answered within the timeout
      */
-    private fun probe(reserve: Boolean): Long {
-        val url = if (reserve) AmeliaReserve.TEST_URL else PROBE_URL
-        val start = System.nanoTime()
-        return try {
-            probeClient.newCall(AmeliaHttp.get(url)).execute().use { resp ->
-                val ms = ((System.nanoTime() - start) / 1_000_000).coerceAtLeast(1L)
-                if (reserve || resp.code in 200..399) ms else -1L
+    private suspend fun probe(reserve: Boolean, timeoutMs: Long = PROBE_TIMEOUT_MS): Long = coroutineScope {
+        val c = if (timeoutMs == PROBE_TIMEOUT_MS) probeClient else finalProbeClient
+        val urls = if (reserve) listOf(AmeliaReserve.TEST_URL) else PROBE_URLS
+        urls.map { url ->
+            async(Dispatchers.IO) {
+                val start = System.nanoTime()
+                try {
+                    c.newCall(AmeliaHttp.get(url)).execute().use { resp ->
+                        val ms = ((System.nanoTime() - start) / 1_000_000).coerceAtLeast(1L)
+                        if (reserve || resp.code in 200..399) ms else -1L
+                    }
+                } catch (e: Exception) {
+                    LogUtil.w(AppConfig.TAG, "Amelia watch: probe through the location failed: ${e.message}")
+                    -1L
+                }
             }
-        } catch (e: Exception) {
-            LogUtil.w(AppConfig.TAG, "Amelia watch: probe through the location failed: ${e.message}")
-            -1L
-        }
+        }.awaitAll().filter { it >= 0 }.minOrNull() ?: -1L
     }
 
     // ---- full check in the background -----------------------------------------------------
@@ -373,10 +553,29 @@ object AmeliaDaemon {
         }
     }
 
-    // ---- notifications --------------------------------------------------------------------
+    // ---- tile, notifications --------------------------------------------------------------
 
-    /** Quiet notice on its own channel (people can turn it off in the system settings). */
-    private fun notifySwitch(context: Context, from: String, to: String) {
+    /** The quick settings tile shows the current location (1.4.0). */
+    private fun refreshTile(context: Context) {
+        runCatching { TileService.requestListeningState(context, ComponentName(context, QSTileService::class.java)) }
+        runCatching {
+            val manager = android.appwidget.AppWidgetManager.getInstance(context)
+            val ids = manager.getAppWidgetIds(ComponentName(context, com.v2ray.ang.receiver.WidgetProvider::class.java))
+            if (ids.isNotEmpty()) {
+                context.sendBroadcast(
+                    Intent(context, com.v2ray.ang.receiver.WidgetProvider::class.java)
+                        .setAction(android.appwidget.AppWidgetManager.ACTION_APPWIDGET_UPDATE)
+                        .putExtra(android.appwidget.AppWidgetManager.EXTRA_APPWIDGET_IDS, ids),
+                )
+            }
+        }
+    }
+
+    /**
+     * Quiet notice on its own channel (people can turn it off in the system settings). When a
+     * location chosen by hand was left, it offers "Вернуться на …" ([leftManual]).
+     */
+    private fun notifySwitch(context: Context, from: String, to: String, leftManual: String?) {
         val nm = NotificationManagerCompat.from(context)
         if (!nm.areNotificationsEnabled()) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -391,12 +590,12 @@ object AmeliaDaemon {
             Intent(context, AmeliaActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val text = if (from.isNotEmpty()) {
-            context.getString(R.string.amelia_switch_text, from, to)
-        } else {
-            context.getString(R.string.amelia_switch_text_short, to)
+        val text = when {
+            leftManual != null -> context.getString(R.string.amelia_switch_text_manual, from, to)
+            from.isNotEmpty() -> context.getString(R.string.amelia_switch_text, from, to)
+            else -> context.getString(R.string.amelia_switch_text_short, to)
         }
-        val n = NotificationCompat.Builder(context, SWITCH_CHANNEL)
+        val builder = NotificationCompat.Builder(context, SWITCH_CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_name)
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
@@ -404,11 +603,40 @@ object AmeliaDaemon {
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setContentIntent(open)
             .setAutoCancel(true)
-            .build()
+        if (leftManual != null) {
+            val back = PendingIntent.getBroadcast(
+                context, 4,
+                Intent(context, ReturnReceiver::class.java).putExtra(ReturnReceiver.EXTRA_NAME, from),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+            builder.addAction(0, context.getString(R.string.amelia_switch_return, from), back)
+        }
         try {
-            nm.notify(SWITCH_NOTIFICATION_ID, n)
+            nm.notify(SWITCH_NOTIFICATION_ID, builder.build())
         } catch (e: SecurityException) {
             LogUtil.w(AppConfig.TAG, "Amelia: no permission for the switch notification", e)
+        }
+    }
+
+    /**
+     * "Вернуться на …" from the switch notification: back to the location chosen by hand; the
+     * daemon then leaves it alone for 10 minutes (AmeliaManual).
+     */
+    class ReturnReceiver : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            // by name: the subscription may have been refreshed since (new guids)
+            val name = intent.getStringExtra(EXTRA_NAME) ?: return
+            val guid = AmeliaManual.guidOf(name) ?: return
+            NotificationManagerCompat.from(context).cancel(SWITCH_NOTIFICATION_ID)
+            MmkvManager.setSelectServer(guid)
+            AmeliaReserveState.setAuto(false)
+            AmeliaManual.markChosen(guid)
+            AmeliaJournal.add("Вернулись на «${MmkvManager.decodeServerConfig(guid)?.remarks.orEmpty()}» вручную")
+            LauncherManager.restartService(context)
+        }
+
+        companion object {
+            const val EXTRA_NAME = "name"
         }
     }
 

@@ -140,6 +140,7 @@ object AmeliaManager {
             !AmeliaFormat.isExpired(info, System.currentTimeMillis())
         ) {
             AmeliaReserveState.setAuto(false)
+            AmeliaManual.markAutomatic()
             AmeliaReserve.firstChoice(locations)?.let { select(it.guid) }
             return
         }

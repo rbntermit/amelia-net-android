@@ -40,6 +40,8 @@ enum class ConnPhase {
     NO_INTERNET,
     /** Every location failed the check. */
     ALL_FAILED,
+    /** The location chosen by hand does not answer; the daemon leaves it alone (1.4.0). */
+    MANUAL_FAILED,
 }
 
 data class AmeliaUiState(
@@ -99,6 +101,14 @@ data class AmeliaUiState(
     val bypassCount: Int = 0,
     /** Connected to a reserve location (only Telegram) because no regular one works. */
     val reserveFallback: Boolean = false,
+    // ---- 1.4.0 ----
+    val autoMode: AmeliaPolicy.Mode = AmeliaPolicy.DEFAULT_MODE,
+    /** "Журнал"; null until the screen loads it. */
+    val journal: List<AmeliaJournal.Entry>? = null,
+    /** APK waiting for "allow installing apps" (the explanation is on screen). */
+    val installPermissionFor: String? = null,
+    /** The phone refused to install the update: how to let it through. */
+    val installBlocked: Boolean = false,
     // ---- 1.3.0 ----
     val crashEnabled: Boolean = true,
     /** The app is not under battery optimisation (may run in the background). */
@@ -141,7 +151,7 @@ data class AmeliaUiState(
      * data has come through it for [NO_TRAFFIC_MS]. The menu always has it.
      */
     val showReportButton: Boolean
-        get() = startFailed || phase == ConnPhase.NO_INTERNET || phase == ConnPhase.ALL_FAILED ||
+        get() = startFailed || phase == ConnPhase.NO_INTERNET || phase == ConnPhase.ALL_FAILED || phase == ConnPhase.MANUAL_FAILED ||
             (isRunning && traffic != null && traffic.down == 0L &&
                 System.currentTimeMillis() - traffic.startedAt > NO_TRAFFIC_MS)
 }
@@ -239,6 +249,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 if (current == null && answered) AmeliaUpdater.deleteDownloads(app)
                 current?.let { AmeliaUpdater.pruneDownloads(app, it) }
             }
+            refreshInstallBlocked()
             current?.let { onUpdateFound(it) }
             // "О программе" open: its "Обновления проверены …" line follows the new answer
             if (_state.value.about != null) loadAbout()
@@ -432,6 +443,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
     /** Back from the bot after paying: if the end was near, see whether it moved. */
     fun onResume() {
         val s = _state.value
+        refreshInstallBlocked()
         // 1.3.1: back on the screen after more than an hour: ask the server again
         if (System.currentTimeMillis() - AmeliaUpdater.lastAttempt() > AmeliaUpdater.RESUME_CHECK_MS) checkUpdate(manual = false)
         viewModelScope.launch {
@@ -512,6 +524,8 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 withContext(Dispatchers.IO) {
                     AmeliaManager.select(guid)
                     AmeliaReserveState.setAuto(false)
+                    // picked by the app, not by the person
+                    AmeliaManual.markAutomatic()
                 }
                 _state.update { it.copy(selectedGuid = guid, reserveFallback = false) }
                 if (_state.value.isRunning) {
@@ -550,6 +564,73 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             _state.update { it.copy(speedTesting = null, speeds = speeds) }
             if (mbps == null) showMessage(R.string.amelia_speed_failed)
         }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // 1.4.0: auto-switch mode, journal, install help
+    // ---------------------------------------------------------------------------------------
+
+    fun setAutoMode(mode: AmeliaPolicy.Mode) {
+        viewModelScope.launch(Dispatchers.IO) { AmeliaPolicy.setMode(mode) }
+        _state.update { it.copy(autoMode = mode) }
+    }
+
+    fun loadJournal() {
+        viewModelScope.launch {
+            val list = withContext(Dispatchers.IO) { AmeliaJournal.list().reversed() }
+            _state.update { it.copy(journal = list) }
+        }
+    }
+
+    /** The journal as text for support (newest first). */
+    fun journalText(): String = _state.value.journal.orEmpty().joinToString("\n") {
+        "${AmeliaFormat.dateTime(it.ts)}  ${it.text}"
+    }
+
+    private var pendingInstallPath: String? = null
+
+    fun askInstallPermission(path: String) {
+        pendingInstallPath = path
+        _state.update { it.copy(installPermissionFor = path) }
+    }
+
+    /** Back on screen: the APK to install now that installing is allowed ([allowed]), once. */
+    fun pendingInstall(allowed: Boolean): String? {
+        val p = pendingInstallPath ?: return null
+        if (!allowed) return null
+        pendingInstallPath = null
+        _state.update { it.copy(installPermissionFor = null) }
+        return p
+    }
+
+    fun installPermissionDismissed() {
+        pendingInstallPath = null
+        _state.update { it.copy(installPermissionFor = null) }
+    }
+
+    /** The downloaded file is not ours or not the promised version: say so, download again later. */
+    fun apkRejected(text: String) {
+        _state.update { it.copy(messageText = text, updateApkPath = null, updateProgress = null) }
+    }
+
+    /** The phone refused the install of the version on offer (AmeliaInstaller). */
+    private fun refreshInstallBlocked() {
+        viewModelScope.launch {
+            val code = withContext(Dispatchers.IO) { AmeliaInstaller.blockedCode() }
+            _state.update { it.copy(installBlocked = code > 0 && code == it.update?.versionCode) }
+        }
+    }
+
+    fun installHelpDone() {
+        viewModelScope.launch(Dispatchers.IO) { AmeliaInstaller.clearBlocked() }
+        _state.update { it.copy(installBlocked = false) }
+    }
+
+    /** "Скачать вручную": the universal APK on the mirror that answered last, for the browser. */
+    fun manualDownloadUrl(): String? {
+        val v = _state.value.update ?: return null
+        val url = v.url ?: return null
+        return AmeliaHttp.rewriteOrigin(url, AmeliaHttp.lastBase() ?: AmeliaConfig.SUB_BASE_URLS.first())
     }
 
     // ---------------------------------------------------------------------------------------
@@ -668,6 +749,8 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 AmeliaManager.select(guid)
                 // the person chose: no longer an automatic fallback to a reserve location
                 AmeliaReserveState.setAuto(false)
+                // 1.4.0: a choice made by hand is respected (AmeliaPolicy)
+                AmeliaManual.markChosen(guid)
             }
             _state.update { it.copy(selectedGuid = guid, reserveFallback = false) }
             if (_state.value.isRunning) {
@@ -762,6 +845,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             AmeliaDaemon.Phase.SWITCHING.name -> ConnPhase.SWITCHING
             AmeliaDaemon.Phase.NO_INTERNET.name -> ConnPhase.NO_INTERNET
             AmeliaDaemon.Phase.ALL_FAILED.name -> ConnPhase.ALL_FAILED
+            AmeliaDaemon.Phase.MANUAL_FAILED.name -> ConnPhase.MANUAL_FAILED
             else -> return
         }
         if (phase == ConnPhase.SWITCHING) expectRestart = true
@@ -837,6 +921,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 bypassCount = AmeliaApps.bypassed().size,
                 probeEnabled = AmeliaProbe.isEnabled(),
                 crashEnabled = AmeliaCrash.isEnabled(),
+                autoMode = AmeliaPolicy.mode(),
                 batteryOk = AmeliaBattery.isAllowed(getApplication()),
                 speeds = AmeliaSpeed.byGuid(),
                 announceDismissed = AmeliaAnnounce.dismissed(),
@@ -857,6 +942,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 bypassCount = snapshot.bypassCount,
                 probeEnabled = snapshot.probeEnabled,
                 crashEnabled = snapshot.crashEnabled,
+                autoMode = snapshot.autoMode,
                 batteryOk = snapshot.batteryOk,
                 speeds = snapshot.speeds,
                 announceDismissed = snapshot.announceDismissed,

@@ -39,6 +39,8 @@ object AmeliaConfig {
      */
     enum class BotScreen(val payload: String) {
         PAY("pay"), STATUS("status"), HELP("help"), SUPPORT("support"), REFERRAL("referral"), MY_SUB("mysub"),
+        /** 1.4.0: the bot sends the app's APK (when the phone blocks the in-app update). */
+        APP("app"),
     }
 
     fun botUrl(screen: BotScreen? = null): String =

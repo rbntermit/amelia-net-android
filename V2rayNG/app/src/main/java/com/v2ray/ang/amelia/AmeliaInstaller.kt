@@ -27,8 +27,21 @@ object AmeliaInstaller {
     /** Set before the update replaces the app; read by [PackageReplacedReceiver]. */
     private const val PREF_RESTART_VPN = "amelia_restart_vpn_after_update"
 
+    /** The APK and version being installed: the status receiver falls back to them (1.4.0). */
+    private const val PREF_APK = "amelia_install_apk"
+    private const val PREF_CODE = "amelia_install_code"
+    /** versionCode whose install the phone blocked: the app shows the help screen. */
+    const val PREF_BLOCKED = "amelia_install_blocked"
+    private const val PREF_BLOCKED_REPORTED = "amelia_install_blocked_reported"
+
+    fun blockedCode(): Int = MmkvManager.decodeSettingsString(PREF_BLOCKED)?.toIntOrNull() ?: 0
+
+    fun clearBlocked() = MmkvManager.encodeSettings(PREF_BLOCKED, "")
+
     /** Blocking (copies the APK into the session). Throws on failure; the caller falls back to ACTION_VIEW. */
-    fun install(context: Context, apk: File, vpnRunning: Boolean) {
+    fun install(context: Context, apk: File, vpnRunning: Boolean, versionCode: Int = 0) {
+        MmkvManager.encodeSettings(PREF_APK, apk.absolutePath)
+        MmkvManager.encodeSettings(PREF_CODE, versionCode.toString())
         val installer = context.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
             setAppPackageName(context.packageName)
@@ -79,17 +92,29 @@ object AmeliaInstaller {
 
                 else -> {
                     MmkvManager.encodeSettings(PREF_RESTART_VPN, false)
-                    LogUtil.w(
-                        AppConfig.TAG,
-                        "Amelia: update install failed, status=$status " +
-                            intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE).orEmpty(),
-                    )
-                    AmeliaCrash.nonFatal(
-                        "update", null,
-                        "install failed, status=$status " + intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE).orEmpty(),
-                    )
+                    val message = "install failed, status=$status " + intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE).orEmpty()
+                    LogUtil.w(AppConfig.TAG, "Amelia: update $message")
+                    onSessionFailed(context, message)
                 }
             }
+        }
+
+        /**
+         * 1.4.0: the session install was refused (Samsung Auto Blocker, Play Protect: BLOCKED,
+         * ABORTED with INSTALL_FAILED_VERIFICATION_FAILURE …). Right away the classic system
+         * installer screen; the app also shows how to let the install through. Reported to
+         * /app/crash once per version as "update_blocked".
+         */
+        private fun onSessionFailed(context: Context, message: String) {
+            val code = MmkvManager.decodeSettingsString(PREF_CODE)?.toIntOrNull() ?: 0
+            MmkvManager.encodeSettings(PREF_BLOCKED, code.toString())
+            if (MmkvManager.decodeSettingsString(PREF_BLOCKED_REPORTED) != code.toString()) {
+                MmkvManager.encodeSettings(PREF_BLOCKED_REPORTED, code.toString())
+                AmeliaCrash.nonFatal("update_blocked", null, message)
+            }
+            val apk = MmkvManager.decodeSettingsString(PREF_APK)?.let { File(it) }?.takeIf { it.isFile } ?: return
+            runCatching { context.startActivity(AmeliaUpdater.installIntent(context, apk)) }
+                .onFailure { LogUtil.e(AppConfig.TAG, "Amelia: cannot open the system installer", it) }
         }
 
         private fun Intent.serializableIntent(): Intent? =
@@ -109,6 +134,7 @@ object AmeliaInstaller {
             if (intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
             // 1.3.0: the downloaded APK is installed now, free the space
             AmeliaUpdater.deleteDownloads(context)
+            clearBlocked()
             if (!MmkvManager.decodeSettingsBool(PREF_RESTART_VPN, false)) return
             MmkvManager.encodeSettings(PREF_RESTART_VPN, false)
             if (MmkvManager.getSelectServer().isNullOrEmpty()) return
