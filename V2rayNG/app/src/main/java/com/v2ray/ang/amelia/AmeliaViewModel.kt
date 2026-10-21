@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.annotation.StringRes
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.core.LauncherManager
 import com.v2ray.ang.handler.MmkvManager
@@ -19,6 +20,8 @@ import kotlinx.coroutines.withContext
 
 /** Opening the app checks every location in the background when the last check is older. */
 private const val BACKGROUND_CHECK_AFTER_MS = 5L * 60 * 1000
+/** 1.5.1: how often the screen asks whether the update install is still running. */
+private const val INSTALL_POLL_MS = 3_000L
 
 /** Upper bound for a "ping all" round; the core gives up on each location after ~12 s. */
 private const val PING_ALL_TIMEOUT_MS = 120_000L
@@ -108,6 +111,8 @@ data class AmeliaUiState(
     val installPermissionFor: String? = null,
     /** The phone refused to install the update: how to let it through. */
     val installBlocked: Boolean = false,
+    /** 1.5.1: an install session is running; the update button shows "Устанавливается…". */
+    val installing: Boolean = false,
     // ---- 1.3.0 ----
     val crashEnabled: Boolean = true,
     /** The app is not under battery optimisation (may run in the background). */
@@ -629,11 +634,57 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(messageText = text, updateApkPath = null, updateProgress = null) }
     }
 
-    /** The phone refused the install of the version on offer (AmeliaInstaller). */
+    /**
+     * The phone refused the install of the version on offer (AmeliaInstaller). Never for a
+     * version that is installed already, and not while an install is running.
+     */
     private fun refreshInstallBlocked() {
         viewModelScope.launch {
-            val code = withContext(Dispatchers.IO) { AmeliaInstaller.blockedCode() }
-            _state.update { it.copy(installBlocked = code > 0 && code == it.update?.versionCode) }
+            val (code, busy) = withContext(Dispatchers.IO) {
+                AmeliaInstaller.blockedCode() to AmeliaInstaller.isBusy(getApplication())
+            }
+            _state.update {
+                it.copy(
+                    installBlocked = AmeliaInstaller.showBlocked(code, BuildConfig.VERSION_CODE, it.update?.versionCode, busy),
+                    installing = busy,
+                )
+            }
+            if (busy) watchInstall()
+        }
+    }
+
+    /**
+     * 1.5.1: one install at a time. False (and "Устанавливается…") while one is running: a
+     * second tap, the notification and the dialog's button all land here.
+     */
+    fun beginInstall(): Boolean {
+        if (_state.value.installing) {
+            showMessage(R.string.amelia_update_installing)
+            return false
+        }
+        _state.update { it.copy(installing = true) }
+        return true
+    }
+
+    /** The install did not start (bad file, or the system installer screen took over). */
+    fun installNotStarted() = _state.update { it.copy(installing = false) }
+
+    /** A session runs (ours or one started before): wait for its end, then show the real state. */
+    fun installRunning(alreadyRunning: Boolean) {
+        if (alreadyRunning) showMessage(R.string.amelia_update_installing)
+        watchInstall()
+    }
+
+    private var installWatch: Job? = null
+
+    private fun watchInstall() {
+        if (installWatch?.isActive == true) return
+        installWatch = viewModelScope.launch {
+            // the first seconds after commit: the session may not be listed yet
+            delay(INSTALL_POLL_MS)
+            while (withContext(Dispatchers.IO) { AmeliaInstaller.isBusy(getApplication()) }) delay(INSTALL_POLL_MS)
+            _state.update { it.copy(installing = false) }
+            refreshInstallBlocked()
         }
     }
 

@@ -17,6 +17,7 @@ import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import com.v2ray.ang.AppConfig
+import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.core.LauncherManager
 import com.v2ray.ang.enums.PermissionType
@@ -49,6 +50,8 @@ class AmeliaActivity : HelperBaseComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
         )
         lifecycleScope.launch(Dispatchers.IO) {
+            // 1.5.1: the update went through: no "не установлено" left over from it
+            AmeliaInstaller.resetIfUpdated(applicationContext, BuildConfig.VERSION_CODE)
             AmeliaRouting.apply(applicationContext)
             AmeliaGeoUpdater.schedule(applicationContext)
             AmeliaUpdateWorker.schedule(applicationContext)
@@ -137,8 +140,22 @@ class AmeliaActivity : HelperBaseComponentActivity() {
                 },
                 onInstallPermissionDismiss = viewModel::installPermissionDismissed,
                 onInstallRetry = {
-                    viewModel.state.value.updateApkPath?.let { installViaSystemScreen(File(it)) }
-                        ?: viewModel.downloadUpdate()
+                    viewModel.state.value.updateApkPath?.let { path ->
+                        // 1.5.1: never a second install next to a running one
+                        if (viewModel.beginInstall()) {
+                            lifecycleScope.launch(Dispatchers.IO) {
+                                val busy = AmeliaInstaller.isBusy(applicationContext)
+                                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                                    if (busy) {
+                                        viewModel.installRunning(alreadyRunning = true)
+                                    } else {
+                                        viewModel.installNotStarted()
+                                        installViaSystemScreen(File(path))
+                                    }
+                                }
+                            }
+                        }
+                    } ?: viewModel.downloadUpdate()
                 },
                 onInstallHelpDone = viewModel::installHelpDone,
                 onOpenSecurity = ::openSecuritySettings,
@@ -216,6 +233,9 @@ class AmeliaActivity : HelperBaseComponentActivity() {
             viewModel.askInstallPermission(apkPath)
             return
         }
+        // 1.5.1: the button, the update dialog, the notification and the return from the
+        // permission screen all come here; only the first one starts an install
+        if (!viewModel.beginInstall()) return
         val apk = File(apkPath)
         val vpnRunning = viewModel.state.value.isRunning
         val expected = viewModel.state.value.update?.versionCode ?: 0
@@ -225,11 +245,13 @@ class AmeliaActivity : HelperBaseComponentActivity() {
             when (check.verdict) {
                 AmeliaApkCheck.Verdict.BAD_SIGNATURE -> {
                     apk.delete()
+                    viewModel.installNotStarted()
                     viewModel.apkRejected(getString(R.string.amelia_install_bad_signature))
                     return@launch
                 }
                 AmeliaApkCheck.Verdict.BAD_VERSION -> {
                     apk.delete()
+                    viewModel.installNotStarted()
                     viewModel.apkRejected(getString(R.string.amelia_install_bad_version, check.versionName ?: "?"))
                     return@launch
                 }
@@ -237,11 +259,24 @@ class AmeliaActivity : HelperBaseComponentActivity() {
             }
             try {
                 // Android 12+: installs without the confirmation screen; the app restarts updated
-                AmeliaInstaller.install(applicationContext, apk, vpnRunning, expected)
+                val start = AmeliaInstaller.install(applicationContext, apk, vpnRunning, expected)
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    viewModel.installRunning(alreadyRunning = start == AmeliaInstaller.Start.ALREADY_RUNNING)
+                }
             } catch (e: Exception) {
-                LogUtil.e(AppConfig.TAG, "Amelia: session install failed, falling back to the system installer", e)
-                AmeliaCrash.nonFatal("update", e)
-                kotlinx.coroutines.withContext(Dispatchers.Main) { installViaSystemScreen(apk) }
+                val busy = AmeliaInstaller.isBusy(applicationContext)
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    if (busy) {
+                        // another session is on its way: wait for it, no second install
+                        LogUtil.w(AppConfig.TAG, "Amelia: session install failed while another one runs", e)
+                        viewModel.installRunning(alreadyRunning = true)
+                    } else {
+                        LogUtil.e(AppConfig.TAG, "Amelia: session install failed, falling back to the system installer", e)
+                        AmeliaCrash.nonFatal("update", e)
+                        viewModel.installNotStarted()
+                        installViaSystemScreen(apk)
+                    }
+                }
             }
         }
     }

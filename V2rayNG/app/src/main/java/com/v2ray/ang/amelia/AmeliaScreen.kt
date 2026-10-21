@@ -1002,6 +1002,10 @@ private fun UpdateActions(state: AmeliaUiState, updates: UpdateCallbacks) {
                 Text(stringResource(R.string.amelia_update_downloading_unknown), color = Brand.Muted)
             }
         }
+        // 1.5.1: one install at a time; the button waits for the running one
+        state.installing -> Button(onClick = {}, enabled = false, colors = colors) {
+            Text(stringResource(R.string.amelia_update_installing))
+        }
         apk != null -> Button(onClick = { updates.onInstall(apk) }, colors = colors) {
             Text(stringResource(R.string.amelia_update_install))
         }
