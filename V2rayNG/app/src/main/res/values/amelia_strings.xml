@@ -70,6 +70,8 @@
     <string name="amelia_update_downloading_unknown">Загрузка…</string>
     <string name="amelia_update_install">Установить</string>
     <string name="amelia_update_installing">Устанавливается…</string>
+    <string name="amelia_update_confirm_title">Обновление готово — нажмите, чтобы установить</string>
+    <string name="amelia_update_confirm_text">Android просит подтвердить установку.</string>
     <string name="amelia_update_none">Установлена последняя версия</string>
     <string name="amelia_update_failed">Не удалось скачать обновление. Попробуйте позже.</string>
     <string name="amelia_update_later">Позже</string>

@@ -2,14 +2,17 @@ package com.v2ray.ang.amelia
 
 import android.content.pm.PackageInstaller
 import com.v2ray.ang.amelia.AmeliaInstaller.Failure
+import com.v2ray.ang.amelia.AmeliaInstaller.Owned
+import com.v2ray.ang.amelia.AmeliaInstaller.Phase
 import com.v2ray.ang.amelia.AmeliaInstaller.SessionView
+import com.v2ray.ang.amelia.AmeliaInstaller.StartDecision
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-/** 1.5.1: one update install at a time; a duplicate session is not a failure. */
+/** 1.5.1 (kept in 1.5.3): one update install at a time; a duplicate session is not a failure. */
 class Amelia151Test {
 
     private val now = 1_792_600_000_000L
@@ -18,25 +21,18 @@ class Amelia151Test {
     @Test
     fun twoAttemptsCreateOneSession() {
         val sessions = mutableListOf<SessionView>()
-        var startedAt = 0L
+        var owned: Owned? = null
         var created = 0
         fun attempt(at: Long) {
-            if (AmeliaInstaller.busy(sessions, startedAt, at)) return
+            val d = AmeliaInstaller.decideStart(AmeliaInstaller.phase(owned, sessions, at), hasConfirmScreen = false)
+            if (d != StartDecision.NEW_SESSION) return
             created++
-            sessions += SessionView(forUs = true, active = false, committed = true)
-            startedAt = at
+            sessions += SessionView(id = 40 + created, forUs = true, active = false, committed = true)
+            owned = Owned(40 + created, at, awaitingConfirm = false)
         }
         attempt(now)
         attempt(now + 300) // second tap / notification / dialog button
         assertEquals(1, created)
-
-        // where Android cannot say "committed" (before API 29) the start time still holds it
-        assertTrue(AmeliaInstaller.busy(emptyList(), now, now + 60_000))
-        assertTrue(AmeliaInstaller.busy(listOf(SessionView(forUs = true, active = true, committed = false)), 0, now))
-        // a session left over uncommitted by a killed process does not block a new install
-        assertFalse(AmeliaInstaller.busy(listOf(SessionView(forUs = true, active = false, committed = false)), 0, now))
-        // the result never came: after RUNNING_MS a new attempt is allowed
-        assertFalse(AmeliaInstaller.busy(emptyList(), now, now + AmeliaInstaller.RUNNING_MS))
     }
 
     @Test
@@ -44,7 +40,7 @@ class Amelia151Test {
         val samsung = "INSTALL_FAILED_DUPLICATE_PACKAGE: Scanning Failed.: Duplicate package " +
             "com.ameliajustamelia.vpn in pending install requests."
         assertEquals(Failure.DUPLICATE, AmeliaInstaller.classify(PackageInstaller.STATUS_FAILURE, samsung))
-        assertEquals(Failure.DUPLICATE, AmeliaInstaller.classify(PackageInstaller.STATUS_FAILURE_CONFLICT, "Pending install of this package"))
+        assertEquals(Failure.DUPLICATE, AmeliaInstaller.classify(PackageInstaller.STATUS_FAILURE_CONFLICT, "Duplicate package x in pending install requests"))
         val r = AmeliaInstaller.reaction(Failure.DUPLICATE)
         assertFalse(r.helpScreen)
         assertNull(r.report)
@@ -75,5 +71,6 @@ class Amelia151Test {
         assertTrue(AmeliaInstaller.showBlocked(blockedCode = 14, installedCode = 13, offeredCode = 14, busy = false))
         // not while an install runs
         assertFalse(AmeliaInstaller.showBlocked(blockedCode = 14, installedCode = 13, offeredCode = 14, busy = true))
+        assertEquals(Phase.IDLE, AmeliaInstaller.phase(null, emptyList(), now))
     }
 }

@@ -52,6 +52,8 @@ class AmeliaActivity : HelperBaseComponentActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             // 1.5.1: the update went through: no "не установлено" left over from it
             AmeliaInstaller.resetIfUpdated(applicationContext, BuildConfig.VERSION_CODE)
+            // 1.5.3: sessions left by an earlier run (nobody leads them) are dropped at start
+            AmeliaInstaller.check(applicationContext)
             AmeliaRouting.apply(applicationContext)
             AmeliaGeoUpdater.schedule(applicationContext)
             AmeliaUpdateWorker.schedule(applicationContext)
@@ -261,7 +263,12 @@ class AmeliaActivity : HelperBaseComponentActivity() {
                 // Android 12+: installs without the confirmation screen; the app restarts updated
                 val start = AmeliaInstaller.install(applicationContext, apk, vpnRunning, expected)
                 kotlinx.coroutines.withContext(Dispatchers.Main) {
-                    viewModel.installRunning(alreadyRunning = start == AmeliaInstaller.Start.ALREADY_RUNNING)
+                    when (start) {
+                        AmeliaInstaller.Start.Started -> viewModel.installRunning(alreadyRunning = false)
+                        AmeliaInstaller.Start.AlreadyRunning -> viewModel.installRunning(alreadyRunning = true)
+                        // 1.5.3: Android still waits for the person: the confirmation again, from a tap
+                        is AmeliaInstaller.Start.NeedsConfirm -> openConfirm(start.intent)
+                    }
                 }
             } catch (e: Exception) {
                 val busy = AmeliaInstaller.isBusy(applicationContext)
@@ -279,6 +286,27 @@ class AmeliaActivity : HelperBaseComponentActivity() {
                 }
             }
         }
+    }
+
+    /** The system "Install update?" confirmation of the running session (STATUS_PENDING_USER_ACTION). */
+    private fun openConfirm(confirm: Intent) {
+        viewModel.installAwaitsConfirm()
+        runCatching { startActivity(confirm) }
+            .onFailure {
+                LogUtil.e(AppConfig.TAG, "Amelia: cannot open the install confirmation", it)
+                viewModel.showMessage(R.string.amelia_update_failed)
+            }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // 1.5.3: a visible app opens the install confirmation itself, a hidden one notifies
+        AmeliaInstaller.uiVisible = true
+    }
+
+    override fun onStop() {
+        AmeliaInstaller.uiVisible = false
+        super.onStop()
     }
 
     /** Fallback: the classic "Install?" screen of the system package installer. */

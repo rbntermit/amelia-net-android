@@ -113,6 +113,8 @@ data class AmeliaUiState(
     val installBlocked: Boolean = false,
     /** 1.5.1: an install session is running; the update button shows "Устанавливается…". */
     val installing: Boolean = false,
+    /** 1.5.3: Android waits for the person to confirm; "Установить" opens the confirmation again. */
+    val awaitingConfirm: Boolean = false,
     // ---- 1.3.0 ----
     val crashEnabled: Boolean = true,
     /** The app is not under battery optimisation (may run in the background). */
@@ -640,13 +642,16 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun refreshInstallBlocked() {
         viewModelScope.launch {
-            val (code, busy) = withContext(Dispatchers.IO) {
-                AmeliaInstaller.blockedCode() to AmeliaInstaller.isBusy(getApplication())
+            // 1.5.3: also drops sessions nobody leads and gives up a stuck install
+            val (code, phase) = withContext(Dispatchers.IO) {
+                AmeliaInstaller.blockedCode() to AmeliaInstaller.check(getApplication())
             }
+            val busy = phase == AmeliaInstaller.Phase.INSTALLING
             _state.update {
                 it.copy(
                     installBlocked = AmeliaInstaller.showBlocked(code, BuildConfig.VERSION_CODE, it.update?.versionCode, busy),
                     installing = busy,
+                    awaitingConfirm = phase == AmeliaInstaller.Phase.AWAITING_CONFIRM,
                 )
             }
             if (busy) watchInstall()
@@ -666,23 +671,28 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         return true
     }
 
-    /** The install did not start (bad file, or the system installer screen took over). */
+    /** The install did not start (bad file, the system installer screen took over, or a confirmation opened). */
     fun installNotStarted() = _state.update { it.copy(installing = false) }
 
-    /** A session runs (ours or one started before): wait for its end, then show the real state. */
+    /** A session runs: wait for its end (or the 3-minute limit), then show the real state. */
     fun installRunning(alreadyRunning: Boolean) {
         if (alreadyRunning) showMessage(R.string.amelia_update_installing)
         watchInstall()
     }
+
+    /** 1.5.3: the system confirmation screen was opened (again); "Установить" stays available. */
+    fun installAwaitsConfirm() = _state.update { it.copy(installing = false, awaitingConfirm = true) }
 
     private var installWatch: Job? = null
 
     private fun watchInstall() {
         if (installWatch?.isActive == true) return
         installWatch = viewModelScope.launch {
-            // the first seconds after commit: the session may not be listed yet
             delay(INSTALL_POLL_MS)
-            while (withContext(Dispatchers.IO) { AmeliaInstaller.isBusy(getApplication()) }) delay(INSTALL_POLL_MS)
+            // AmeliaInstaller.check gives up after AmeliaInstaller.STUCK_MS: never "Устанавливается…" for ever
+            while (withContext(Dispatchers.IO) { AmeliaInstaller.check(getApplication()) } == AmeliaInstaller.Phase.INSTALLING) {
+                delay(INSTALL_POLL_MS)
+            }
             _state.update { it.copy(installing = false) }
             refreshInstallBlocked()
         }

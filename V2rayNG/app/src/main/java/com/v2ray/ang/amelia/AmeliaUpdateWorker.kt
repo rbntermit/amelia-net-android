@@ -86,9 +86,8 @@ class AmeliaUpdateWorker(context: Context, params: WorkerParameters) : Coroutine
         /** Opens the app straight into installing the downloaded update. */
         const val EXTRA_INSTALL = "amelia_install_update"
 
-        private fun notify(context: Context, v: AmeliaUpdater.AppVersion, ready: Boolean) {
-            val nm = NotificationManagerCompat.from(context)
-            if (!nm.areNotificationsEnabled()) return
+        /** The "Обновления приложения" channel (also used by AmeliaInstaller's confirmation). */
+        internal fun ensureChannel(context: Context): String {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val channel = NotificationChannel(
                     CHANNEL_ID,
@@ -97,6 +96,16 @@ class AmeliaUpdateWorker(context: Context, params: WorkerParameters) : Coroutine
                 )
                 context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
             }
+            return CHANNEL_ID
+        }
+
+        /** Same slot as "готово — установить": one update notification at a time. */
+        internal const val UPDATE_NOTIFICATION_ID = NOTIFICATION_ID
+
+        private fun notify(context: Context, v: AmeliaUpdater.AppVersion, ready: Boolean) {
+            val nm = NotificationManagerCompat.from(context)
+            if (!nm.areNotificationsEnabled()) return
+            ensureChannel(context)
             val open = PendingIntent.getActivity(
                 context, 0,
                 Intent(context, AmeliaActivity::class.java)
