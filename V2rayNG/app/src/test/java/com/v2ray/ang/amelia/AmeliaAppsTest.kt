@@ -1,58 +1,75 @@
 package com.v2ray.ang.amelia
 
+import com.v2ray.ang.amelia.AmeliaApps.Preset
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
+/** 1.5.0 "Приложения мимо VPN". */
 class AmeliaAppsTest {
 
-    private val builtIn = setOf("ru.sberbankmobile", "ru.rostel", "com.wildberries.ru")
+    private val installed = setOf(
+        "ru.sberbankmobile", "com.idamob.tinkoff.android", "ru.rostel", "com.wildberries.ru", "org.example.game",
+    )
 
     @Test
-    fun effectiveIsBuiltInMinusRemovedPlusAdded() {
-        assertEquals(builtIn, AmeliaApps.effective(builtIn, emptySet(), emptySet()))
-        assertEquals(
-            setOf("ru.sberbankmobile", "com.wildberries.ru", "org.example.bank"),
-            AmeliaApps.effective(builtIn, setOf("org.example.bank"), setOf("ru.rostel")),
-        )
+    fun newInstallStartsWithAnEmptyList() {
+        assertEquals(emptySet<String>(), AmeliaApps.migrate(oldPerApp = null, oldSet = null))
     }
 
     @Test
-    fun personsChangesSurviveAnUpdateAndNewBuiltInsArrive() {
-        // the person removed Gosuslugi and added their own app
-        val (added, removed) = AmeliaApps.toggle(builtIn, emptySet(), emptySet(), "ru.rostel", bypass = false)
-            .let { (a, r) -> AmeliaApps.toggle(builtIn, a, r, "org.example.bank", bypass = true) }
-        // the next version ships one more package in the built-in list
-        val newBuiltIn = builtIn + "ru.ozon.app.android"
-        val result = AmeliaApps.effective(newBuiltIn, added, removed)
-        assertTrue("ru.ozon.app.android" in result)
-        assertTrue("org.example.bank" in result)
-        assertFalse("ru.rostel" in result)
+    fun oneFourListIsTakenOverAsIs() {
+        // what 1.4.0 wrote to upstream's per-app settings: built-in list with the person's changes
+        val old = setOf("ru.sberbankmobile", "ru.rostel", "ru.vk.store", "org.example.bank")
+        assertEquals(old, AmeliaApps.migrate(oldPerApp = true, oldSet = old))
+        // "Российские приложения — мимо VPN" was off in 1.4.0: nothing goes around the VPN now either
+        assertEquals(emptySet<String>(), AmeliaApps.migrate(oldPerApp = false, oldSet = old))
     }
 
     @Test
-    fun toggleStoresOnlyDifferencesFromTheBuiltInList() {
-        // switching a built-in app off and on again leaves nothing stored
-        val off = AmeliaApps.toggle(builtIn, emptySet(), emptySet(), "ru.rostel", bypass = false)
-        assertEquals(emptySet<String>() to setOf("ru.rostel"), off)
-        val on = AmeliaApps.toggle(builtIn, off.first, off.second, "ru.rostel", bypass = true)
-        assertEquals(emptySet<String>() to emptySet<String>(), on)
-        // an app of the person's own: added, then removed again
-        val add = AmeliaApps.toggle(builtIn, emptySet(), emptySet(), "org.example", bypass = true)
-        assertEquals(setOf("org.example") to emptySet<String>(), add)
-        assertEquals(emptySet<String>() to emptySet<String>(), AmeliaApps.toggle(builtIn, add.first, add.second, "org.example", false))
+    fun removedAppLeavesTheListSilently() {
+        val selected = setOf("ru.sberbankmobile", "ru.deleted.app")
+        assertEquals(setOf("ru.sberbankmobile"), AmeliaApps.prune(selected, installed))
+        // the installed list could not be read: nothing is dropped
+        assertEquals(selected, AmeliaApps.prune(selected, null))
+        assertEquals(selected, AmeliaApps.prune(selected, emptySet()))
+        assertEquals(emptySet<String>(), AmeliaApps.prune(emptySet(), installed))
     }
 
     @Test
-    fun builtInListIsWellFormed() {
-        val pkgs = AmeliaApps.BUILT_IN.map { it.pkg }
-        assertEquals(pkgs.size, pkgs.toSet().size, "duplicate package")
+    fun presetsAddOnlyInstalledApps() {
+        assertEquals(setOf("ru.sberbankmobile", "com.idamob.tinkoff.android"), AmeliaApps.presetInstalled(Preset.BANKS, installed))
+        assertEquals(setOf("ru.rostel"), AmeliaApps.presetInstalled(Preset.GOV, installed))
+        val after = AmeliaApps.applyPreset(setOf("org.example.game"), Preset.BANKS, installed)
+        assertEquals(setOf("org.example.game", "ru.sberbankmobile", "com.idamob.tinkoff.android"), after)
+        // tapping again takes the set off, the person's own app stays
+        assertEquals(setOf("org.example.game"), AmeliaApps.applyPreset(after, Preset.BANKS, installed))
+        // nothing of the set installed: no change
+        assertEquals(setOf("x.y"), AmeliaApps.applyPreset(setOf("x.y"), Preset.SHOPS, setOf("x.y")))
+    }
+
+    @Test
+    fun tunnelIsRebuiltOnlyWhenOnAndChanged() {
+        val a = setOf("ru.rostel")
+        assertTrue(AmeliaApps.shouldRecreateTunnel(emptySet(), a, vpnRunning = true))
+        assertFalse(AmeliaApps.shouldRecreateTunnel(emptySet(), a, vpnRunning = false))
+        assertFalse(AmeliaApps.shouldRecreateTunnel(a, a, vpnRunning = true))
+        assertFalse(AmeliaApps.shouldRecreateTunnel(emptySet(), emptySet(), vpnRunning = true))
+    }
+
+    @Test
+    fun presetPackagesAreWellFormed() {
+        val all = Preset.entries.flatMap { it.packages }
+        assertEquals(all.size, all.toSet().size, "duplicate package")
         val name = Regex("^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+$")
-        pkgs.forEach { assertTrue(name.matches(it), "bad package name $it") }
-        assertTrue(AmeliaApps.BUILT_IN.all { it.label.isNotBlank() })
-        // the ones people ask about most
-        listOf("ru.sberbankmobile", "com.idamob.tinkoff.android", "ru.rostel", "ru.vk.store", "ru.oneme.app")
-            .forEach { assertTrue(it in AmeliaApps.BUILT_IN_PACKAGES, it) }
+        all.forEach { assertTrue(name.matches(it), "bad package name $it") }
+        // the ones named in the 1.5.0 task
+        listOf(
+            "ru.sberbankmobile", "com.idamob.tinkoff.android", "ru.vtb24.mobilebanking.android",
+            "ru.alfabank.mobile.android", "ru.gazprombank.android.mobilebank.app",
+        ).forEach { assertTrue(it in Preset.BANKS.packages, it) }
+        assertTrue("ru.rostel" in Preset.GOV.packages)
+        listOf("ru.ozon.app.android", "com.wildberries.ru", "ru.beru.android").forEach { assertTrue(it in Preset.SHOPS.packages, it) }
     }
 }

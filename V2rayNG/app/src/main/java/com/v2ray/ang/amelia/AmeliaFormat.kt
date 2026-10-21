@@ -69,4 +69,60 @@ object AmeliaFormat {
         if (left < 0) return null
         return (left / (24L * 60 * 60 * 1000)).toInt()
     }
+
+    // ---- 1.5.0: subscription line on the main screen ----------------------------------------
+
+    /** What the line under the top bar says. */
+    sealed interface SubLine {
+        /** expire = 0: "Подписка бессрочная". */
+        data object Unlimited : SubLine
+
+        /** expire > 0 and in the past: the red card with "Продлить". */
+        data object Ended : SubLine
+
+        /** "Подписка до 05.11 · осталось 15 дн."; [soon] = 3 days or less: accent colour and "Продлить". */
+        data class Until(val expireSec: Long, val days: Int, val lastDay: Boolean, val soon: Boolean) : SubLine
+    }
+
+    /** Days the line highlights from ("осталось 3 дн." and less). */
+    const val SOON_DAYS = 3
+
+    /**
+     * From Subscription-Userinfo `expire` (unix seconds). No info yet, or the header had no
+     * `expire`: null, the line is not shown. Days are calendar days to the end date.
+     */
+    fun subLine(info: AmeliaSubInfo?, nowMillis: Long, zone: java.util.TimeZone = java.util.TimeZone.getDefault()): SubLine? {
+        val expire = info?.expire ?: return null
+        if (expire <= 0) return SubLine.Unlimited
+        if (expire * 1000 <= nowMillis) return SubLine.Ended
+        val days = calendarDays(nowMillis, expire * 1000, zone)
+        return SubLine.Until(expire, days, lastDay = days == 0, soon = days <= SOON_DAYS)
+    }
+
+    private fun calendarDays(from: Long, to: Long, zone: java.util.TimeZone): Int {
+        fun dayNumber(t: Long): Long {
+            val c = java.util.Calendar.getInstance(zone).apply { timeInMillis = t }
+            c.set(java.util.Calendar.HOUR_OF_DAY, 12)
+            c.set(java.util.Calendar.MINUTE, 0)
+            c.set(java.util.Calendar.SECOND, 0)
+            c.set(java.util.Calendar.MILLISECOND, 0)
+            return c.timeInMillis / (24L * 60 * 60 * 1000)
+        }
+        return (dayNumber(to) - dayNumber(from)).toInt().coerceAtLeast(0)
+    }
+
+    /**
+     * "12,4" and "100" for "12,4 из 100 ГБ" (binary GB, as the rest of the app); null when the
+     * plan has no traffic limit (total 0 or missing).
+     */
+    fun usageGb(info: AmeliaSubInfo?): Pair<String, String>? {
+        val total = info?.total?.takeIf { it > 0 } ?: return null
+        return gb(info.used) to gb(total)
+    }
+
+    private fun gb(bytes: Long): String {
+        val v = bytes.coerceAtLeast(0L) / (1024.0 * 1024 * 1024)
+        val text = if (v >= 100) String.format(Locale.US, "%.0f", v) else String.format(Locale.US, "%.1f", v).removeSuffix(".0")
+        return text.replace('.', ',')
+    }
 }

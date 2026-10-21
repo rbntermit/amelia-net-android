@@ -70,7 +70,10 @@ class ExtraCallbacks(
     val onStartReport: () -> Unit,
     val onSendReport: (String) -> Unit,
     val onCloseReport: () -> Unit,
-    val onBypassRu: (Boolean) -> Unit,
+    /** 1.5.0: "Банки", "Госуслуги", "Маркетплейсы" on the "Приложения мимо VPN" screen. */
+    val onAppsPreset: (AmeliaApps.Preset) -> Unit,
+    /** 1.5.0: "📨 Прокси для Telegram" (subscription valid). */
+    val onTelegramProxy: () -> Unit,
     val onOpenApps: () -> Unit,
     val onAppBypass: (String, Boolean) -> Unit,
     val onAppsClosed: () -> Unit,
@@ -138,55 +141,6 @@ internal fun SwitchRow(title: String, checked: Boolean, onChange: (Boolean) -> U
 }
 
 // ---- main screen banners ---------------------------------------------------------------------
-
-/**
- * "Подписка до 12.11 · осталось 12 дней": amber under 3 days; after the end a red card with
- * a big "Продлить". Nothing without an end date (expire = 0).
- */
-@Composable
-internal fun ExpiryBanner(info: AmeliaSubInfo?, onRenew: () -> Unit) {
-    val expire = info?.expire?.takeIf { it > 0 } ?: return
-    val now = System.currentTimeMillis()
-    if (AmeliaFormat.isExpired(info, now)) {
-        Glass(Modifier.fillMaxWidth(), tint = Color(0x40FF6B6B)) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    stringResource(R.string.amelia_sub_ended),
-                    color = Brand.Text,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                GradientButton(text = stringResource(R.string.amelia_renew), enabled = true, onClick = onRenew)
-            }
-        }
-        return
-    }
-    val days = AmeliaFormat.daysLeft(info, now) ?: return
-    val lastDay = AmeliaExpiry.stage(expire, now) == AmeliaExpiry.Stage.LAST_DAY
-    val soon = days < 3
-    val text = if (lastDay) {
-        stringResource(R.string.amelia_sub_last_day, AmeliaFormat.dayMonth(expire))
-    } else {
-        stringResource(
-            R.string.amelia_sub_until, AmeliaFormat.dayMonth(expire),
-            pluralStringResource(R.plurals.amelia_days_left_plural, days, days),
-        )
-    }
-    Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text,
-            color = if (soon) Brand.Amber else Brand.Muted,
-            fontWeight = if (soon) FontWeight.SemiBold else FontWeight.Normal,
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.weight(1f),
-        )
-        if (soon) {
-            TextButton(onClick = onRenew) {
-                Text(stringResource(R.string.amelia_renew), color = Brand.Sky, fontWeight = FontWeight.SemiBold)
-            }
-        }
-    }
-}
 
 /** Our announcement with clickable https:// and t.me/ links; the cross hides this text. */
 @Composable
@@ -444,99 +398,11 @@ internal fun AboutScreen(
 // ---- settings: 1.1.0 sections ----------------------------------------------------------------
 
 @Composable
-internal fun SettingsAppsSection(state: AmeliaUiState, extra: ExtraCallbacks, onOpenApps: () -> Unit) {
-    Glass(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            SwitchRow(stringResource(R.string.amelia_apps_title), state.bypassRu, extra.onBypassRu)
-            Text(stringResource(R.string.amelia_apps_text), color = Brand.Muted, style = MaterialTheme.typography.bodySmall)
-            if (state.bypassRu) {
-                TextButton(onClick = onOpenApps) {
-                    Text(
-                        stringResource(R.string.amelia_apps_choose, state.bypassCount),
-                        color = Brand.Sky,
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
 internal fun SettingsProbeSection(state: AmeliaUiState, extra: ExtraCallbacks) {
     Glass(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SwitchRow(stringResource(R.string.amelia_probe_title), state.probeEnabled, extra.onProbe)
             Text(stringResource(R.string.amelia_probe_text), color = Brand.Muted, style = MaterialTheme.typography.bodySmall)
-        }
-    }
-}
-
-// ---- app picker ------------------------------------------------------------------------------
-
-@Composable
-internal fun AppsScreen(apps: List<AppRow>?, onToggle: (String, Boolean) -> Unit, onBack: () -> Unit) {
-    var query by rememberSaveable { mutableStateOf("") }
-    Column(
-        Modifier
-            .fillMaxSize()
-            .systemBarsPadding()
-            .imePadding()
-            .padding(horizontal = 16.dp),
-    ) {
-        ScreenHeader(stringResource(R.string.amelia_apps_screen_title), onBack)
-        Text(
-            stringResource(R.string.amelia_apps_hint),
-            color = Brand.Muted,
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.padding(vertical = 6.dp),
-        )
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            label = { Text(stringResource(R.string.amelia_apps_search)) },
-            singleLine = true,
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = Brand.Sky,
-                unfocusedBorderColor = Brand.GlassBorder,
-                focusedLabelColor = Brand.Sky,
-                cursorColor = Brand.Sky,
-            ),
-            shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        if (apps == null) {
-            CircularProgressIndicator(Modifier.padding(24.dp).align(Alignment.CenterHorizontally), color = Brand.Sky)
-            return@Column
-        }
-        val shown = apps.filter {
-            query.isBlank() || it.label.contains(query.trim(), ignoreCase = true) || it.pkg.contains(query.trim(), ignoreCase = true)
-        }
-        LazyColumn(
-            contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            items(shown, key = { it.pkg }) { app ->
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .clickable(role = Role.Checkbox) { onToggle(app.pkg, !app.bypass) }
-                        .padding(vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Checkbox(
-                        checked = app.bypass,
-                        onCheckedChange = null,
-                        colors = CheckboxDefaults.colors(checkedColor = Brand.Sky, uncheckedColor = Brand.Muted),
-                        modifier = Modifier.padding(8.dp),
-                    )
-                    Column(Modifier.weight(1f)) {
-                        Text(app.label, color = Brand.Text, style = MaterialTheme.typography.bodyLarge)
-                        if (app.builtIn) {
-                            Text(stringResource(R.string.amelia_apps_builtin), color = Brand.Muted, style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
-                }
-            }
         }
     }
 }

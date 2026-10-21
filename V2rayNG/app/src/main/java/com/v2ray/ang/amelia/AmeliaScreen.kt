@@ -193,7 +193,7 @@ fun AmeliaApp(
                 showApps -> {
                     val close = { showApps = false; extra.onAppsClosed() }
                     BackHandler(onBack = close)
-                    AppsScreen(state.apps, extra.onAppBypass, onBack = close)
+                    AppsScreen(state.apps, extra.onAppBypass, extra.onAppsPreset, onBack = close)
                 }
                 showSettings -> {
                     BackHandler { showSettings = false }
@@ -448,7 +448,7 @@ private fun HomeScreen(
         if (state.onReserveFallback) {
             ReserveFallbackBanner(onRenew = { onOpenUrl(AmeliaConfig.botUrl(BotScreen.PAY)) })
         } else {
-            ExpiryBanner(state.info, onRenew = { onOpenUrl(AmeliaConfig.botUrl(BotScreen.PAY)) })
+            SubscriptionLine(state.info, onRenew = { onOpenUrl(AmeliaConfig.botUrl(BotScreen.PAY)) })
         }
         if (state.showBatteryCard) {
             Spacer(Modifier.height(10.dp))
@@ -481,6 +481,12 @@ private fun HomeScreen(
             Spacer(Modifier.height(10.dp))
             ConnectBestButton(extra.onConnectBest)
         }
+        Spacer(Modifier.height(10.dp))
+        TelegramProxyItem(
+            state.info,
+            onOpen = extra.onTelegramProxy,
+            onRenew = { onOpenUrl(AmeliaConfig.botUrl(BotScreen.PAY)) },
+        )
         Spacer(Modifier.height(16.dp))
         ActionGrid(
             onAction = { screen -> onOpenUrl(AmeliaConfig.botUrl(screen)) },
@@ -488,11 +494,6 @@ private fun HomeScreen(
             onNotWorking = extra.onStartReport,
             onGroup = { onOpenUrl(AmeliaConfig.GROUP_URL) },
         )
-        // Subscription details at the bottom: the connect button stays at the top of the screen
-        state.info?.let {
-            Spacer(Modifier.height(16.dp))
-            AccountCard(it)
-        }
         Spacer(Modifier.height(8.dp))
         TextButton(onClick = onAbout) {
             Text(stringResource(R.string.amelia_based_on), color = Brand.Muted, style = MaterialTheme.typography.bodySmall)
@@ -623,40 +624,6 @@ private fun formatBytes(value: Long): String {
         else -> R.string.amelia_unit_tb
     }
     return "$num ${stringResource(unitRes)}"
-}
-
-/** Traffic left on the plan; the end date is on top of the main screen (ExpiryBanner). */
-@Composable
-private fun AccountCard(info: AmeliaSubInfo) {
-    Glass(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            val remaining = info.remaining
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    when {
-                        remaining != null -> stringResource(
-                            R.string.amelia_traffic_left, formatBytes(remaining), formatBytes(info.total ?: 0L),
-                        )
-                        else -> stringResource(R.string.amelia_traffic_unlimited)
-                    },
-                    color = Brand.Text,
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            val total = info.total ?: 0L
-            if (remaining != null && total > 0) {
-                LinearProgressIndicator(
-                    progress = { (remaining.toFloat() / total.toFloat()).coerceIn(0f, 1f) },
-                    // amber when less than 10% is left
-                    color = if (remaining * 10 < total) Brand.Amber else Brand.Sky,
-                    trackColor = Brand.Glass,
-                    strokeCap = StrokeCap.Round,
-                    modifier = Modifier.fillMaxWidth().height(6.dp),
-                )
-            }
-        }
-    }
 }
 
 // ---- Power button ----------------------------------------------------------------------------
@@ -1164,7 +1131,7 @@ private fun SettingsScreen(
         ScreenHeader(stringResource(R.string.amelia_settings), onBack)
 
         SettingsSubscriptionSection(state, settings)
-        SettingsAppsSection(state, extra, onOpenApps)
+        SettingsAppsSection(state, onOpenApps)
         SettingsBatterySection(state, extra)
         SettingsAutoSwitchSection(state, extra, onOpenJournal)
         SettingsUpdateSection(state, updates, onAbout)

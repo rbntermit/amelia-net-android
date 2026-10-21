@@ -127,7 +127,7 @@ object AmeliaReport {
         appendLine("Приложение ${body.app} (${body.code}), Xray ${body.xray}, Android ${body.android}, ${body.device}")
         appendLine("Сеть: ${body.net}${if (body.op.isNotBlank()) ", " + body.op else ""}")
         body.active?.let { appendLine("Локация: $it") }
-        appendLine("Российские приложения мимо VPN: ${if (body.bypassRu) "да" else "нет"}")
+        appendLine("Приложения мимо VPN: ${if (body.bypassRu) "да" else "нет"}")
         if (body.comment.isNotBlank()) appendLine("Что случилось: ${body.comment}")
         appendLine()
         body.servers.forEach { s ->

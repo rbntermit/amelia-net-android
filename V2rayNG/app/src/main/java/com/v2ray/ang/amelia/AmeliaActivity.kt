@@ -13,6 +13,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import com.v2ray.ang.AppConfig
@@ -115,7 +116,8 @@ class AmeliaActivity : HelperBaseComponentActivity() {
                 onStartReport = viewModel::startReport,
                 onSendReport = viewModel::sendReport,
                 onCloseReport = viewModel::closeReport,
-                onBypassRu = viewModel::setBypassRu,
+                onAppsPreset = viewModel::applyPreset,
+                onTelegramProxy = ::openTelegramProxy,
                 onOpenApps = viewModel::loadApps,
                 onAppBypass = viewModel::setAppBypass,
                 onAppsClosed = viewModel::appsClosed,
@@ -159,6 +161,30 @@ class AmeliaActivity : HelperBaseComponentActivity() {
         for (i in intents) {
             if (runCatching { startActivity(i) }.isSuccess) return
         }
+    }
+
+    /**
+     * "📨 Прокси для Telegram" (1.5.0): the bot sends the person's own proxy link. In Telegram when
+     * it is installed (the https link given to it directly, so no browser or chooser comes up);
+     * otherwise the link opens in the browser and we say to install Telegram.
+     */
+    private fun openTelegramProxy() {
+        val url = AmeliaConfig.botUrl(AmeliaConfig.BotScreen.TGPROXY)
+        val tg = AmeliaPackages.telegram(packageManager)
+        if (tg != null) {
+            val opened = runCatching { startActivity(Intent(Intent.ACTION_VIEW, url.toUri()).setPackage(tg)) }
+                .recoverCatching {
+                    // a Telegram fork without t.me links: its own scheme
+                    startActivity(
+                        Intent(Intent.ACTION_VIEW, "tg://resolve?domain=${AmeliaConfig.BOT_USERNAME.removePrefix("@")}&start=${AmeliaConfig.BotScreen.TGPROXY.payload}".toUri())
+                            .setPackage(tg),
+                    )
+                }
+            if (opened.isSuccess) return
+            opened.exceptionOrNull()?.let { LogUtil.w(AppConfig.TAG, "Amelia: Telegram did not open the proxy link", it) }
+        }
+        Utils.openUri(this, url)
+        viewModel.showMessage(R.string.amelia_tgproxy_install)
     }
 
     /** "Разрешить работу в фоне": the system asks to let the app off battery optimisation. */

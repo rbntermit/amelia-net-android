@@ -66,6 +66,16 @@ object AmeliaExpiry {
         return stage.ordinal > done
     }
 
+    /** What one check does: the reminder to show now (null: none) and the new "announced" mark. */
+    data class Decision(val notify: Stage?, val mark: String?)
+
+    /** One check at [now] with the stored mark [notified]: what to show and what to store. */
+    fun decide(expireSec: Long?, now: Long, notified: String?, zone: TimeZone = TimeZone.getDefault()): Decision {
+        val stage = stage(expireSec, now, zone)
+        return if (shouldNotify(stage, expireSec, notified)) Decision(stage, "$expireSec:${stage!!.ordinal}")
+        else Decision(null, notified)
+    }
+
     /** The end is near or passed: worth asking the server whether it was renewed. */
     fun needsRefresh(info: AmeliaSubInfo?, now: Long): Boolean = stage(info?.expire, now) != null
 
@@ -80,9 +90,11 @@ object AmeliaExpiry {
             return
         }
         val expire = info?.expire ?: return
-        if (!shouldNotify(stage, expire, MmkvManager.decodeSettingsString(PREF_NOTIFIED))) return
-        MmkvManager.encodeSettings(PREF_NOTIFIED, "$expire:${stage.ordinal}")
-        notify(context, stage, expire, now)
+        val d = decide(expire, now, MmkvManager.decodeSettingsString(PREF_NOTIFIED))
+        val due = d.notify ?: return
+        MmkvManager.encodeSettings(PREF_NOTIFIED, d.mark.orEmpty())
+        // no POST_NOTIFICATIONS on Android 13+ (or notifications off): not asked for, just not sent
+        notify(context, due, expire, now)
     }
 
     private fun notify(context: Context, stage: Stage, expireSec: Long, now: Long) {

@@ -91,13 +91,12 @@ data class AmeliaUiState(
     val report: ReportUi? = null,
     /** The last start failed (shown until the next connect). */
     val startFailed: Boolean = false,
-    val bypassRu: Boolean = true,
     /** Installed apps for the picker; null until loaded. */
     val apps: List<AppRow>? = null,
     val probeEnabled: Boolean = true,
     /** Fingerprint of the announcement the person closed. */
     val announceDismissed: String? = null,
-    /** How many packages go around the VPN (built-in list with the person's changes). */
+    /** How many apps go around the VPN ("Приложения мимо VPN"). */
     val bypassCount: Int = 0,
     /** Connected to a reserve location (only Telegram) because no regular one works. */
     val reserveFallback: Boolean = false,
@@ -186,7 +185,7 @@ data class ReportUi(
 }
 
 /** One installed app in the "мимо VPN" picker. */
-data class AppRow(val pkg: String, val label: String, val bypass: Boolean, val builtIn: Boolean)
+data class AppRow(val pkg: String, val label: String, val bypass: Boolean)
 
 class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -366,46 +365,63 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---------------------------------------------------------------------------------------
-    // Russian apps around the VPN, blocking map, hints
+    // "Приложения мимо VPN" (1.5.0)
     // ---------------------------------------------------------------------------------------
 
-    /** Turning the list on or off applies when the VPN starts, so a running VPN is restarted. */
-    fun setBypassRu(enabled: Boolean) {
-        viewModelScope.launch {
-            withContext(Dispatchers.IO) { AmeliaApps.setEnabled(enabled) }
-            _state.update { it.copy(bypassRu = enabled) }
-            restartIfRunning()
-        }
-    }
+    /** The list when the screen opened: the tunnel is rebuilt on close only if it changed. */
+    private var appsAtOpen: Set<String>? = null
 
-    private var appsChanged = false
+    /** Writes of the list one after another, in the order the person tapped. */
+    private val appsWriter = Dispatchers.IO.limitedParallelism(1)
 
     fun loadApps() {
+        _state.update { it.copy(apps = null) }
         viewModelScope.launch {
-            val rows = withContext(Dispatchers.IO) { installedApps() }
-            _state.update { it.copy(apps = rows) }
+            val (before, rows) = withContext(appsWriter) {
+                // removed apps leave the list before it is shown
+                AmeliaApps.apply(getApplication())
+                AmeliaApps.bypassed() to installedApps()
+            }
+            appsAtOpen = before
+            _state.update { it.copy(apps = rows, bypassCount = before.size) }
         }
     }
 
     fun setAppBypass(pkg: String, bypass: Boolean) {
-        appsChanged = true
         _state.update { s -> s.copy(apps = s.apps?.map { if (it.pkg == pkg) it.copy(bypass = bypass) else it }) }
-        viewModelScope.launch {
-            val count = withContext(Dispatchers.IO) {
-                AmeliaApps.setBypass(pkg, bypass)
-                AmeliaApps.bypassed().size
-            }
-            _state.update { it.copy(bypassCount = count) }
-        }
+        saveApps()
     }
 
-    /** The picker was closed: changes reach a running VPN with one restart. */
+    /** "Банки", "Госуслуги", "Маркетплейсы": installed apps of the set on (or off when all are on). */
+    fun applyPreset(preset: AmeliaApps.Preset) {
+        val apps = _state.value.apps ?: return
+        val installed = apps.mapTo(HashSet()) { it.pkg }
+        val selected = apps.filter { it.bypass }.mapTo(HashSet()) { it.pkg }
+        val next = AmeliaApps.applyPreset(selected, preset, installed)
+        _state.update { s -> s.copy(apps = s.apps?.map { it.copy(bypass = it.pkg in next) }) }
+        saveApps()
+    }
+
+    private fun selectedApps(): Set<String>? = _state.value.apps?.filter { it.bypass }?.mapTo(LinkedHashSet()) { it.pkg }
+
+    private fun saveApps() {
+        val list = selectedApps() ?: return
+        _state.update { it.copy(bypassCount = list.size) }
+        viewModelScope.launch(appsWriter) { AmeliaApps.save(list) }
+    }
+
+    /** The screen was closed: a changed list reaches a running VPN with one quiet tunnel rebuild. */
     fun appsClosed() {
-        if (!appsChanged) return
-        appsChanged = false
-        restartIfRunning()
+        val before = appsAtOpen ?: return
+        appsAtOpen = null
+        val after = selectedApps() ?: return
+        if (AmeliaApps.shouldRecreateTunnel(before, after, _state.value.isRunning)) restartIfRunning()
     }
 
+    /**
+     * Same location, new tunnel (also after a settings change that needs it): the service is
+     * restarted on the location it is on; no dialog, the button shows "Подключение…" briefly.
+     */
     private fun restartIfRunning() {
         if (!_state.value.isRunning) return
         expectRestart = true
@@ -423,7 +439,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             .map { it.activityInfo.packageName to it.loadLabel(pm).toString() }
             .filter { it.first != app.packageName }
             .distinctBy { it.first }
-            .map { (pkg, label) -> AppRow(pkg, label, pkg in bypassed, pkg in AmeliaApps.BUILT_IN_PACKAGES) }
+            .map { (pkg, label) -> AppRow(pkg, label, pkg in bypassed) }
             .sortedWith(compareByDescending<AppRow> { it.bypass }.thenBy { it.label.lowercase() })
     }
 
@@ -917,7 +933,6 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 info = AmeliaManager.getSubInfo(),
                 subUpdatedAt = AmeliaManager.lastSubscriptionUpdate(),
                 pings = AmeliaManager.getPings(),
-                bypassRu = AmeliaApps.isEnabled(),
                 bypassCount = AmeliaApps.bypassed().size,
                 probeEnabled = AmeliaProbe.isEnabled(),
                 crashEnabled = AmeliaCrash.isEnabled(),
@@ -938,7 +953,6 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 subUpdatedAt = snapshot.subUpdatedAt,
                 // keep live results while a ping round is running
                 pings = if (it.pinging) it.pings else snapshot.pings,
-                bypassRu = snapshot.bypassRu,
                 bypassCount = snapshot.bypassCount,
                 probeEnabled = snapshot.probeEnabled,
                 crashEnabled = snapshot.crashEnabled,

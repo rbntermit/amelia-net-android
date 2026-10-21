@@ -41,6 +41,8 @@ object AmeliaConfig {
         PAY("pay"), STATUS("status"), HELP("help"), SUPPORT("support"), REFERRAL("referral"), MY_SUB("mysub"),
         /** 1.4.0: the bot sends the app's APK (when the phone blocks the in-app update). */
         APP("app"),
+        /** 1.5.0: the bot sends the person's own Telegram proxy link (subscription valid). */
+        TGPROXY("tgproxy"),
     }
 
     fun botUrl(screen: BotScreen? = null): String =

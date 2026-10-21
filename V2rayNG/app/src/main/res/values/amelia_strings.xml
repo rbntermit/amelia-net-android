@@ -45,8 +45,6 @@
     <string name="amelia_act_group">Наша группа</string>
     <string name="amelia_renew">Продлить</string>
 
-    <string name="amelia_traffic_left">Осталось %1$s из %2$s</string>
-    <string name="amelia_traffic_unlimited">Трафик без ограничений</string>
     <string name="amelia_traffic_used">Израсходовано %1$s</string>
 
     <string name="amelia_menu">Меню</string>
@@ -147,8 +145,8 @@
     <string name="amelia_about_update_no_answer">Проверка обновлений %1$s: сервер не ответил</string>
     <string name="amelia_about_update_bad">Проверка обновлений %1$s: сервер прислал неверный ответ</string>
     <string name="amelia_about_network">Сеть: %1$s</string>
-    <string name="amelia_about_bypass_on">Российские приложения мимо VPN: да (%1$d в списке)</string>
-    <string name="amelia_about_bypass_off">Российские приложения мимо VPN: нет</string>
+    <string name="amelia_about_bypass_on">Приложения мимо VPN: %1$d</string>
+    <string name="amelia_about_bypass_off">Приложения мимо VPN: нет</string>
     <string name="amelia_about_probe_on">Помогать находить блокировки: да</string>
     <string name="amelia_about_probe_off">Помогать находить блокировки: нет</string>
     <string name="amelia_about_copy">Скопировать для поддержки</string>
@@ -161,14 +159,6 @@
     <string name="amelia_probe_title">Помогать находить блокировки</string>
     <string name="amelia_probe_text">Иногда приложение сообщает нам, какие наши серверы открываются в вашей сети. Отправляется: случайный номер установки (не связан с подпиской), версия приложения, тип сети (Wi-Fi или мобильная), название оператора и по каждому серверу — адрес, порт, работает ли он и задержка. Ключ, номер телефона, названия локаций и сайты, которые вы открываете, не отправляются.</string>
 
-    <!-- 1.1.0: Russian apps around the VPN -->
-    <string name="amelia_apps_title">Российские приложения — мимо VPN</string>
-    <string name="amelia_apps_text">Приложения из списка работают без VPN, как обычно: банки, Госуслуги и маркетплейсы не видят, что VPN включён.</string>
-    <string name="amelia_apps_choose">Выбрать приложения (%1$d в списке)</string>
-    <string name="amelia_apps_screen_title">Мимо VPN</string>
-    <string name="amelia_apps_hint">Отмеченные приложения работают без VPN. Если VPN включён, он переподключится, когда вы закроете этот список.</string>
-    <string name="amelia_apps_builtin">из нашего списка</string>
-    <string name="amelia_apps_search">Найти приложение</string>
 
     <!-- 1.1.0: problem report -->
     <string name="amelia_menu_report">Не работает — сообщить</string>
@@ -190,15 +180,8 @@
     <string name="amelia_report_retry">Попробовать ещё раз</string>
 
     <!-- 1.1.0: subscription end -->
-    <string name="amelia_sub_until">Подписка до %1$s · %2$s</string>
     <string name="amelia_sub_last_day">Подписка до %1$s · последний день</string>
     <string name="amelia_sub_ended">Подписка закончилась</string>
-    <plurals name="amelia_days_left_plural">
-        <item quantity="one">остался %1$d день</item>
-        <item quantity="few">осталось %1$d дня</item>
-        <item quantity="many">осталось %1$d дней</item>
-        <item quantity="other">осталось %1$d дня</item>
-    </plurals>
     <string name="amelia_expiry_channel">Подписка</string>
     <string name="amelia_expiry_3_days">Подписка закончится через 3 дня</string>
     <string name="amelia_expiry_1_day">Подписка закончится завтра</string>
@@ -275,4 +258,21 @@
     <string name="amelia_install_permission_open">Открыть настройки</string>
     <string name="amelia_install_bad_signature">Скачанный файл подписан не нашим ключом. Устанавливать его нельзя — скачайте обновление в боте.</string>
     <string name="amelia_install_bad_version">Скачанный файл — не та версия (%1$s). Попробуйте проверить обновления ещё раз.</string>
+
+    <!-- 1.5.0: subscription line, Telegram proxy, apps around the VPN -->
+    <string name="amelia_sub_until_days">Подписка до %1$s · осталось %2$d дн.</string>
+    <string name="amelia_sub_unlimited">Подписка бессрочная</string>
+    <string name="amelia_sub_usage">%1$s из %2$s ГБ</string>
+    <string name="amelia_tgproxy_title">📨 Прокси для Telegram</string>
+    <string name="amelia_tgproxy_hint">Только Telegram, без VPN. Нужна свежая версия Telegram</string>
+    <string name="amelia_tgproxy_expired">Прокси доступен с действующей подпиской</string>
+    <string name="amelia_tgproxy_install">Установите Telegram — ссылка на прокси откроется в нём</string>
+    <string name="amelia_apps_title">Приложения мимо VPN</string>
+    <string name="amelia_apps_explain">Эти приложения будут работать без VPN — в том числе для заблокированных сайтов. Российские сайты и так идут напрямую</string>
+    <string name="amelia_apps_count">Выбрано: %1$d</string>
+    <string name="amelia_apps_none">Не выбрано — все приложения через VPN</string>
+    <string name="amelia_apps_search">Найти приложение</string>
+    <string name="amelia_apps_preset_banks">Банки</string>
+    <string name="amelia_apps_preset_gov">Госуслуги</string>
+    <string name="amelia_apps_preset_shops">Маркетплейсы</string>
 </resources>
