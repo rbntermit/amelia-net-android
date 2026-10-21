@@ -19,6 +19,8 @@ data class AmeliaSubInfo(
     val updateIntervalHours: Int? = null,
     /** When the subscription was last fetched, epoch millis. */
     val fetchedAt: Long? = null,
+    /** 1.5.2: raw `routing` header (happ://routing/onadd/…); read by AmeliaRouteProfile, not stored. */
+    @Transient val routing: String? = null,
 ) {
     val used: Long get() = (upload ?: 0L) + (download ?: 0L)
 
@@ -54,6 +56,7 @@ data class AmeliaSubInfo(
                 expire = userinfo["expire"],
                 updateIntervalHours = header(HEADER_UPDATE_INTERVAL)?.trim()?.toIntOrNull()?.takeIf { it > 0 },
                 fetchedAt = now,
+                routing = header(AmeliaRouteProfile.HEADER),
             )
         }
 

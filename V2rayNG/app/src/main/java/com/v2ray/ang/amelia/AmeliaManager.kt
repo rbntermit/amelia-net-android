@@ -1,5 +1,6 @@
 package com.v2ray.ang.amelia
 
+import com.v2ray.ang.AngApplication
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.dto.entities.SubscriptionItem
 import com.v2ray.ang.handler.AngConfigManager
@@ -7,6 +8,7 @@ import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SubscriptionUpdater
 import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.LogUtil
+import com.v2ray.ang.util.Utils
 
 /**
  * Owns the key and the single Amelia.Net subscription. Data lives in the upstream stores
@@ -54,6 +56,15 @@ object AmeliaManager {
         return load(key, preferredBaseUrl = AmeliaHttp.lastBase(), saveKeyOnSuccess = true)
     }
 
+    @Volatile
+    private var routingChanged = false
+
+    /**
+     * 1.5.2: the last subscription load changed the routing rules (once). The caller rebuilds
+     * a running tunnel: the rules are part of the core config written at VPN start.
+     */
+    fun takeRoutingChanged(): Boolean = routingChanged.also { routingChanged = false }
+
     /** Re-downloads the subscription for the saved key. */
     fun refresh(): Outcome {
         val key = getKey() ?: return Outcome.INVALID_FORMAT
@@ -81,6 +92,7 @@ object AmeliaManager {
         MmkvManager.encodeSettings(AmeliaConfig.PREF_KEY, "")
         MmkvManager.encodeSettings(AmeliaConfig.PREF_SUB_INFO, "")
         MmkvManager.encodeSettings(PREF_SUB_SOURCE, "")
+        AmeliaRouteProfile.clear()
     }
 
     private fun load(key: String, preferredBaseUrl: String?, saveKeyOnSuccess: Boolean): Outcome {
@@ -118,6 +130,12 @@ object AmeliaManager {
         MmkvManager.encodeSubscription(AmeliaConfig.SUBSCRIPTION_ID, sub)
         MmkvManager.encodeSettings(AmeliaConfig.PREF_SUB_INFO, JsonUtil.toJson(info))
         MmkvManager.encodeSettings(PREF_SUB_SOURCE, "${result.baseUrl} ${result.route.name}")
+        // 1.5.2: site lists of the subscription's routing profile; a missing or broken header keeps the rules
+        if (AmeliaRouteProfile.update(info.routing) { Utils.decode(it).ifEmpty { null } }) {
+            LogUtil.i(AppConfig.TAG, "Amelia: routing profile from the subscription changed, rules rewritten")
+            AmeliaRouting.apply(AngApplication.application)
+            routingChanged = true
+        }
         if (saveKeyOnSuccess) {
             MmkvManager.encodeSettings(AmeliaConfig.PREF_KEY, key)
         }

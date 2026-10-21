@@ -17,6 +17,7 @@ import androidx.work.WorkerParameters
 import androidx.work.multiprocess.RemoteWorkManager
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
+import com.v2ray.ang.core.LauncherManager
 import com.v2ray.ang.util.LogUtil
 import java.util.concurrent.TimeUnit
 
@@ -56,6 +57,8 @@ class AmeliaUpdateWorker(context: Context, params: WorkerParameters) : Coroutine
         try {
             if (AmeliaManager.hasKey() && AmeliaExpiry.needsRefresh(AmeliaManager.getSubInfo(), System.currentTimeMillis())) {
                 AmeliaManager.refresh()
+                // 1.5.2: new routing lists reach a running VPN (the daemon restarts itself; no-op when off)
+                if (AmeliaManager.takeRoutingChanged()) LauncherManager.restartService(applicationContext)
             }
             AmeliaExpiry.check(applicationContext, AmeliaManager.getSubInfo())
         } catch (e: Exception) {

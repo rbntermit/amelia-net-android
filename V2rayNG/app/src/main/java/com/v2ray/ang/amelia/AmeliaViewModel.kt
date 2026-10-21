@@ -954,10 +954,13 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         loadJob = viewModelScope.launch {
             _state.update { it.copy(busy = true) }
             val before = _state.value.selectedName
-            val outcome = withContext(Dispatchers.IO) { block() }
+            val (outcome, routingChanged) = withContext(Dispatchers.IO) { block() to AmeliaManager.takeRoutingChanged() }
             reload()
-            // e.g. renewed after a fallback to a reserve location: move the VPN to the new choice
-            if (outcome == AmeliaManager.Outcome.OK && before != null && _state.value.selectedName != before) {
+            // e.g. renewed after a fallback to a reserve location: move the VPN to the new choice;
+            // 1.5.2: or the subscription's routing lists changed: same location, new tunnel
+            if (outcome == AmeliaManager.Outcome.OK &&
+                ((before != null && _state.value.selectedName != before) || routingChanged)
+            ) {
                 restartIfRunning()
             }
             val msg = when (outcome) {

@@ -55,36 +55,137 @@ object AmeliaRouting {
 
     const val MIN_GEO_SIZE = 1000L
 
-    fun buildRulesets(withGeo: Boolean): MutableList<RulesetItem> {
-        fun domains(list: List<String>) = list.map { "domain:$it" }
-        return mutableListOf(
+    /** Domain matchers Xray understands as they are; anything else is a plain domain. */
+    private val DOMAIN_PREFIXES = listOf("domain:", "full:", "regexp:", "keyword:", "dotless:", "ext:")
+
+    /**
+     * One DirectSites/ProxySites entry of the subscription profile as an Xray domain matcher:
+     * "notes.example.net" → "domain:notes.example.net" (the domain and its subdomains);
+     * "geosite:<tag>" only when the geo base is there and has the tag (else Xray would not
+     * start); null for entries that cannot be used.
+     */
+    fun domainRule(entry: String, hasGeo: (String) -> Boolean): String? {
+        val e = entry.trim()
+        if (e.isEmpty()) return null
+        val lower = e.lowercase()
+        return when {
+            lower.startsWith("geosite:") -> e.takeIf { hasGeo(it) }
+            lower.startsWith("geoip:") -> null
+            DOMAIN_PREFIXES.any { lower.startsWith(it) } -> e
+            e.contains(' ') || e.contains('/') -> null
+            else -> "domain:${e.trimStart('.').trimEnd('.')}"
+        }
+    }
+
+    /** One DirectIp/ProxyIp entry: an address or CIDR as is, "geoip:<tag>" only when present in the base. */
+    fun ipRule(entry: String, hasGeo: (String) -> Boolean): String? {
+        val e = entry.trim()
+        if (e.isEmpty() || e.contains(' ')) return null
+        return when {
+            e.lowercase().startsWith("geoip:") -> e.takeIf { hasGeo(it) }
+            e.lowercase().startsWith("geosite:") -> null
+            else -> e
+        }
+    }
+
+    /**
+     * Rules in Happ's order block → proxy → direct ("RouteOrder": "block-proxy-direct"): the
+     * proxy lists come first, so a ProxySites entry wins over DirectSites (youtube.com stays in
+     * the VPN even with geosite:category-ru direct). The subscription [profile] (1.5.2) adds to
+     * the built-in lists; [hasGeo] says whether a geosite:/geoip: tag can be used.
+     */
+    fun buildRulesets(
+        withGeo: Boolean,
+        profile: AmeliaRouteProfile.Profile? = null,
+        hasGeo: (String) -> Boolean = { withGeo && (it == GEOSITE_RU || it == GEOIP_RU) },
+    ): MutableList<RulesetItem> {
+        val geo: (String) -> Boolean = { withGeo && hasGeo(it) }
+        fun domains(builtIn: List<String>, extra: List<String>?) =
+            (builtIn.map { "domain:$it" } + extra.orEmpty().mapNotNull { domainRule(it, geo) }).distinct()
+        fun ips(builtIn: List<String>, extra: List<String>?) =
+            (builtIn + extra.orEmpty().mapNotNull { ipRule(it, geo) }).distinct()
+
+        val rules = mutableListOf(
             RulesetItem(
                 id = "amelia-proxy-sites",
                 remarks = "Amelia: always via VPN",
-                domain = domains(PROXY_SITES),
+                domain = domains(PROXY_SITES, profile?.proxySites),
                 outboundTag = AppConfig.TAG_PROXY,
                 locked = true,
             ),
-            RulesetItem(
-                id = "amelia-direct-sites",
-                remarks = "Amelia: direct sites",
-                domain = domains(DIRECT_SITES) + if (withGeo) listOf(GEOSITE_RU) else emptyList(),
-                outboundTag = AppConfig.TAG_DIRECT,
-                locked = true,
-            ),
-            RulesetItem(
-                id = "amelia-direct-ip",
-                remarks = "Amelia: direct IP",
-                ip = DIRECT_IPS + if (withGeo) listOf(GEOIP_RU) else emptyList(),
-                outboundTag = AppConfig.TAG_DIRECT,
-                locked = true,
-            ),
         )
+        val proxyIp = ips(emptyList(), profile?.proxyIp)
+        if (proxyIp.isNotEmpty()) {
+            rules += RulesetItem(
+                id = "amelia-proxy-ip",
+                remarks = "Amelia: IP always via VPN",
+                ip = proxyIp,
+                outboundTag = AppConfig.TAG_PROXY,
+                locked = true,
+            )
+        }
+        rules += RulesetItem(
+            id = "amelia-direct-sites",
+            remarks = "Amelia: direct sites",
+            domain = domains(DIRECT_SITES, profile?.directSites)
+                .let { if (withGeo && GEOSITE_RU !in it) it + GEOSITE_RU else it },
+            outboundTag = AppConfig.TAG_DIRECT,
+            locked = true,
+        )
+        rules += RulesetItem(
+            id = "amelia-direct-ip",
+            remarks = "Amelia: direct IP",
+            ip = ips(DIRECT_IPS, profile?.directIp)
+                .let { if (withGeo && GEOIP_RU !in it) it + GEOIP_RU else it },
+            outboundTag = AppConfig.TAG_DIRECT,
+            locked = true,
+        )
+        return rules
+    }
+
+    /**
+     * Does the downloaded geo base have [tag] ("geosite:category-ru")? Our bases hold only a
+     * few countries; Xray refuses to start on a missing tag. The tag name is stored in the
+     * file as the protobuf field country_code: byte 0x0A, its length, the upper-case name.
+     */
+    fun geoHasTag(context: Context, tag: String): Boolean {
+        val (kind, name) = tag.split(':', limit = 2).takeIf { it.size == 2 } ?: return false
+        val file = File(Utils.userAssetPath(context), if (kind.equals("geosite", true)) AppConfig.GEOSITE_DAT else AppConfig.GEOIP_DAT)
+        if (!file.isFile) return false
+        val key = "${file.path}:${file.length()}:${file.lastModified()}:$name"
+        geoTagCache[key]?.let { return it }
+        val found = runCatching { hasCountryCode(file.readBytes(), name) }.getOrDefault(false)
+        geoTagCache[key] = found
+        return found
+    }
+
+    /** Pure: the geo base bytes [data] have the list [name] ("category-ru", attributes after @ ignored). */
+    fun hasCountryCode(data: ByteArray, name: String): Boolean {
+        val name8 = name.substringBefore('@').uppercase().toByteArray(Charsets.US_ASCII)
+        if (name8.isEmpty() || name8.size > 127) return false
+        val needle = byteArrayOf(0x0A, name8.size.toByte()) + name8
+        return indexOf(data, needle) >= 0
+    }
+
+    private val geoTagCache = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+    private fun indexOf(data: ByteArray, needle: ByteArray): Int {
+        if (needle.isEmpty()) return -1
+        outer@ for (i in 0..data.size - needle.size) {
+            for (j in needle.indices) if (data[i + j] != needle[j]) continue@outer
+            return i
+        }
+        return -1
     }
 
     /** Writes routing and DNS settings. Users cannot edit them, so it is safe to apply on every start. */
     fun apply(context: Context) {
-        MmkvManager.encodeRoutingRulesets(buildRulesets(geoFilesReady(context)))
+        val withGeo = geoFilesReady(context)
+        MmkvManager.encodeRoutingRulesets(
+            buildRulesets(withGeo, AmeliaRouteProfile.load()) { tag ->
+                tag == GEOSITE_RU || tag == GEOIP_RU || geoHasTag(context, tag)
+            },
+        )
         MmkvManager.encodeSettings(AppConfig.PREF_ROUTING_DOMAIN_STRATEGY, DOMAIN_STRATEGY)
         MmkvManager.encodeSettings(AppConfig.PREF_REMOTE_DNS, REMOTE_DNS)
         MmkvManager.encodeSettings(AppConfig.PREF_DOMESTIC_DNS, DOMESTIC_DNS)
