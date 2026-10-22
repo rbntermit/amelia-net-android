@@ -34,7 +34,30 @@ object AmeliaPolicy {
     /** Pure: the mode from the stored value; none or unknown → [DEFAULT_MODE]. A stored choice is kept. */
     fun modeOf(stored: String?): Mode = stored?.let { runCatching { Mode.valueOf(it) }.getOrNull() } ?: DEFAULT_MODE
 
-    fun mode(): Mode = modeOf(MmkvManager.decodeSettingsString(PREF_MODE))
+    /** Set once the 1.5.7 move from a stored UNLESS_MANUAL to ALWAYS has run (any process). */
+    const val PREF_MIGRATED_157 = "amelia_autoswitch_migrated_157"
+
+    /**
+     * Pure, 1.5.7: until 1.5.5 tapping the mode already shown stored it, so a stored
+     * UNLESS_MANUAL may not be a real choice. Once ([done] false) it becomes ALWAYS; OFF and
+     * everything chosen after the move stay.
+     */
+    fun migrate157(stored: String?, done: Boolean): String? =
+        if (!done && stored == Mode.UNLESS_MANUAL.name) Mode.ALWAYS.name else stored
+
+    fun mode(): Mode {
+        var stored = MmkvManager.decodeSettingsString(PREF_MODE)
+        if (!MmkvManager.decodeSettingsBool(PREF_MIGRATED_157)) {
+            val moved = migrate157(stored, done = false)
+            if (moved != stored) {
+                MmkvManager.encodeSettings(PREF_MODE, moved)
+                AmeliaJournal.add("Автопереключение: «Всегда» (обновление 1.5.7)")
+                stored = moved
+            }
+            MmkvManager.encodeSettings(PREF_MIGRATED_157, true)
+        }
+        return modeOf(stored)
+    }
 
     fun setMode(m: Mode) = MmkvManager.encodeSettings(PREF_MODE, m.name)
 

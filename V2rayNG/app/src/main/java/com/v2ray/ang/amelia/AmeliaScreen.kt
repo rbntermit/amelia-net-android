@@ -444,15 +444,16 @@ private fun HomeScreen(
             onSettings = onSettings,
             onReport = extra.onStartReport,
             onJournal = onJournal,
+            onCabinet = extra.onCabinet,
         )
         if (state.update != null) {
             UpdateCard(state, updates)
             Spacer(Modifier.height(10.dp))
         }
         if (state.onReserveFallback) {
-            ReserveFallbackBanner(onRenew = { onOpenUrl(AmeliaConfig.botUrl(BotScreen.PAY)) })
+            ReserveFallbackBanner(onRenew = extra.onRenew)
         } else {
-            SubscriptionLine(state.info, onRenew = { onOpenUrl(AmeliaConfig.botUrl(BotScreen.PAY)) })
+            SubscriptionLine(state.info, onRenew = extra.onRenew, onPayOnSite = extra.onPayOnSite)
         }
         BootPermissionLine(state)
         if (state.showBatteryCard) {
@@ -490,11 +491,12 @@ private fun HomeScreen(
         TelegramProxyItem(
             state.info,
             onOpen = extra.onTelegramProxy,
-            onRenew = { onOpenUrl(AmeliaConfig.botUrl(BotScreen.PAY)) },
+            onRenew = extra.onRenew,
         )
         Spacer(Modifier.height(16.dp))
         ActionGrid(
             onAction = { screen -> onOpenUrl(AmeliaConfig.botUrl(screen)) },
+            onPay = extra.onRenew,
             // Checks every location, shows which work, offers to send the result to support
             onNotWorking = extra.onStartReport,
             onGroup = { onOpenUrl(AmeliaConfig.GROUP_URL) },
@@ -546,6 +548,7 @@ private fun TopBar(
     onSettings: () -> Unit,
     onReport: () -> Unit,
     onJournal: () -> Unit,
+    onCabinet: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     Row(
@@ -582,6 +585,10 @@ private fun TopBar(
                 )
             }
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.amelia_site_cabinet)) },
+                    onClick = { menuOpen = false; onCabinet() },
+                )
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.amelia_menu_refresh)) },
                     enabled = !busy,
@@ -943,11 +950,12 @@ private class ActionItem(val emoji: String, val label: Int, val onClick: () -> U
 @Composable
 private fun ActionGrid(
     onAction: (BotScreen) -> Unit,
+    onPay: () -> Unit,
     onNotWorking: () -> Unit,
     onGroup: () -> Unit,
 ) {
     val items = listOf(
-        ActionItem("💳", R.string.amelia_act_pay) { onAction(BotScreen.PAY) },
+        ActionItem("💳", R.string.amelia_act_pay, onPay),
         ActionItem("🎁", R.string.amelia_act_referral) { onAction(BotScreen.REFERRAL) },
         ActionItem("🩺", R.string.amelia_act_not_working, onNotWorking),
         ActionItem("💬", R.string.amelia_act_support) { onAction(BotScreen.SUPPORT) },
@@ -1143,7 +1151,7 @@ private fun SettingsScreen(
     ) {
         ScreenHeader(stringResource(R.string.amelia_settings), onBack)
 
-        SettingsSubscriptionSection(state, settings)
+        SettingsSubscriptionSection(state, settings, extra)
         SettingsAppsSection(state, onOpenApps)
         SettingsBootSection(state, extra)
         SettingsBatterySection(state, extra)
@@ -1166,7 +1174,7 @@ internal fun SectionTitle(text: String) {
 
 /** When the locations were last downloaded, and a button to do it now. */
 @Composable
-private fun SettingsSubscriptionSection(state: AmeliaUiState, settings: SettingsCallbacks) {
+private fun SettingsSubscriptionSection(state: AmeliaUiState, settings: SettingsCallbacks, extra: ExtraCallbacks) {
     Glass(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SectionTitle(stringResource(R.string.amelia_settings_account))
@@ -1185,6 +1193,11 @@ private fun SettingsSubscriptionSection(state: AmeliaUiState, settings: Settings
                 busy = state.busy,
                 onClick = settings.onRefreshSubscription,
             )
+            // 1.5.7: the site (cabinet, payment without Telegram, gift); "Продлить" as on the main screen
+            TextButton(onClick = extra.onCabinet) { Text(stringResource(R.string.amelia_site_cabinet), color = Brand.Sky) }
+            TextButton(onClick = extra.onRenew) { Text(stringResource(R.string.amelia_site_renew), color = Brand.Sky) }
+            TextButton(onClick = extra.onPayOnSite) { Text(stringResource(R.string.amelia_site_pay), color = Brand.Muted) }
+            TextButton(onClick = extra.onGift) { Text(stringResource(R.string.amelia_site_gift), color = Brand.Sky) }
         }
     }
 }

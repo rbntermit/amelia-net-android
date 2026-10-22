@@ -160,7 +160,7 @@
 
     <!-- 1.1.0: blocking map -->
     <string name="amelia_probe_title">Помогать находить блокировки</string>
-    <string name="amelia_probe_text">Иногда приложение сообщает нам, какие наши серверы открываются в вашей сети. Отправляется: случайный номер установки (не связан с подпиской), версия приложения, тип сети (Wi-Fi или мобильная), название оператора и по каждому серверу — адрес, порт, работает ли он и задержка. Ключ, номер телефона, названия локаций и сайты, которые вы открываете, не отправляются.</string>
+    <string name="amelia_probe_text">Иногда приложение сообщает нам, какие наши локации открываются в вашей сети. Отправляется: случайный номер установки (не связан с подпиской), версия приложения, тип сети (Wi-Fi или мобильная), название оператора и по каждой локации — адрес, порт, работает ли она и задержка. Ключ, номер телефона, названия локаций и сайты, которые вы открываете, не отправляются.</string>
 
 
     <!-- 1.1.0: problem report -->
@@ -244,7 +244,7 @@
     <string name="amelia_phase_connected_on_ping">Подключено · %1$s · %2$d мс</string>
     <string name="amelia_autoswitch_title">Автопереключение</string>
     <string name="amelia_autoswitch_always">Всегда</string>
-    <string name="amelia_autoswitch_unless_manual">Только если я не выбирал сервер сам</string>
+    <string name="amelia_autoswitch_unless_manual">Только если я не выбирал локацию сам</string>
     <string name="amelia_autoswitch_off">Выключено</string>
     <string name="amelia_autoswitch_text">Если локация перестала отвечать, приложение само переключится на самую быструю из работающих; при «Всегда» — даже если вы выбрали её сами. Резервные и «Москва» берутся сами только после окончания подписки.</string>
     <string name="amelia_journal">Журнал</string>
@@ -287,4 +287,10 @@
     <string name="amelia_boot_need_permission">Чтобы VPN включался сам, один раз нажмите «Подключить»</string>
     <string name="amelia_boot_always_on">Надёжнее всего: Настройки Android → VPN → Amelia → Постоянная VPN</string>
     <string name="amelia_boot_open_vpn_settings">Открыть настройки VPN</string>
+
+    <!-- 1.5.7: the site on the Russian mirror -->
+    <string name="amelia_site_cabinet">📊 Личный кабинет</string>
+    <string name="amelia_site_renew">💳 Продлить</string>
+    <string name="amelia_site_pay">Оплатить на сайте, без Telegram</string>
+    <string name="amelia_site_gift">🎁 Подарить подписку</string>
 </resources>

@@ -122,7 +122,13 @@ object AmeliaExpiry {
         )
         val pay = PendingIntent.getActivity(
             context, 2,
-            Intent(Intent.ACTION_VIEW, AmeliaConfig.botUrl(AmeliaConfig.BotScreen.PAY).toUri())
+            // 1.5.7: the bot with Telegram, the site without (main address: a notice link is fixed)
+            Intent(
+                Intent.ACTION_VIEW,
+                AmeliaSite.renewUrl(
+                    AmeliaPackages.telegram(context.packageManager) != null, AmeliaSite.BASES[0], AmeliaManager.getKey(),
+                ).toUri(),
+            )
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )

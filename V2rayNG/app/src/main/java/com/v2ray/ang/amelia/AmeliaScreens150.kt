@@ -66,7 +66,7 @@ import kotlinx.coroutines.withContext
  * before the subscription is loaded.
  */
 @Composable
-internal fun SubscriptionLine(info: AmeliaSubInfo?, onRenew: () -> Unit) {
+internal fun SubscriptionLine(info: AmeliaSubInfo?, onRenew: () -> Unit, onPayOnSite: () -> Unit) {
     val line = AmeliaFormat.subLine(info, System.currentTimeMillis()) ?: return
     if (line == AmeliaFormat.SubLine.Ended) {
         Glass(Modifier.fillMaxWidth(), tint = Color(0x40FF6B6B)) {
@@ -78,6 +78,8 @@ internal fun SubscriptionLine(info: AmeliaSubInfo?, onRenew: () -> Unit) {
                     fontWeight = FontWeight.SemiBold,
                 )
                 GradientButton(text = stringResource(R.string.amelia_renew), enabled = true, onClick = onRenew)
+                // 1.5.7: card or СБП on the site, for everyone (also with Telegram)
+                TextButton(onClick = onPayOnSite) { Text(stringResource(R.string.amelia_site_pay), color = Brand.Muted) }
             }
         }
         return

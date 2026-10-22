@@ -101,6 +101,11 @@ class ExtraCallbacks(
     val onMeasureSpeed: (String) -> Unit,
     /** "⚡ Подключить лучший". */
     val onConnectBest: () -> Unit,
+    /** 1.5.7: "💳 Продлить" (bot with Telegram, the site without), and the site's pages. */
+    val onRenew: () -> Unit,
+    val onPayOnSite: () -> Unit,
+    val onCabinet: () -> Unit,
+    val onGift: () -> Unit,
 )
 
 // ---- shared pieces ---------------------------------------------------------------------------

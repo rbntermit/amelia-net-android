@@ -131,6 +131,10 @@ class AmeliaActivity : HelperBaseComponentActivity() {
                 onProbe = viewModel::setProbeEnabled,
                 onDismissAnnounce = viewModel::dismissAnnounce,
                 onConnectBest = { viewModel.connectBest(::toggle) },
+                onRenew = ::openRenew,
+                onPayOnSite = { openSite { base, key -> AmeliaSite.buyUrl(base, key) } },
+                onCabinet = { openSite { base, key -> AmeliaSite.cabinetUrl(base, key) } },
+                onGift = { openSite { base, _ -> AmeliaSite.giftUrl(base) } },
                 onMeasureSpeed = viewModel::measureSpeed,
                 onAllowBackground = ::openBatterySettings,
                 onBatteryCardDone = viewModel::batteryCardDone,
@@ -206,6 +210,28 @@ class AmeliaActivity : HelperBaseComponentActivity() {
         }
         Utils.openUri(this, url)
         viewModel.showMessage(R.string.amelia_tgproxy_install)
+    }
+
+    /**
+     * 1.5.7: a page of the site in the browser. The main address is checked first (up to 5 s);
+     * no answer → the spare one. Only the key goes into the link.
+     */
+    private fun openSite(url: (base: String, key: String) -> String) {
+        val key = AmeliaManager.getKey() ?: return
+        lifecycleScope.launch {
+            val base = AmeliaSite.base()
+            Utils.openUri(this@AmeliaActivity, url(base, key))
+        }
+    }
+
+    /** 1.5.7 "💳 Продлить": the bot when Telegram is installed, otherwise payment on the site. */
+    private fun openRenew() {
+        lifecycleScope.launch {
+            val telegram = kotlinx.coroutines.withContext(Dispatchers.IO) { AmeliaPackages.telegram(packageManager) != null }
+            val key = AmeliaManager.getKey()
+            val base = if (telegram || key == null) AmeliaSite.BASES[0] else AmeliaSite.base()
+            Utils.openUri(this@AmeliaActivity, AmeliaSite.renewUrl(telegram, base, key))
+        }
     }
 
     /** 1.5.4: Android's VPN list, where "Постоянная VPN" (Always-on) is switched on for the app. */
