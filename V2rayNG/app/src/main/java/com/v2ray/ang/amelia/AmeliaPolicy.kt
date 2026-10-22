@@ -12,8 +12,13 @@ object AmeliaPolicy {
     /** Settings → "Автопереключение". */
     enum class Mode { ALWAYS, UNLESS_MANUAL, OFF }
 
+    /**
+     * Written only when the person taps a mode in Settings. No value = never chosen, so the
+     * default applies: new installs and everyone who never touched it get [DEFAULT_MODE].
+     */
     const val PREF_MODE = "amelia_autoswitch_mode"
-    val DEFAULT_MODE = Mode.UNLESS_MANUAL
+    /** 1.5.6: was UNLESS_MANUAL (1.4.0–1.5.5); a location chosen once by hand left people offline. */
+    val DEFAULT_MODE = Mode.ALWAYS
 
     /** A location the person chose stays this long after they came back to it. */
     const val RESPECT_RETURN_MS = 10L * 60 * 1000
@@ -26,7 +31,10 @@ object AmeliaPolicy {
     /** Automatic choice: two failures in a row (one when no data came back at all). */
     const val AUTO_FAILURES = 2
 
-    fun mode(): Mode = MmkvManager.decodeSettingsString(PREF_MODE)?.let { runCatching { Mode.valueOf(it) }.getOrNull() } ?: DEFAULT_MODE
+    /** Pure: the mode from the stored value; none or unknown → [DEFAULT_MODE]. A stored choice is kept. */
+    fun modeOf(stored: String?): Mode = stored?.let { runCatching { Mode.valueOf(it) }.getOrNull() } ?: DEFAULT_MODE
+
+    fun mode(): Mode = modeOf(MmkvManager.decodeSettingsString(PREF_MODE))
 
     fun setMode(m: Mode) = MmkvManager.encodeSettings(PREF_MODE, m.name)
 

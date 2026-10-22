@@ -112,7 +112,7 @@ class Amelia140Test {
         assertTrue(AmeliaPolicy.maySwitch(Mode.ALWAYS, manual = true, respectUntil = 0, now = now))
         // came back by hand: left alone for 10 minutes even in "Всегда"
         assertFalse(AmeliaPolicy.maySwitch(Mode.ALWAYS, manual = true, respectUntil = now + 1, now = now))
-        assertEquals(Mode.UNLESS_MANUAL, AmeliaPolicy.DEFAULT_MODE)
+        assertEquals(Mode.ALWAYS, AmeliaPolicy.DEFAULT_MODE) // 1.5.6; was UNLESS_MANUAL
     }
 
     @Test

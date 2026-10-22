@@ -246,7 +246,7 @@
     <string name="amelia_autoswitch_always">Всегда</string>
     <string name="amelia_autoswitch_unless_manual">Только если я не выбирал сервер сам</string>
     <string name="amelia_autoswitch_off">Выключено</string>
-    <string name="amelia_autoswitch_text">Если локация перестала отвечать, приложение переходит на самую быструю из работающих. Резервные и «Москва» берутся сами только после окончания подписки.</string>
+    <string name="amelia_autoswitch_text">Если локация перестала отвечать, приложение само переключится на самую быструю из работающих; при «Всегда» — даже если вы выбрали её сами. Резервные и «Москва» берутся сами только после окончания подписки.</string>
     <string name="amelia_journal">Журнал</string>
     <string name="amelia_journal_empty">Пока ничего не происходило</string>
     <string name="amelia_install_blocked_title">Телефон не дал установить обновление</string>

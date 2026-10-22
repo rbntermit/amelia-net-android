@@ -534,7 +534,8 @@ internal fun SettingsAutoSwitchSection(state: AmeliaUiState, extra: ExtraCallbac
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .clickable(role = Role.RadioButton) { extra.onAutoMode(mode) }
+                        // tapping the mode already shown is not a choice: nothing is stored
+                        .clickable(role = Role.RadioButton) { if (state.autoMode != mode) extra.onAutoMode(mode) }
                         .padding(vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
