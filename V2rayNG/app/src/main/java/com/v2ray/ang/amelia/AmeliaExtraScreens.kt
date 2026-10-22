@@ -74,6 +74,9 @@ class ExtraCallbacks(
     val onAppsPreset: (AmeliaApps.Preset) -> Unit,
     /** 1.5.0: "📨 Прокси для Telegram" (subscription valid). */
     val onTelegramProxy: () -> Unit,
+    /** 1.5.4: "Включать VPN при запуске телефона" and Android's VPN settings (Always-on). */
+    val onStartOnBoot: (Boolean) -> Unit,
+    val onOpenVpnSettings: () -> Unit,
     val onOpenApps: () -> Unit,
     val onAppBypass: (String, Boolean) -> Unit,
     val onAppsClosed: () -> Unit,
@@ -203,6 +206,8 @@ internal fun ReportDialog(
     onClose: () -> Unit,
     onCopy: (String) -> Unit,
     onOpenBot: () -> Unit,
+    /** 1.5.4: after sending, https://t.me/amelianet_bot itself. */
+    onOpenBotHome: () -> Unit = onOpenBot,
 ) {
     var comment by rememberSaveable { mutableStateOf("") }
     // Server unreachable: the report goes to the clipboard right away, for the bot chat
@@ -272,6 +277,9 @@ internal fun ReportDialog(
             Row {
                 if (report.phase == ReportPhase.FAILED) {
                     TextButton(onClick = { onSend(comment) }) { Text(stringResource(R.string.amelia_report_retry)) }
+                }
+                if (report.phase == ReportPhase.SENT) {
+                    TextButton(onClick = onOpenBotHome) { Text(stringResource(R.string.amelia_report_bot)) }
                 }
                 if (report.phase != ReportPhase.SENT && report.phase != ReportPhase.SENDING) {
                     TextButton(onClick = onClose) { Text(stringResource(R.string.amelia_cancel)) }

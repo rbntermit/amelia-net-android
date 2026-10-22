@@ -123,6 +123,8 @@ class AmeliaActivity : HelperBaseComponentActivity() {
                 onCloseReport = viewModel::closeReport,
                 onAppsPreset = viewModel::applyPreset,
                 onTelegramProxy = ::openTelegramProxy,
+                onStartOnBoot = viewModel::setStartOnBoot,
+                onOpenVpnSettings = ::openVpnSettings,
                 onOpenApps = viewModel::loadApps,
                 onAppBypass = viewModel::setAppBypass,
                 onAppsClosed = viewModel::appsClosed,
@@ -204,6 +206,13 @@ class AmeliaActivity : HelperBaseComponentActivity() {
         }
         Utils.openUri(this, url)
         viewModel.showMessage(R.string.amelia_tgproxy_install)
+    }
+
+    /** 1.5.4: Android's VPN list, where "Постоянная VPN" (Always-on) is switched on for the app. */
+    private fun openVpnSettings() {
+        val opened = runCatching { startActivity(Intent(android.provider.Settings.ACTION_VPN_SETTINGS)) }
+            .recoverCatching { startActivity(Intent(android.provider.Settings.ACTION_SETTINGS)) }
+        opened.exceptionOrNull()?.let { LogUtil.e(AppConfig.TAG, "Amelia: cannot open the VPN settings", it) }
     }
 
     /** "Разрешить работу в фоне": the system asks to let the app off battery optimisation. */

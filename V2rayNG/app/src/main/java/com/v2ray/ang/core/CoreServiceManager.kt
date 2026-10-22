@@ -12,6 +12,7 @@ import android.os.ParcelFileDescriptor
 import android.system.OsConstants
 import androidx.core.content.ContextCompat
 import com.v2ray.ang.AppConfig
+import com.v2ray.ang.amelia.AmeliaBoot
 import com.v2ray.ang.amelia.AmeliaConfig
 import com.v2ray.ang.amelia.AmeliaCrash
 import com.v2ray.ang.amelia.AmeliaDaemon
@@ -133,7 +134,10 @@ object CoreServiceManager {
 
     @Throws(Exception::class)
     private fun launchCore(service: Service, vpnInterface: ParcelFileDescriptor?, isReload: Boolean = false) {
-        val guid = MmkvManager.getSelectServer() ?: error("No server selected")
+        // Amelia.Net 1.5.4: Android may start the VPN by itself (Always-on, boot) after a
+        // subscription refresh removed the selected location: take the best one, not fail
+        val guid = (if (isReload) MmkvManager.getSelectServer() else AmeliaBoot.ensureLocation(service))
+            ?: error("No server selected")
         val config = MmkvManager.decodeServerConfig(guid) ?: error("Failed to decode server config")
 
         LogUtil.i(AppConfig.TAG, "StartCore-Manager: Starting core loop for ${config.remarks}")

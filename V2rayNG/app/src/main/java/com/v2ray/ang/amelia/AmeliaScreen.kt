@@ -239,6 +239,7 @@ fun AmeliaApp(
             ReportDialog(
                 r, onSend = extra.onSendReport, onClose = extra.onCloseReport, onCopy = extra.onCopyText,
                 onOpenBot = { onOpenUrl(AmeliaConfig.botUrl(BotScreen.SUPPORT)) },
+                onOpenBotHome = { onOpenUrl(AmeliaConfig.BOT_URL) },
             )
         }
     }
@@ -450,6 +451,7 @@ private fun HomeScreen(
         } else {
             SubscriptionLine(state.info, onRenew = { onOpenUrl(AmeliaConfig.botUrl(BotScreen.PAY)) })
         }
+        BootPermissionLine(state)
         if (state.showBatteryCard) {
             Spacer(Modifier.height(10.dp))
             BatteryCard(
@@ -1006,8 +1008,12 @@ private fun UpdateActions(state: AmeliaUiState, updates: UpdateCallbacks) {
         state.installing -> Button(onClick = {}, enabled = false, colors = colors) {
             Text(stringResource(R.string.amelia_update_installing))
         }
-        apk != null -> Button(onClick = { updates.onInstall(apk) }, colors = colors) {
-            Text(stringResource(R.string.amelia_update_install))
+        // 1.5.4: what Android will ask, so nobody taps "Отмена" out of fear (also after a cancel)
+        apk != null -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(stringResource(R.string.amelia_update_install_hint), color = Brand.Muted, style = MaterialTheme.typography.bodySmall)
+            Button(onClick = { updates.onInstall(apk) }, colors = colors) {
+                Text(stringResource(R.string.amelia_update_install))
+            }
         }
         else -> Button(onClick = updates.onDownload, colors = colors) {
             // on mobile data people see how much it costs before downloading
@@ -1136,6 +1142,7 @@ private fun SettingsScreen(
 
         SettingsSubscriptionSection(state, settings)
         SettingsAppsSection(state, onOpenApps)
+        SettingsBootSection(state, extra)
         SettingsBatterySection(state, extra)
         SettingsAutoSwitchSection(state, extra, onOpenJournal)
         SettingsUpdateSection(state, updates, onAbout)

@@ -51,6 +51,8 @@ class AmeliaReportTest {
             setOf(
                 "key", "ts", "app", "code", "xray", "hy2", "android", "device", "tv", "net", "op", "path", "active",
                 "bypass_ru", "comment", "servers", "check_ms", "events",
+                // 1.5.4
+                "vpn", "sub_active", "journal",
             ),
             json.keySet(),
         )

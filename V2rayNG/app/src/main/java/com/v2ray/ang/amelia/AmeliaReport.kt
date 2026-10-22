@@ -21,6 +21,9 @@ object AmeliaReport {
     /** All locations are checked in parallel; the core gives up on one after ~12 s. */
     const val TEST_TIMEOUT_MS = 30_000L
     const val MAX_COMMENT = 500
+    /** 1.5.4: journal lines in the report, each cut to [MAX_JOURNAL_LINE] characters. */
+    const val MAX_JOURNAL = 20
+    const val MAX_JOURNAL_LINE = 160
     /** A location without a result: the app stopped waiting for it after 5 s. */
     const val NO_RESULT_ERROR = AmeliaCheck.TIMEOUT_ERROR
 
@@ -58,6 +61,12 @@ object AmeliaReport {
         @SerializedName("check_ms") val checkMs: Long? = null,
         /** 1.2.0: the last automatic switches (AmeliaEvents), oldest first. */
         val events: List<AmeliaEvents.Event> = emptyList(),
+        /** 1.5.4: the VPN was on when the report was sent. */
+        val vpn: Boolean? = null,
+        /** 1.5.4: the subscription is valid (no end date or the end is ahead). */
+        @SerializedName("sub_active") val subActive: Boolean? = null,
+        /** 1.5.4: the last [MAX_JOURNAL] lines of "Журнал" (switches, failures, no internet), oldest first. */
+        val journal: List<String> = emptyList(),
     )
 
     // ---- pure logic (unit-tested) ---------------------------------------------------------
@@ -128,11 +137,18 @@ object AmeliaReport {
         appendLine("Сеть: ${body.net}${if (body.op.isNotBlank()) ", " + body.op else ""}")
         body.active?.let { appendLine("Локация: $it") }
         appendLine("Приложения мимо VPN: ${if (body.bypassRu) "да" else "нет"}")
+        body.vpn?.let { appendLine("VPN включён: ${if (it) "да" else "нет"}") }
+        body.subActive?.let { appendLine("Подписка действует: ${if (it) "да" else "нет"}") }
         if (body.comment.isNotBlank()) appendLine("Что случилось: ${body.comment}")
         appendLine()
         body.servers.forEach { s ->
             val result = if (s.ok) "${s.ms} мс" else "${s.stage}: ${s.err.orEmpty()}"
             appendLine("${s.name} (${s.host}:${s.port ?: "?"}) — $result")
+        }
+        if (body.journal.isNotEmpty()) {
+            appendLine()
+            appendLine("Журнал:")
+            body.journal.forEach { appendLine(it) }
         }
     }.trimEnd()
 
@@ -149,6 +165,10 @@ object AmeliaReport {
         context.getSystemService(UiModeManager::class.java)?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION ||
             context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
 
+    /** Pure: "22.10.2026 14:05 Нет интернета", the last [MAX_JOURNAL], oldest first, each cut. */
+    fun journalLines(entries: List<AmeliaJournal.Entry>, format: (Long) -> String): List<String> =
+        entries.takeLast(MAX_JOURNAL).map { "${format(it.ts)} ${it.text}".take(MAX_JOURNAL_LINE) }
+
     fun body(
         context: Context,
         key: String,
@@ -158,6 +178,7 @@ object AmeliaReport {
         net: AmeliaNetwork.Info,
         path: String,
         checkMs: Long? = null,
+        vpn: Boolean? = null,
     ) = Body(
         key = key,
         ts = System.currentTimeMillis() / 1000,
@@ -177,6 +198,9 @@ object AmeliaReport {
         servers = servers,
         checkMs = checkMs,
         events = AmeliaEvents.list(),
+        vpn = vpn,
+        subActive = AmeliaPolicy.subscriptionActive(AmeliaManager.getSubInfo(), System.currentTimeMillis()),
+        journal = journalLines(AmeliaJournal.list(), AmeliaFormat::dateTime),
     )
 
     /** Blocking. Sends the report; the report id on success, null when no server took it. */
@@ -187,10 +211,11 @@ object AmeliaReport {
         active: String?,
         comment: String,
         checkMs: Long? = null,
+        vpn: Boolean? = null,
     ): String? {
         val net = AmeliaNetwork.info(context)
         val answer = AmeliaNetwork.post(context, PATH) { path ->
-            toJson(body(context, key, servers, active, comment, net, path, checkMs))
+            toJson(body(context, key, servers, active, comment, net, path, checkMs, vpn))
         } ?: return null
         return parseAnswer(answer.first)
     }

@@ -1,18 +1,26 @@
 package com.v2ray.ang.service
 
+import android.annotation.SuppressLint
+import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.drawable.Icon
+import android.os.Build
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import androidx.core.content.ContextCompat
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
+import com.v2ray.ang.amelia.AmeliaActivity
+import com.v2ray.ang.amelia.AmeliaBoot
+import com.v2ray.ang.amelia.AmeliaTile
+import com.v2ray.ang.amelia.AmeliaUpdater
 import com.v2ray.ang.core.CoreServiceManager
 import com.v2ray.ang.core.LauncherManager
 import com.v2ray.ang.handler.AppLocaleManager
+import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.helper.MessageHelper
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
@@ -79,16 +87,51 @@ class QSTileService : TileService() {
      */
     override fun onClick() {
         super.onClick()
-        when (qsTile.state) {
-            Tile.STATE_INACTIVE -> {
-                LauncherManager.startServiceFromToggle(this)
+        // Amelia.Net 1.5.4: without VPN permission the service would stop itself silently;
+        // the app asks for it instead (also with no location or a required update)
+        val action = AmeliaTile.onTap(
+            running = qsTile.state == Tile.STATE_ACTIVE,
+            vpnPermission = AmeliaBoot.hasVpnPermission(this),
+            hasLocation = !MmkvManager.getSelectServer().isNullOrEmpty(),
+            updateRequired = AmeliaUpdater.isRequired(AmeliaUpdater.cached()),
+        )
+        when (action) {
+            AmeliaTile.Action.STOP -> LauncherManager.stopService(this)
+            AmeliaTile.Action.START -> {
+                setConnecting()
+                if (!LauncherManager.startServiceFromToggle(this)) setState(Tile.STATE_INACTIVE)
             }
-
-            Tile.STATE_ACTIVE -> {
-                LauncherManager.stopService(this)
-            }
+            AmeliaTile.Action.OPEN_APP -> openApp()
         }
     }
+
+    /** "Подключение…" until the service says it started or failed. */
+    private fun setConnecting() {
+        val tile = qsTile ?: return
+        tile.state = Tile.STATE_INACTIVE
+        tile.label = getString(R.string.amelia_tile_connecting)
+        tile.updateTile()
+    }
+
+    private fun openApp() {
+        val intent = Intent(this, AmeliaActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startActivityAndCollapse(
+                PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT),
+            )
+        } else {
+            startActivityAndCollapseLegacy(intent)
+        }
+    }
+
+    /**
+     * startActivityAndCollapse(Intent) is deprecated since API 34, which added the
+     * PendingIntent overload. Remove when minSdk reaches 34.
+     */
+    // called only below API 34 (openApp checks), where the Intent overload is the only one
+    @Suppress("DEPRECATION")
+    @SuppressLint("StartActivityAndCollapseDeprecated")
+    private fun startActivityAndCollapseLegacy(intent: Intent) = startActivityAndCollapse(intent)
 
     private var mMsgReceive: BroadcastReceiver? = null
 

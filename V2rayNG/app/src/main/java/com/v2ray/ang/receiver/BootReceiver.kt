@@ -3,60 +3,35 @@ package com.v2ray.ang.receiver
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.os.UserManager
 import com.v2ray.ang.AppConfig
-import com.v2ray.ang.core.LauncherManager
-import com.v2ray.ang.handler.MmkvManager
-import com.v2ray.ang.handler.SubscriptionUpdater
+import com.v2ray.ang.amelia.AmeliaBoot
 import com.v2ray.ang.util.LogUtil
+import kotlin.concurrent.thread
 
+/**
+ * Amelia.Net 1.5.4: after the phone starts, the VPN comes up when the person turned on
+ * "Включать VPN при запуске телефона" (AmeliaBoot decides). Upstream's start on
+ * MY_PACKAGE_REPLACED is gone: after an update AmeliaInstaller brings the VPN back only if it
+ * was on.
+ */
 class BootReceiver : BroadcastReceiver() {
-    /**
-     * This method is called when the BroadcastReceiver is receiving an Intent broadcast.
-     * It handles BOOT_COMPLETED, LOCKED_BOOT_COMPLETED, and MY_PACKAGE_REPLACED.
-     * If the conditions are met, it starts the V2Ray service.
-     *
-     * @param context The Context in which the receiver is running.
-     * @param intent The Intent being received.
-     */
+
     override fun onReceive(context: Context?, intent: Intent?) {
         val action = intent?.action ?: return
         if (context == null) return
-
         LogUtil.i(AppConfig.TAG, "BootReceiver received: $action")
-
-        when (action) {
-            Intent.ACTION_BOOT_COMPLETED,
-            Intent.ACTION_MY_PACKAGE_REPLACED -> {
-                // Continue
-            }
-
-            Intent.ACTION_LOCKED_BOOT_COMPLETED -> {
-                val userManager = context.getSystemService(Context.USER_SERVICE) as? UserManager
-                if (userManager != null && !userManager.isUserUnlocked) {
-                    LogUtil.w(AppConfig.TAG, "BootReceiver: User is locked, skipping auto start")
-                    return
-                }
-            }
-
-            else -> {
-                LogUtil.w(AppConfig.TAG, "BootReceiver: Unhandled action: $action")
-                return
+        if (action !in AmeliaBoot.BOOT_ACTIONS) return
+        val pending = goAsync()
+        val app = context.applicationContext
+        // disk reads off the main thread; the boot exemption for starting the service still holds
+        thread(name = "amelia-boot") {
+            try {
+                AmeliaBoot.onBoot(app, action)
+            } catch (e: Exception) {
+                LogUtil.e(AppConfig.TAG, "BootReceiver: start on boot failed", e)
+            } finally {
+                pending.finish()
             }
         }
-
-        if (!MmkvManager.decodeStartOnBoot()) {
-            LogUtil.i(AppConfig.TAG, "BootReceiver: Auto-start on boot is disabled")
-            return
-        }
-
-        if (MmkvManager.getSelectServer().isNullOrEmpty()) {
-            LogUtil.w(AppConfig.TAG, "BootReceiver: No server selected")
-            return
-        }
-
-        LogUtil.i(AppConfig.TAG, "BootReceiver: Starting V2Ray service")
-        LauncherManager.startService(context)
-        SubscriptionUpdater.sync(context)
     }
 }

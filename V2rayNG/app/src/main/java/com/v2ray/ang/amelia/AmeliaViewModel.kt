@@ -115,6 +115,11 @@ data class AmeliaUiState(
     val installing: Boolean = false,
     /** 1.5.3: Android waits for the person to confirm; "Установить" opens the confirmation again. */
     val awaitingConfirm: Boolean = false,
+    // ---- 1.5.4 ----
+    /** "Включать VPN при запуске телефона". */
+    val bootEnabled: Boolean = false,
+    /** Android already lets the app make a VPN (VpnService.prepare == null). */
+    val vpnPermission: Boolean = true,
     // ---- 1.3.0 ----
     val crashEnabled: Boolean = true,
     /** The app is not under battery optimisation (may run in the background). */
@@ -348,13 +353,14 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             val app = getApplication<Application>()
             val key = AmeliaManager.getKey().orEmpty()
             val active = _state.value.selectedName
-            val id = withContext(Dispatchers.IO) { AmeliaReport.send(app, key, r.servers, active, comment, r.checkMs) }
+            val vpn = _state.value.isRunning
+            val id = withContext(Dispatchers.IO) { AmeliaReport.send(app, key, r.servers, active, comment, r.checkMs, vpn) }
             if (id != null) {
                 _state.update { it.copy(report = it.report?.copy(phase = ReportPhase.SENT, reportId = id)) }
             } else {
                 val text = withContext(Dispatchers.IO) {
                     AmeliaReport.plainText(
-                        AmeliaReport.body(app, key, r.servers, active, comment, AmeliaNetwork.info(app), AmeliaNetwork.PATH_DIRECT, r.checkMs),
+                        AmeliaReport.body(app, key, r.servers, active, comment, AmeliaNetwork.info(app), AmeliaNetwork.PATH_DIRECT, r.checkMs, vpn),
                     )
                 }
                 _state.update { it.copy(report = it.report?.copy(phase = ReportPhase.FAILED, fallbackText = text)) }
@@ -470,8 +476,9 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         // 1.3.1: back on the screen after more than an hour: ask the server again
         if (System.currentTimeMillis() - AmeliaUpdater.lastAttempt() > AmeliaUpdater.RESUME_CHECK_MS) checkUpdate(manual = false)
         viewModelScope.launch {
-            val ok = withContext(Dispatchers.IO) { AmeliaBattery.isAllowed(getApplication()) }
-            _state.update { it.copy(batteryOk = ok, showBatteryCard = it.showBatteryCard && !ok) }
+            val app = getApplication<Application>()
+            val (ok, vpn) = withContext(Dispatchers.IO) { AmeliaBattery.isAllowed(app) to AmeliaBoot.hasVpnPermission(app) }
+            _state.update { it.copy(batteryOk = ok, showBatteryCard = it.showBatteryCard && !ok, vpnPermission = vpn) }
         }
         val now = System.currentTimeMillis()
         if (!s.hasKey || s.busy || now - lastResumeRefresh < 60_000L) return
@@ -563,6 +570,12 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
     // ---------------------------------------------------------------------------------------
     // 1.3.0: crash reports, background work, speed test
     // ---------------------------------------------------------------------------------------
+
+    /** 1.5.4: "Включать VPN при запуске телефона". */
+    fun setStartOnBoot(enabled: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) { AmeliaBoot.setEnabled(enabled) }
+        _state.update { it.copy(bootEnabled = enabled) }
+    }
 
     fun setCrashEnabled(enabled: Boolean) {
         viewModelScope.launch(Dispatchers.IO) { AmeliaCrash.setEnabled(enabled) }
@@ -897,7 +910,8 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Called by the activity right before it starts the VPN. */
     fun onUserConnect() {
-        _state.update { it.copy(phase = ConnPhase.STARTING, pingMs = null, startFailed = false) }
+        // the person passed Android's VPN question (the activity calls this after prepare)
+        _state.update { it.copy(phase = ConnPhase.STARTING, pingMs = null, startFailed = false, vpnPermission = true) }
     }
 
     /** Called by the activity right before it stops the VPN. */
@@ -1002,6 +1016,8 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 crashEnabled = AmeliaCrash.isEnabled(),
                 autoMode = AmeliaPolicy.mode(),
                 batteryOk = AmeliaBattery.isAllowed(getApplication()),
+                bootEnabled = AmeliaBoot.isEnabled(),
+                vpnPermission = AmeliaBoot.hasVpnPermission(getApplication()),
                 speeds = AmeliaSpeed.byGuid(),
                 announceDismissed = AmeliaAnnounce.dismissed(),
             ).also { AmeliaExpiry.check(getApplication(), it.info) }
@@ -1020,6 +1036,8 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 bypassCount = snapshot.bypassCount,
                 probeEnabled = snapshot.probeEnabled,
                 crashEnabled = snapshot.crashEnabled,
+                bootEnabled = snapshot.bootEnabled,
+                vpnPermission = snapshot.vpnPermission,
                 autoMode = snapshot.autoMode,
                 batteryOk = snapshot.batteryOk,
                 speeds = snapshot.speeds,

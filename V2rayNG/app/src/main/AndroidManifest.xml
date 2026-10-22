@@ -219,9 +219,12 @@
             android:exported="true"
             android:label="BootReceiver">
             <intent-filter>
+                <!-- Amelia.Net 1.5.4: "Включать VPN при запуске телефона" (AmeliaBoot). No
+                     LOCKED_BOOT_COMPLETED (the app is not direct-boot aware, the key is in
+                     credential storage) and no MY_PACKAGE_REPLACED (AmeliaInstaller handles it). -->
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
-                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
             </intent-filter>
         </receiver>
 

@@ -177,7 +177,8 @@
     <string name="amelia_report_comment">Что случилось? (необязательно)</string>
     <string name="amelia_report_send">Отправить в поддержку</string>
     <string name="amelia_report_sending">Отправляю…</string>
-    <string name="amelia_report_sent">Отчёт №%1$s отправлен, ответ придёт в боте @amelianet_bot</string>
+    <string name="amelia_report_sent">Отправлено (отчёт №%1$s). Если нужно, напишите в поддержку в боте</string>
+    <string name="amelia_report_bot">Открыть бота</string>
     <string name="amelia_report_failed">Не получилось отправить отчёт. Мы скопировали его — вставьте в чат с ботом.</string>
     <string name="amelia_report_open_bot">Открыть @amelianet_bot</string>
     <string name="amelia_report_retry">Попробовать ещё раз</string>
@@ -278,4 +279,12 @@
     <string name="amelia_apps_preset_banks">Банки</string>
     <string name="amelia_apps_preset_gov">Госуслуги</string>
     <string name="amelia_apps_preset_shops">Маркетплейсы</string>
+
+    <!-- 1.5.4 -->
+    <string name="amelia_update_install_hint">Телефон спросит «Обновить приложение?» — нажмите «Установить». Это наше обновление</string>
+    <string name="amelia_tile_connecting">Подключение…</string>
+    <string name="amelia_boot_title">Включать VPN при запуске телефона</string>
+    <string name="amelia_boot_need_permission">Чтобы VPN включался сам, один раз нажмите «Подключить»</string>
+    <string name="amelia_boot_always_on">Надёжнее всего: Настройки Android → VPN → Amelia → Постоянная VPN</string>
+    <string name="amelia_boot_open_vpn_settings">Открыть настройки VPN</string>
 </resources>
