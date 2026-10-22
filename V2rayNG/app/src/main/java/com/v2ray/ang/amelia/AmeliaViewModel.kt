@@ -115,6 +115,8 @@ data class AmeliaUiState(
     val installing: Boolean = false,
     /** 1.5.3: Android waits for the person to confirm; "Установить" opens the confirmation again. */
     val awaitingConfirm: Boolean = false,
+    /** 1.5.5: when the person last tapped "Отмена" in the system install window (0: never). */
+    val installCancelledAt: Long = 0L,
     // ---- 1.5.4 ----
     /** "Включать VPN при запуске телефона". */
     val bootEnabled: Boolean = false,
@@ -659,12 +661,14 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             val (code, phase) = withContext(Dispatchers.IO) {
                 AmeliaInstaller.blockedCode() to AmeliaInstaller.check(getApplication())
             }
+            val cancelledAt = withContext(Dispatchers.IO) { AmeliaInstaller.cancelledAt() }
             val busy = phase == AmeliaInstaller.Phase.INSTALLING
             _state.update {
                 it.copy(
                     installBlocked = AmeliaInstaller.showBlocked(code, BuildConfig.VERSION_CODE, it.update?.versionCode, busy),
                     installing = busy,
                     awaitingConfirm = phase == AmeliaInstaller.Phase.AWAITING_CONFIRM,
+                    installCancelledAt = cancelledAt,
                 )
             }
             if (busy) watchInstall()

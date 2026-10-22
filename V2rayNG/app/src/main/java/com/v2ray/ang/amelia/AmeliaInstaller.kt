@@ -50,6 +50,9 @@ object AmeliaInstaller {
     private const val PREF_STARTED_AT = "amelia_install_started_at"
     /** 1.5.3: sessions this app abandoned; their late statuses are ignored. */
     private const val PREF_ABANDONED = "amelia_install_abandoned"
+    /** 1.5.5: when the person last cancelled the system install window / when update_cancel went out. */
+    private const val PREF_CANCELLED_AT = "amelia_install_cancelled_at"
+    private const val PREF_CANCEL_REPORTED_AT = "amelia_install_cancel_reported_at"
 
     /** "Устанавливается…" longer than this without a final status: give up (1.5.3). */
     const val STUCK_MS = 3 * 60 * 1000L
@@ -118,8 +121,10 @@ object AmeliaInstaller {
     enum class Failure {
         /** "Duplicate package … in pending install requests": not a failure, no screen, no report. */
         DUPLICATE,
-        /** The phone or the person refused: help screen, system installer, "update_blocked". */
+        /** The phone refused, or installing apps is not allowed for us: help screen, system installer, "update_blocked". */
         REFUSED,
+        /** 1.5.5: the person tapped "Отмена" in Android's "Обновить приложение?": not a refusal. */
+        CANCELLED,
         /** Anything else (storage, broken file …): the system installer, no help screen. */
         OTHER,
     }
@@ -128,15 +133,32 @@ object AmeliaInstaller {
      * Final failure statuses only. STATUS_PENDING_USER_ACTION never comes here: it is not a
      * failure, it shows the confirmation (1.5.3).
      */
-    fun classify(status: Int, message: String?): Failure {
+    fun classify(status: Int, message: String?, canInstallApps: Boolean = true): Failure {
         val m = message.orEmpty()
         return when {
             m.contains("INSTALL_FAILED_DUPLICATE_PACKAGE") || m.contains("in pending install requests", ignoreCase = true) -> Failure.DUPLICATE
-            status == PackageInstaller.STATUS_FAILURE_BLOCKED || status == PackageInstaller.STATUS_FAILURE_ABORTED ||
-                m.contains("INSTALL_FAILED_VERIFICATION_FAILURE") -> Failure.REFUSED
+            status == PackageInstaller.STATUS_FAILURE_BLOCKED || m.contains("INSTALL_FAILED_VERIFICATION_FAILURE") -> Failure.REFUSED
+            // 1.5.5: "Отмена" in "Обновить приложение?" and "Установка неизвестных приложений"
+            // denied both come as ABORTED "User rejected permissions"; the permission tells them apart
+            status == PackageInstaller.STATUS_FAILURE_ABORTED -> if (canInstallApps) Failure.CANCELLED else Failure.REFUSED
             else -> Failure.OTHER
         }
     }
+
+    /** 1.5.5: "update_cancel" (statistics only) at most once a day per device. */
+    const val CANCEL_REPORT_MS = 24 * 60 * 60 * 1000L
+
+    fun shouldReportCancel(lastReportedAt: Long, now: Long): Boolean =
+        lastReportedAt <= 0 || now - lastReportedAt !in 0 until CANCEL_REPORT_MS
+
+    /**
+     * 1.5.5: after a cancel the update window does not pop up by itself for a day (the card
+     * with "Установить" stays); a required update is always offered.
+     */
+    fun offerUpdateDialog(cancelledAt: Long, now: Long, required: Boolean): Boolean =
+        required || cancelledAt <= 0 || now - cancelledAt !in 0 until CANCEL_REPORT_MS
+
+    fun cancelledAt(): Long = MmkvManager.decodeSettingsString(PREF_CANCELLED_AT)?.toLongOrNull() ?: 0L
 
     /** What a failed session leads to. */
     data class Reaction(val helpScreen: Boolean, val report: String?, val systemInstaller: Boolean)
@@ -144,6 +166,8 @@ object AmeliaInstaller {
     fun reaction(failure: Failure): Reaction = when (failure) {
         Failure.DUPLICATE -> Reaction(helpScreen = false, report = null, systemInstaller = false)
         Failure.REFUSED -> Reaction(helpScreen = true, report = "update_blocked", systemInstaller = true)
+        // the card comes back with "Установить"; nothing opens by itself
+        Failure.CANCELLED -> Reaction(helpScreen = false, report = "update_cancel", systemInstaller = false)
         Failure.OTHER -> Reaction(helpScreen = false, report = "update", systemInstaller = true)
     }
 
@@ -396,14 +420,18 @@ object AmeliaInstaller {
                 else -> {
                     val message = "install failed, status=$status $text"
                     if (owned?.id == sessionId) clearOwned(context)
-                    val failure = classify(status, text)
+                    val failure = classify(status, text, AmeliaUpdater.canInstall(context))
                     if (failure == Failure.DUPLICATE) {
                         // 1.5.1: another install of the package is pending; no screen, no report
                         LogUtil.i(AppConfig.TAG, "Amelia: duplicate install session ignored ($message)")
                         return
                     }
                     MmkvManager.encodeSettings(PREF_RESTART_VPN, false)
-                    LogUtil.w(AppConfig.TAG, "Amelia: update $message")
+                    LogUtil.w(AppConfig.TAG, "Amelia: update $message ($failure)")
+                    if (failure == Failure.CANCELLED) {
+                        onCancelled(message)
+                        return
+                    }
                     onSessionFailed(context, message, failure)
                 }
             }
@@ -411,11 +439,26 @@ object AmeliaInstaller {
 
         /**
          * 1.4.0: the session install was refused (Samsung Auto Blocker, Play Protect: BLOCKED,
-         * INSTALL_FAILED_VERIFICATION_FAILURE, the person said no: ABORTED). Right away the
+         * INSTALL_FAILED_VERIFICATION_FAILURE, ABORTED without "install unknown apps"). Right away the
          * classic system installer screen; the app also shows how to let the install through.
          * Reported to /app/crash once per version as "update_blocked". 1.5.1: other failures
          * only get the system installer screen and an "update" report, no help screen.
          */
+        /**
+         * 1.5.5: "Отмена" in "Обновить приложение?". The card comes back with "Установить" (the
+         * session is gone, see check()); no help screen, no system installer, no update_blocked,
+         * and the update window does not pop up by itself for a day. A quiet "update_cancel"
+         * at most once a day.
+         */
+        private fun onCancelled(message: String) {
+            val now = System.currentTimeMillis()
+            MmkvManager.encodeSettings(PREF_CANCELLED_AT, now.toString())
+            val last = MmkvManager.decodeSettingsString(PREF_CANCEL_REPORTED_AT)?.toLongOrNull() ?: 0L
+            if (!shouldReportCancel(last, now)) return
+            MmkvManager.encodeSettings(PREF_CANCEL_REPORTED_AT, now.toString())
+            reaction(Failure.CANCELLED).report?.let { AmeliaCrash.nonFatal(it, null, message) }
+        }
+
         private fun onSessionFailed(context: Context, message: String, failure: Failure) {
             val code = MmkvManager.decodeSettingsString(PREF_CODE)?.toIntOrNull() ?: 0
             val r = reaction(failure)

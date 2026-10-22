@@ -50,7 +50,7 @@ class Amelia151Test {
     @Test
     fun updateBlockedOnlyForRealRefusals() {
         assertEquals(Failure.REFUSED, AmeliaInstaller.classify(PackageInstaller.STATUS_FAILURE_BLOCKED, ""))
-        assertEquals(Failure.REFUSED, AmeliaInstaller.classify(PackageInstaller.STATUS_FAILURE_ABORTED, "User rejected permissions"))
+        assertEquals(Failure.REFUSED, AmeliaInstaller.classify(PackageInstaller.STATUS_FAILURE_ABORTED, "User rejected permissions", canInstallApps = false))
         assertEquals(Failure.REFUSED, AmeliaInstaller.classify(PackageInstaller.STATUS_FAILURE, "INSTALL_FAILED_VERIFICATION_FAILURE: Auto Blocker"))
         assertEquals("update_blocked", AmeliaInstaller.reaction(Failure.REFUSED).report)
         assertTrue(AmeliaInstaller.reaction(Failure.REFUSED).helpScreen)

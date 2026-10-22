@@ -223,7 +223,10 @@ fun AmeliaApp(
         // Offered once per version per app start; a required update cannot be put off.
         var postponed by rememberSaveable { mutableStateOf(0) }
         val update = state.update
-        if (update != null && (state.updateRequired || postponed != update.versionCode)) {
+        // 1.5.5: after "Отмена" in the system window the window does not pop up by itself for a day
+        if (update != null && (state.updateRequired || postponed != update.versionCode) &&
+            AmeliaInstaller.offerUpdateDialog(state.installCancelledAt, System.currentTimeMillis(), state.updateRequired)
+        ) {
             UpdateDialog(
                 state, updates,
                 onLater = if (state.updateRequired) null else ({ postponed = update.versionCode }),

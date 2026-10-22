@@ -16,8 +16,8 @@ android {
         minSdk = 24
         targetSdk = 37
         // Bump both on every release (see RELEASING.md); the in-app updater compares versionCode.
-        versionCode = 18
-        versionName = "1.5.4"
+        versionCode = 19
+        versionName = "1.5.5"
         // Oldest versionCode that still works with the servers: goes to version.json as
         // minVersionCode. Older apps must update before they can connect. Raise it only when
         // a server-side change breaks old versions.

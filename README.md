@@ -137,7 +137,7 @@ keytool -genkeypair -v -keystore amelia-release.jks -alias amelia -keyalg RSA -k
 Серверы из `bad` уходят в конец очереди автовыбора, если собственная проверка не показала, что они работают.
 
 **POST /app/crash** (с 1.3.0) — отчёты о сбоях, переключатель «Отправлять отчёты о сбоях» (включён по умолчанию). Падения
-во всех процессах и нефатальные ошибки (`where`: `core_start`, `vpn_service`, `update`, `update_blocked`, с 1.5.3 `update_stuck`, с 1.5.4 `boot_start`) сохраняются в файл и
+во всех процессах и нефатальные ошибки (`where`: `core_start`, `vpn_service`, `update`, `update_blocked`, с 1.5.3 `update_stuck`, с 1.5.4 `boot_start`, с 1.5.5 `update_cancel` — не чаще раза в сутки) сохраняются в файл и
 уходят при следующем запуске, мимо туннеля, не больше 5 в час:
 
 ```json
