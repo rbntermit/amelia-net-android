@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 1.5.8: home-screen widget, light theme (dark one in values-night). Brand palette. -->
+<resources>
+    <color name="amelia_widget_bg">#F2F4FF</color>
+    <color name="amelia_widget_border">#1F483ED5</color>
+    <color name="amelia_widget_text">#0B1336</color>
+    <color name="amelia_widget_muted">#5A6390</color>
+    <color name="amelia_widget_green">#1FA971</color>
+    <color name="amelia_widget_amber">#C77C0E</color>
+    <color name="amelia_widget_sky">#59ABFF</color>
+    <color name="amelia_widget_indigo">#483ED5</color>
+    <color name="amelia_widget_power_on">#2BB673</color>
+    <color name="amelia_widget_power_connecting">#F0A535</color>
+</resources>

@@ -40,6 +40,19 @@ object AmeliaSite {
     fun renewUrl(telegramInstalled: Boolean, base: String, key: String?): String =
         if (telegramInstalled || key == null) AmeliaConfig.botUrl(AmeliaConfig.BotScreen.PAY) else buyUrl(base, key)
 
+    /** 1.5.8: tariffs and payment for someone without a key yet; the key is shown on the page after paying. */
+    fun shopUrl(base: String): String = "$base/shop"
+
+    /** 1.5.8: what "Тарифы и оплата" on the key screen does. */
+    enum class KeyPay {
+        /** Telegram is installed: "Купить в Telegram-боте" or "Купить на сайте". */
+        ASK,
+        /** No Telegram: the site's shop straight away (the bot cannot be reached). */
+        SITE,
+    }
+
+    fun keyPay(telegramInstalled: Boolean): KeyPay = if (telegramInstalled) KeyPay.ASK else KeyPay.SITE
+
     /** Pure: the main address when it answered, otherwise the spare one. */
     fun pickBase(mainAnswered: Boolean): String = if (mainAnswered) BASES[0] else BASES[1]
 

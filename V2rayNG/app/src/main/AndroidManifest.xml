@@ -120,6 +120,15 @@
 
         <!-- Amelia.Net: upstream config/import/settings screens are removed from this fork.
              The shortcut activities below are used by the home-screen widget and tile. -->
+        <!-- 1.5.8: the widget's button; invisible, own empty affinity so the app's task stays put -->
+        <activity
+            android:name=".amelia.AmeliaWidgetTapActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:process=":daemon"
+            android:taskAffinity=""
+            android:theme="@style/AppThemeDayNight.NoActionBar.Translucent" />
         <activity
             android:name=".ui.shortcut.ScSwitchActivity"
             android:excludeFromRecents="true"
@@ -210,7 +219,6 @@
                 android:resource="@xml/app_widget_provider" />
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-                <action android:name="${applicationId}.action.widget.click" />
                 <action android:name="${applicationId}.action.activity" />
             </intent-filter>
         </receiver>

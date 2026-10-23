@@ -48,7 +48,11 @@ object AmeliaManager {
         }.toMap()
     }
 
-    fun select(guid: String) = MmkvManager.setSelectServer(guid)
+    fun select(guid: String) {
+        MmkvManager.setSelectServer(guid)
+        // 1.5.8: the widget shows the chosen location also while the VPN is off
+        AmeliaWidget.requestUpdate(AngApplication.application)
+    }
 
     /** Checks the key against the server and, on success, makes it the active one. */
     fun activate(rawKey: String?): Outcome {
@@ -93,6 +97,7 @@ object AmeliaManager {
         MmkvManager.encodeSettings(AmeliaConfig.PREF_SUB_INFO, "")
         MmkvManager.encodeSettings(PREF_SUB_SOURCE, "")
         AmeliaRouteProfile.clear()
+        AmeliaWidget.requestUpdate(AngApplication.application)
     }
 
     private fun load(key: String, preferredBaseUrl: String?, saveKeyOnSuccess: Boolean): Outcome {
@@ -141,6 +146,8 @@ object AmeliaManager {
         }
         ensureSelection(previousName, info)
         SubscriptionUpdater.syncOne(subId = AmeliaConfig.SUBSCRIPTION_ID)
+        // 1.5.8: a renewal moves the end date ("Подписка до …", "Продлить" on the widget)
+        AmeliaWidget.requestUpdate(AngApplication.application)
         return Outcome.OK
     }
 

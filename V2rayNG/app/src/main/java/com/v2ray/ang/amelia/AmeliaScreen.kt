@@ -78,6 +78,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -94,7 +95,9 @@ import androidx.compose.ui.unit.sp
 import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.amelia.AmeliaConfig.BotScreen
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 // ---- Brand palette, taken from the logo ------------------------------------------------------
 
@@ -185,7 +188,7 @@ fun AmeliaApp(
                         onCopySupport = extra.onCopySupport, onCheckUpdate = updates.onCheck,
                     )
                 }
-                !state.hasKey -> KeyScreen(state.busy, onSubmitKey, onOpenUrl, onAbout = openAbout)
+                !state.hasKey -> KeyScreen(state.busy, onSubmitKey, onOpenUrl, onShop = extra.onShop, onAbout = openAbout)
                 showJournal -> {
                     BackHandler { showJournal = false }
                     JournalScreen(state.journal, onBack = { showJournal = false }, onCopy = extra.onCopyJournal)
@@ -313,9 +316,13 @@ private fun KeyScreen(
     busy: Boolean,
     onSubmit: (String) -> Unit,
     onOpenUrl: (String) -> Unit,
+    onShop: () -> Unit,
     onAbout: () -> Unit,
 ) {
     var key by rememberSaveable { mutableStateOf("") }
+    var payChoice by rememberSaveable { mutableStateOf(false) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -369,13 +376,45 @@ private fun KeyScreen(
         TextButton(onClick = { onOpenUrl(AmeliaConfig.BOT_URL) }) {
             Text(stringResource(R.string.amelia_open_bot), color = Brand.Sky)
         }
-        TextButton(onClick = { onOpenUrl(AmeliaConfig.botUrl(BotScreen.PAY)) }) {
+        // 1.5.8: without Telegram the bot cannot be reached, so the site's shop; with it, a choice
+        TextButton(onClick = {
+            scope.launch {
+                val telegram = withContext(Dispatchers.IO) { AmeliaPackages.telegram(context.packageManager) != null }
+                when (AmeliaSite.keyPay(telegram)) {
+                    AmeliaSite.KeyPay.ASK -> payChoice = true
+                    AmeliaSite.KeyPay.SITE -> onShop()
+                }
+            }
+        }) {
             Text(stringResource(R.string.amelia_act_pay), color = Brand.Muted)
         }
+        Text(
+            stringResource(R.string.amelia_key_pay_hint),
+            color = Brand.Muted,
+            style = MaterialTheme.typography.bodySmall,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 16.dp),
+        )
         Spacer(Modifier.height(24.dp))
         TextButton(onClick = onAbout) {
             Text(stringResource(R.string.amelia_based_on), color = Brand.Muted, style = MaterialTheme.typography.bodySmall)
         }
+    }
+    if (payChoice) {
+        AlertDialog(
+            onDismissRequest = { payChoice = false },
+            title = { Text(stringResource(R.string.amelia_act_pay)) },
+            confirmButton = {
+                TextButton(onClick = { payChoice = false; onOpenUrl(AmeliaConfig.botUrl(BotScreen.PAY)) }) {
+                    Text(stringResource(R.string.amelia_key_pay_bot))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { payChoice = false; onShop() }) {
+                    Text(stringResource(R.string.amelia_key_pay_site))
+                }
+            },
+        )
     }
 }
 

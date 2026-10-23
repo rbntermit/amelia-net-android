@@ -63,6 +63,7 @@ class AmeliaActivity : HelperBaseComponentActivity() {
         if (savedInstanceState == null) {
             handleDeepLink(intent)
             handleInstallRequest(intent)
+            handleRenewRequest(intent)
         }
     }
 
@@ -71,6 +72,14 @@ class AmeliaActivity : HelperBaseComponentActivity() {
         setIntent(intent)
         handleDeepLink(intent)
         handleInstallRequest(intent)
+        handleRenewRequest(intent)
+    }
+
+    /** 1.5.8: "Продлить" on the widget. */
+    private fun handleRenewRequest(intent: Intent?) {
+        if (intent?.getBooleanExtra(AmeliaWidget.EXTRA_RENEW, false) != true) return
+        intent.removeExtra(AmeliaWidget.EXTRA_RENEW)
+        openRenew()
     }
 
     /** From the notification "Обновление … готово — установить": one tap installs. */
@@ -135,6 +144,7 @@ class AmeliaActivity : HelperBaseComponentActivity() {
                 onPayOnSite = { openSite { base, key -> AmeliaSite.buyUrl(base, key) } },
                 onCabinet = { openSite { base, key -> AmeliaSite.cabinetUrl(base, key) } },
                 onGift = { openSite { base, _ -> AmeliaSite.giftUrl(base) } },
+                onShop = ::openShop,
                 onMeasureSpeed = viewModel::measureSpeed,
                 onAllowBackground = ::openBatterySettings,
                 onBatteryCardDone = viewModel::batteryCardDone,
@@ -221,6 +231,13 @@ class AmeliaActivity : HelperBaseComponentActivity() {
         lifecycleScope.launch {
             val base = AmeliaSite.base()
             Utils.openUri(this@AmeliaActivity, url(base, key))
+        }
+    }
+
+    /** 1.5.8: the site's shop (no key yet), main address checked first as in [openSite]. */
+    private fun openShop() {
+        lifecycleScope.launch {
+            Utils.openUri(this@AmeliaActivity, AmeliaSite.shopUrl(AmeliaSite.base()))
         }
     }
 

@@ -555,20 +555,10 @@ object AmeliaDaemon {
 
     // ---- tile, notifications --------------------------------------------------------------
 
-    /** The quick settings tile shows the current location (1.4.0). */
+    /** The quick settings tile and the home-screen widget show the current location (1.4.0). */
     private fun refreshTile(context: Context) {
         runCatching { TileService.requestListeningState(context, ComponentName(context, QSTileService::class.java)) }
-        runCatching {
-            val manager = android.appwidget.AppWidgetManager.getInstance(context)
-            val ids = manager.getAppWidgetIds(ComponentName(context, com.v2ray.ang.receiver.WidgetProvider::class.java))
-            if (ids.isNotEmpty()) {
-                context.sendBroadcast(
-                    Intent(context, com.v2ray.ang.receiver.WidgetProvider::class.java)
-                        .setAction(android.appwidget.AppWidgetManager.ACTION_APPWIDGET_UPDATE)
-                        .putExtra(android.appwidget.AppWidgetManager.EXTRA_APPWIDGET_IDS, ids),
-                )
-            }
-        }
+        AmeliaWidget.requestUpdate(context)
     }
 
     /**

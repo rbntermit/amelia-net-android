@@ -1,6 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 1.5.8: 2x1 by default, stretches to 4x1. No periodic updates: the service's events redraw it. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
-    android:initialLayout="@layout/widget_switch"
-    android:minWidth="20dp"
-    android:minHeight="20dp"
-    android:widgetCategory="home_screen|keyguard" />
+    android:description="@string/amelia_widget_description"
+    android:initialLayout="@layout/widget_amelia"
+    android:maxResizeWidth="420dp"
+    android:minHeight="40dp"
+    android:minResizeWidth="110dp"
+    android:minWidth="110dp"
+    android:previewImage="@drawable/amelia_widget_preview"
+    android:previewLayout="@layout/widget_amelia"
+    android:resizeMode="horizontal"
+    android:targetCellHeight="1"
+    android:targetCellWidth="2"
+    android:updatePeriodMillis="0"
+    android:widgetCategory="home_screen" />

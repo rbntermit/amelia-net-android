@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 1.5.8: home-screen widget, dark theme: the app's own night-blue look. -->
+<resources>
+    <color name="amelia_widget_bg">#F00B1336</color>
+    <color name="amelia_widget_border">#26FFFFFF</color>
+    <color name="amelia_widget_text">#F2F4FF</color>
+    <color name="amelia_widget_muted">#A9B1D6</color>
+    <color name="amelia_widget_green">#3DDC97</color>
+    <color name="amelia_widget_amber">#FFB547</color>
+    <color name="amelia_widget_sky">#59ABFF</color>
+    <color name="amelia_widget_indigo">#483ED5</color>
+    <color name="amelia_widget_power_on">#2BB673</color>
+    <color name="amelia_widget_power_connecting">#F0A535</color>
+</resources>

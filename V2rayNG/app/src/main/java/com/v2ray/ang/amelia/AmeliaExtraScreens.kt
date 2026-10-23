@@ -106,6 +106,8 @@ class ExtraCallbacks(
     val onPayOnSite: () -> Unit,
     val onCabinet: () -> Unit,
     val onGift: () -> Unit,
+    /** 1.5.8: the site's shop for someone without a key ("Купить на сайте"). */
+    val onShop: () -> Unit,
 )
 
 // ---- shared pieces ---------------------------------------------------------------------------

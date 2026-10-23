@@ -293,4 +293,12 @@
     <string name="amelia_site_renew">💳 Продлить</string>
     <string name="amelia_site_pay">Оплатить на сайте, без Telegram</string>
     <string name="amelia_site_gift">🎁 Подарить подписку</string>
+    <!-- 1.5.8: "Тарифы и оплата" on the key screen -->
+    <string name="amelia_key_pay_bot">Купить в Telegram-боте</string>
+    <string name="amelia_key_pay_site">Купить на сайте</string>
+    <string name="amelia_key_pay_hint">После оплаты на сайте ключ будет на странице — скопируйте его сюда</string>
+    <!-- 1.5.8: home-screen widget -->
+    <string name="amelia_widget_description">Включайте VPN в одно касание</string>
+    <string name="amelia_widget_sub_until">Подписка до %1$s</string>
+    <string name="amelia_widget_connecting">Подключается…</string>
 </resources>

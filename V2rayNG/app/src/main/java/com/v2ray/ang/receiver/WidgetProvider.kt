@@ -1,101 +1,79 @@
 package com.v2ray.ang.receiver
 
-import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.widget.RemoteViews
+import android.os.Bundle
 import com.v2ray.ang.AppConfig
-import com.v2ray.ang.R
-import com.v2ray.ang.core.CoreServiceManager
-import com.v2ray.ang.core.LauncherManager
+import com.v2ray.ang.amelia.AmeliaConfig
+import com.v2ray.ang.amelia.AmeliaDaemon
+import com.v2ray.ang.amelia.AmeliaWidget
+import com.v2ray.ang.extension.serializable
+import com.v2ray.ang.util.LogUtil
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
+/**
+ * Amelia.Net 1.5.8: the home-screen widget (AmeliaWidget draws it). The class name is upstream's,
+ * so widgets placed by earlier versions get the new look on the next update. Runs in :daemon.
+ * Redraws on the service's state broadcasts only (updatePeriodMillis is 0).
+ */
 class WidgetProvider : AppWidgetProvider() {
-    /**
-     * This method is called every time the widget is updated.
-     * It updates the widget background based on the V2Ray service running state.
-     *
-     * @param context The Context in which the receiver is running.
-     * @param appWidgetManager The AppWidgetManager instance.
-     * @param appWidgetIds The appWidgetIds for which an update is needed.
-     */
+
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
         super.onUpdate(context, appWidgetManager, appWidgetIds)
-        updateWidgetBackground(context, appWidgetManager, appWidgetIds, CoreServiceManager.isRunning())
+        async { AmeliaWidget.draw(context, ids = appWidgetIds) }
     }
 
-    /**
-     * Updates the widget background based on whether the V2Ray service is running.
-     *
-     * @param context The Context in which the receiver is running.
-     * @param appWidgetManager The AppWidgetManager instance.
-     * @param appWidgetIds The appWidgetIds for which an update is needed.
-     * @param isRunning Boolean indicating if the V2Ray service is running.
-     */
-    private fun updateWidgetBackground(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray, isRunning: Boolean) {
-        val remoteViews = RemoteViews(context.packageName, R.layout.widget_switch)
-        val intent = Intent(context, WidgetProvider::class.java)
-        intent.action = AppConfig.BROADCAST_ACTION_WIDGET_CLICK
-        val pendingIntent = PendingIntent.getBroadcast(
-            context,
-            R.id.layout_switch,
-            intent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-        remoteViews.setOnClickPendingIntent(R.id.layout_switch, pendingIntent)
-        // Amelia.Net 1.4.0: the current location under the button while connected
-        remoteViews.setTextViewText(
-            R.id.widget_name,
-            CoreServiceManager.getRunningServerName().takeIf { isRunning && it.isNotBlank() } ?: context.getString(R.string.app_name),
-        )
-        if (isRunning) {
-            remoteViews.setInt(R.id.image_switch, "setImageResource", R.drawable.ic_stop_24dp)
-            remoteViews.setInt(R.id.layout_background, "setBackgroundResource", R.drawable.ic_rounded_corner_active)
-        } else {
-            remoteViews.setInt(R.id.image_switch, "setImageResource", R.drawable.ic_play_24dp)
-            remoteViews.setInt(R.id.layout_background, "setBackgroundResource", R.drawable.ic_rounded_corner_inactive)
-        }
-
-        for (appWidgetId in appWidgetIds) {
-            appWidgetManager.updateAppWidget(appWidgetId, remoteViews)
-        }
+    /** Stretched or shrunk (below Android 12 the layout is chosen by width here). */
+    override fun onAppWidgetOptionsChanged(context: Context, appWidgetManager: AppWidgetManager, appWidgetId: Int, newOptions: Bundle) {
+        super.onAppWidgetOptionsChanged(context, appWidgetManager, appWidgetId, newOptions)
+        async { AmeliaWidget.draw(context, ids = intArrayOf(appWidgetId)) }
     }
 
-    /**
-     * This method is called when the BroadcastReceiver is receiving an Intent broadcast.
-     * It handles widget click actions and updates the widget background based on the V2Ray service state.
-     *
-     * @param context The Context in which the receiver is running.
-     * @param intent The Intent being received.
-     */
     override fun onReceive(context: Context, intent: Intent) {
         super.onReceive(context, intent)
-        if (AppConfig.BROADCAST_ACTION_WIDGET_CLICK == intent.action) {
-            if (CoreServiceManager.isRunning()) {
-                LauncherManager.stopService(context)
-            } else {
-                LauncherManager.startServiceFromToggle(context)
+        if (AppConfig.BROADCAST_ACTION_ACTIVITY != intent.action) return
+        when (intent.getIntExtra("key", 0)) {
+            AppConfig.MSG_STATE_RUNNING, AppConfig.MSG_STATE_START_SUCCESS -> {
+                AmeliaWidget.clearConnecting()
+                async { AmeliaWidget.draw(context, running = true) }
             }
-        } else if (AppConfig.BROADCAST_ACTION_ACTIVITY == intent.action) {
-            AppWidgetManager.getInstance(context)?.let { manager ->
-                when (intent.getIntExtra("key", 0)) {
-                    AppConfig.MSG_STATE_RUNNING, AppConfig.MSG_STATE_START_SUCCESS -> {
-                        updateWidgetBackground(
-                            context, manager, manager.getAppWidgetIds(ComponentName(context, WidgetProvider::class.java)),
-                            true
-                        )
-                    }
-
-                    AppConfig.MSG_STATE_NOT_RUNNING, AppConfig.MSG_STATE_START_FAILURE, AppConfig.MSG_STATE_STOP_SUCCESS -> {
-                        updateWidgetBackground(
-                            context, manager, manager.getAppWidgetIds(ComponentName(context, WidgetProvider::class.java)),
-                            false
-                        )
-                    }
-                }
+            AppConfig.MSG_STATE_NOT_RUNNING, AppConfig.MSG_STATE_START_FAILURE, AppConfig.MSG_STATE_STOP_SUCCESS -> {
+                AmeliaWidget.clearConnecting()
+                AmeliaWidget.onPhase(null)
+                async { AmeliaWidget.draw(context, running = false) }
+            }
+            AmeliaConfig.MSG_HEALTH -> {
+                // checking / switching → "Подключается…"; redrawn only when the picture changes
+                AmeliaWidget.onPhase(intent.serializable<AmeliaDaemon.Health>("content")?.phase)
+                async { AmeliaWidget.draw(context) }
             }
         }
+    }
+
+    /** Drawing reads MMKV: off the main thread, while the broadcast is kept alive (goAsync). */
+    private fun async(block: () -> Unit) {
+        val pending = goAsync()
+        scope.launch {
+            try {
+                block()
+            } catch (e: Exception) {
+                LogUtil.e(AppConfig.TAG, "Amelia widget: redraw failed", e)
+            } finally {
+                pending.finish()
+            }
+        }
+    }
+
+    companion object {
+        /**
+         * Owns widget redraws in :daemon for the process lifetime (a receiver has no lifecycle
+         * of its own); each job ends its goAsync() result (drawing takes milliseconds).
+         */
+        private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 }
