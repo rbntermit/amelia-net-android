@@ -60,6 +60,7 @@
         android:focusable="true">
 
         <ImageView
+            android:id="@+id/widget_power_icon"
             android:layout_width="26dp"
             android:layout_height="26dp"
             android:layout_gravity="center"

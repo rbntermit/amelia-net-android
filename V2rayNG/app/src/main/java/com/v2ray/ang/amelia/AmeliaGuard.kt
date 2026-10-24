@@ -65,6 +65,11 @@ object AmeliaQuarantine {
  * At most [MAX] automatic switches in [WINDOW_MS]. Beyond that the daemon stays where it is,
  * checks again every [RECHECK_MS] and says once that the operator cuts part of the servers.
  * Counted from the switch log (AmeliaEvents, kept in MMKV, so it survives a restart).
+ *
+ * 1.6.0: the limit is against hopping between working locations, never a reason to sit on a dead
+ * one. When the current location surely does not work ([currentDead]) and another one is known
+ * to work right now ([verified]), the move is made over the limit ([Decision.OVER_LIMIT]); it is
+ * logged with [OVER_LIMIT_NOTE] and does not count towards the limit ([times]).
  */
 object AmeliaSwitchLimit {
 
@@ -72,10 +77,74 @@ object AmeliaSwitchLimit {
     const val WINDOW_MS = 30L * 60 * 1000
     const val RECHECK_MS = 5L * 60 * 1000
 
+    /** 1.6.0: the tunnel check failed this many times in a row: the current location surely does not work. */
+    const val DEAD_FAILURES = 2
+    /** 1.6.0: a location that passed a check this recently counts as working for a move over the limit. */
+    const val VERIFIED_MS = 2L * 60 * 1000
+    /** 1.6.0: added to the reason of a move over the limit (switch log and journal). */
+    const val OVER_LIMIT_NOTE = "сверх лимита: текущая не работает"
+
+    enum class Decision {
+        /** Within the limit: the usual switch. */
+        SWITCH,
+        /** Limit reached, the current one is dead and a working one is known: move to it anyway. */
+        OVER_LIMIT,
+        /** Limit reached and nothing surely better: stay, check again in [RECHECK_MS]. */
+        STAY,
+    }
+
     fun allowed(switchTimes: List<Long>, now: Long): Boolean = switchTimes.count { now - it in 0 until WINDOW_MS } < MAX
 
-    /** Epoch millis of the logged automatic switches. */
-    fun times(events: List<AmeliaEvents.Event>): List<Long> = events.map { it.ts * 1000 }
+    /** Epoch millis of the logged automatic switches; moves over the limit (1.6.0) are not counted. */
+    fun times(events: List<AmeliaEvents.Event>): List<Long> =
+        events.filter { !isOverLimit(it.why) }.map { it.ts * 1000 }
+
+    fun isOverLimit(why: String): Boolean = why.contains(OVER_LIMIT_NOTE)
+
+    /** "нет ответа 2 раза · сверх лимита: текущая не работает". */
+    fun overLimitReason(why: String): String = "$why · $OVER_LIMIT_NOTE"
+
+    /** [failures]: tunnel checks of the current location failed in a row. */
+    fun currentDead(failures: Int): Boolean = failures >= DEAD_FAILURES
+
+    /** Passed a check (ours: watch, quick pick, full check, "Проверить пинг") at most [VERIFIED_MS] ago. */
+    fun verified(e: AmeliaChecks.Entry?, now: Long): Boolean = e != null && e.ok && now - e.ts in 0..VERIFIED_MS
+
+    /**
+     * Locations of [queue] (guids, queue order) that may be taken over the limit: [verified] by
+     * their latest check in [known] (by name).
+     */
+    fun verifiedTargets(queue: List<String>, nameOf: (String) -> String?, known: Map<String, AmeliaChecks.Entry>, now: Long): List<String> =
+        queue.filter { g -> nameOf(g)?.let { verified(known[it], now) } == true }
+
+    /**
+     * Locations from the hints' "good" list worth checking right now for a move over the limit:
+     * not [exclude]d, not already [verified], foreign (reserve and Moscow are never "good"), most
+     * passed checks first, at most [AmeliaQuickPick.QUICK_COUNT].
+     */
+    fun goodToCheck(
+        locations: List<AmeliaQueue.Location>,
+        good: Map<String, Int>,
+        known: Map<String, AmeliaChecks.Entry>,
+        exclude: Set<String>,
+        now: Long,
+    ): List<String> =
+        locations.asSequence()
+            .filter { (good[it.hostPort] ?: 0) > 0 && it.guid !in exclude && !verified(known[it.name], now) }
+            .filter { !AmeliaReserve.isReserve(it.name) && !AmeliaReserve.isRussianExit(it.name) }
+            .sortedByDescending { good[it.hostPort] ?: 0 }
+            .take(AmeliaQuickPick.QUICK_COUNT).map { it.guid }.toList()
+
+    /**
+     * What to do once the current location is judged broken and switching is allowed by the mode.
+     * [limitAllowed]: [allowed] for the log; [failures]: failed tunnel checks in a row;
+     * [haveVerified]: some other location is [verified] (or from "good" and answered just now).
+     */
+    fun decide(limitAllowed: Boolean, failures: Int, haveVerified: Boolean): Decision = when {
+        limitAllowed -> Decision.SWITCH
+        currentDead(failures) && haveVerified -> Decision.OVER_LIMIT
+        else -> Decision.STAY
+    }
 }
 
 /**

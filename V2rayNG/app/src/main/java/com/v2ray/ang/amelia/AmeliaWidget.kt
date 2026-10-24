@@ -26,12 +26,16 @@ import com.v2ray.ang.util.LogUtil
  *
  * Drawing and the connect state live in the :daemon process (WidgetProvider and
  * AmeliaWidgetTapActivity run there), where CoreServiceManager is the authority.
+ *
+ * 1.6.0: in "белые списки" mode (daemon phase WHITELIST, the same event that shows the card on
+ * the main screen) the widget says "Белые списки · нужен Wi‑Fi" in the warning colour, and the
+ * button opens the app instead of touching the VPN. The mode ends: the next phase redraws it.
  */
 object AmeliaWidget {
 
-    enum class Status { OFF, CONNECTING, CONNECTED }
+    enum class Status { OFF, CONNECTING, CONNECTED, WHITELIST }
 
-    enum class Button { CONNECT, DISCONNECT, RENEW }
+    enum class Button { CONNECT, DISCONNECT, RENEW, OPEN_APP }
 
     /** What a tap on the button does. */
     enum class Tap { START, STOP, OPEN_APP, RENEW }
@@ -58,6 +62,7 @@ object AmeliaWidget {
     // ---- pure logic (unit-tested) ---------------------------------------------------------
 
     fun status(running: Boolean, phase: String?, connectingSince: Long, now: Long): Status = when {
+        running && phase == AmeliaDaemon.Phase.WHITELIST.name -> Status.WHITELIST
         running && (phase == AmeliaDaemon.Phase.CHECKING.name || phase == AmeliaDaemon.Phase.SWITCHING.name) -> Status.CONNECTING
         running -> Status.CONNECTED
         connectingSince > 0 && now - connectingSince in 0 until CONNECTING_MS -> Status.CONNECTING
@@ -69,6 +74,7 @@ object AmeliaWidget {
         val until = info?.expire?.takeIf { it > 0 && !expired }?.let(dayMonth)
         val button = when {
             expired -> Button.RENEW
+            status == Status.WHITELIST -> Button.OPEN_APP
             status == Status.OFF -> Button.CONNECT
             else -> Button.DISCONNECT
         }
@@ -79,10 +85,20 @@ object AmeliaWidget {
      * A tap on the button: "Продлить" when the subscription ended, otherwise exactly the tile's
      * rule (AmeliaTile.onTap): on → off; no VPN permission, no location or a required update →
      * the app; otherwise connect. [busy] is running or connecting: a second tap disconnects.
+     * 1.6.0 [whitelist]: "белые списки" — the app (its card explains), the VPN is left alone.
      */
-    fun tap(expired: Boolean, busy: Boolean, vpnPermission: Boolean, hasLocation: Boolean, updateRequired: Boolean): Tap =
+    fun tap(
+        expired: Boolean,
+        busy: Boolean,
+        vpnPermission: Boolean,
+        hasLocation: Boolean,
+        updateRequired: Boolean,
+        whitelist: Boolean = false,
+    ): Tap =
         if (expired) {
             Tap.RENEW
+        } else if (whitelist) {
+            Tap.OPEN_APP
         } else {
             when (AmeliaTile.onTap(busy, vpnPermission, hasLocation, updateRequired)) {
                 AmeliaTile.Action.STOP -> Tap.STOP
@@ -90,6 +106,16 @@ object AmeliaWidget {
                 AmeliaTile.Action.OPEN_APP -> Tap.OPEN_APP
             }
         }
+
+    /** What the two text lines say: the state line and, below it, the location (null: its name). */
+    data class Lines(val status: Int, val second: Int?)
+
+    fun lines(m: Model): Lines = when (m.status) {
+        Status.CONNECTED -> Lines(R.string.amelia_phase_connected, null)
+        Status.CONNECTING -> Lines(R.string.amelia_widget_connecting, null)
+        Status.OFF -> Lines(R.string.amelia_phase_off, null)
+        Status.WHITELIST -> Lines(R.string.amelia_widget_whitelist, R.string.amelia_widget_need_wifi)
+    }
 
     // ---- state of the :daemon process -------------------------------------------------------
 
@@ -127,7 +153,12 @@ object AmeliaWidget {
         vpnPermission = AmeliaBoot.hasVpnPermission(context),
         hasLocation = AmeliaManager.hasKey() && MmkvManager.decodeServerList(AmeliaConfig.SUBSCRIPTION_ID).isNotEmpty(),
         updateRequired = AmeliaUpdater.isRequired(AmeliaUpdater.cached()),
+        whitelist = isWhitelist(),
     )
+
+    /** 1.6.0: the VPN is on and the daemon reported "белые списки" (what the widget shows now). */
+    fun isWhitelist(): Boolean =
+        status(CoreServiceManager.isRunning(), phase, connectingSince, System.currentTimeMillis()) == Status.WHITELIST
 
     // ---- drawing ------------------------------------------------------------------------------
 
@@ -180,22 +211,18 @@ object AmeliaWidget {
 
     private fun build(context: Context, m: Model, wide: Boolean): RemoteViews {
         val v = RemoteViews(context.packageName, R.layout.widget_amelia)
-        v.setTextViewText(
-            R.id.widget_status,
-            context.getString(
-                when (m.status) {
-                    Status.CONNECTED -> R.string.amelia_phase_connected
-                    Status.CONNECTING -> R.string.amelia_widget_connecting
-                    Status.OFF -> R.string.amelia_phase_off
-                },
-            ),
-        )
+        val lines = lines(m)
+        v.setTextViewText(R.id.widget_status, context.getString(lines.status))
         when (m.status) {
             Status.CONNECTED -> v.setTextColor(R.id.widget_status, context.getColor(R.color.amelia_widget_green))
-            Status.CONNECTING -> v.setTextColor(R.id.widget_status, context.getColor(R.color.amelia_widget_amber))
+            // 1.6.0: "белые списки" is a warning, never green
+            Status.CONNECTING, Status.WHITELIST -> v.setTextColor(R.id.widget_status, context.getColor(R.color.amelia_widget_amber))
             Status.OFF -> Unit // the layout's muted colour (day/night)
         }
-        v.setTextViewText(R.id.widget_location, m.location ?: context.getString(R.string.app_name))
+        v.setTextViewText(
+            R.id.widget_location,
+            lines.second?.let { context.getString(it) } ?: m.location ?: context.getString(R.string.app_name),
+        )
 
         val sub = when {
             !wide -> null
@@ -214,13 +241,23 @@ object AmeliaWidget {
                 R.id.widget_power, "setBackgroundResource",
                 when (m.status) {
                     Status.CONNECTED -> R.drawable.amelia_widget_power_on
-                    Status.CONNECTING -> R.drawable.amelia_widget_power_connecting
+                    Status.CONNECTING, Status.WHITELIST -> R.drawable.amelia_widget_power_connecting
                     Status.OFF -> R.drawable.amelia_widget_power_off
                 },
             )
+            v.setImageViewResource(
+                R.id.widget_power_icon,
+                if (m.status == Status.WHITELIST) R.drawable.ic_amelia_warning else R.drawable.ic_amelia_power,
+            )
             v.setContentDescription(
                 R.id.widget_power,
-                context.getString(if (m.button == Button.CONNECT) R.string.amelia_connect else R.string.amelia_disconnect),
+                context.getString(
+                    when (m.button) {
+                        Button.CONNECT -> R.string.amelia_connect
+                        Button.OPEN_APP -> R.string.amelia_widget_open_app
+                        else -> R.string.amelia_disconnect
+                    },
+                ),
             )
         }
 
