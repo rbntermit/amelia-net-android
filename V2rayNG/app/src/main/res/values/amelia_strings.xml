@@ -306,4 +306,8 @@
     <string name="amelia_phase_whitelist">Оператор включил «белые списки»</string>
     <string name="amelia_whitelist_card">🚧 Оператор включил «белые списки» — открываются только разрешённые сайты, VPN через мобильную сеть сейчас не пробьётся. Подключитесь к Wi‑Fi. Как только ограничение снимут, приложение подключится само.</string>
     <string name="amelia_whitelist_notice">Оператор включил «белые списки» — VPN через мобильную сеть сейчас не пробьётся. Подключитесь к Wi‑Fi, остальное приложение сделает само.</string>
+    <!-- 1.6.0: widget in "белые списки" mode -->
+    <string name="amelia_widget_whitelist">Белые списки</string>
+    <string name="amelia_widget_need_wifi">нужен Wi‑Fi</string>
+    <string name="amelia_widget_open_app">Открыть приложение</string>
 </resources>

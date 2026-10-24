@@ -48,6 +48,8 @@ import java.util.concurrent.TimeUnit
  * - **1.5.9**: the hints' "good" list goes first in the queue; a location left after a failure is
  *   in quarantine for 30 min (AmeliaQuarantine); at most 4 switches in 30 min
  *   (AmeliaSwitchLimit); "белые списки" stop trying locations (AmeliaWhitelist).
+ * - **1.6.0**: over the switch limit a dead location (tunnel check failed twice in a row) is still
+ *   left for one that passed a check in the last 2 minutes ("сверх лимита: текущая не работает").
  * - **No internet**: without a validated network, or when ya.ru / google do not answer around
  *   the tunnel, nothing is judged or switched; checks back off (30 s … 5 min), and after the
  *   network is back the daemon waits [SETTLE_MS] before the next check.
@@ -342,10 +344,12 @@ object AmeliaDaemon {
             report(service, Health(if (manual) Phase.MANUAL_FAILED.name else Phase.ALL_FAILED.name, guid = selected))
             return INTERVAL_SCREEN_ON_MS
         }
-        // 1.5.9: at most 4 automatic switches in 30 minutes, then stay and check every 5 minutes
+        // 1.5.9: at most 4 automatic switches in 30 minutes, then stay and check every 5 minutes.
+        // 1.6.0: but a dead location is left for one that surely works, over the limit.
         if (!AmeliaSwitchLimit.allowed(AmeliaSwitchLimit.times(AmeliaEvents.list()), now)) {
+            val failedInRow = failures
             resetFailures()
-            return switchLimited(service, name.orEmpty(), why)
+            return switchOverLimit(service, selected, name.orEmpty(), why, failedInRow)
         }
         limitNotified = false
         val result = switchFast(service, selected, why)
@@ -361,6 +365,72 @@ object AmeliaDaemon {
             notifyQuiet(service, LIMIT_NOTIFICATION_ID, service.getString(R.string.amelia_limit_notice, name))
         }
         return AmeliaSwitchLimit.RECHECK_MS
+    }
+
+    /**
+     * 1.6.0: the switch limit is reached. A location whose tunnel check failed twice in a row is
+     * left anyway for one that passed a check in the last 2 minutes (a "good" one from the hints is
+     * checked right now first), over the limit. Nothing like that: stay as in 1.5.9.
+     */
+    private suspend fun switchOverLimit(service: Service, current: String?, name: String, why: String, failedInRow: Int): Long {
+        var targets = emptyList<String>()
+        if (AmeliaSwitchLimit.currentDead(failedInRow)) {
+            AmeliaHints.refreshIfOlder(service, AmeliaHints.BEFORE_SWITCH_MS)
+            targets = verifiedTargets(service, current)
+            if (targets.isEmpty()) {
+                checkCandidatesNow(service, current)
+                targets = verifiedTargets(service, current)
+            }
+        }
+        return when (AmeliaSwitchLimit.decide(limitAllowed = false, failures = failedInRow, haveVerified = targets.isNotEmpty())) {
+            AmeliaSwitchLimit.Decision.OVER_LIMIT -> switchFast(service, current, why, overLimit = true)
+            else -> stayLimited(service, name, why)
+        }
+    }
+
+    /** 1.6.0: stay under the limit; with nothing working at all it may be white lists (as after an empty round). */
+    private fun stayLimited(service: Service, name: String, why: String): Long {
+        val wait = switchLimited(service, name, why)
+        emptyRounds++
+        if (!AmeliaWhitelist.isActive() && AmeliaWhitelist.shouldCheck(onMobile(service), tooManyFailed = false, emptyRounds = emptyRounds)) {
+            whitelistCheckDue = true
+            return FAILING_RETRY_MS
+        }
+        return wait
+    }
+
+    /** 1.6.0: queue (without [current]) of locations that passed a check in the last 2 minutes. */
+    private fun verifiedTargets(service: Service, current: String?): List<String> {
+        val names = AmeliaQueue.locations().associate { it.guid to it.name }
+        return AmeliaSwitchLimit.verifiedTargets(
+            AmeliaQueue.current(service, exclude = setOfNotNull(current)),
+            { names[it] },
+            AmeliaChecks.load().entries,
+            System.currentTimeMillis(),
+        )
+    }
+
+    /**
+     * 1.6.0: nothing passed a check recently. The hints' "good" ones are checked now (3 s, in
+     * parallel); none answered — the best few by past ping, as the quick pick before a switch.
+     */
+    private suspend fun checkCandidatesNow(service: Service, current: String?) {
+        val locations = AmeliaQueue.locations()
+        val good = AmeliaHints.goodHostPorts(AmeliaHints.current(AmeliaProbe.netKey(AmeliaNetwork.info(service))))
+        val exclude = setOfNotNull(current)
+        val net = AmeliaHints.netKey(service)
+        suspend fun checkNow(guids: List<String>) {
+            if (guids.isEmpty()) return
+            val answered = AmeliaQuickPick.quickest(guids, check = { AmeliaCheck.checkOne(service, it) }) { r ->
+                AmeliaChecks.put(service, r, net)
+                MessageHelper.sendMsg2UI(service, AmeliaConfig.MSG_CHECKS, "")
+            }
+            LogUtil.i(AppConfig.TAG, "Amelia watch: over the limit, ${answered.size} of ${guids.size} answered in 3 s")
+        }
+        val first = AmeliaSwitchLimit.goodToCheck(locations, good, AmeliaChecks.load().entries, exclude, System.currentTimeMillis())
+        checkNow(first)
+        if (first.isNotEmpty() && verifiedTargets(service, current).isNotEmpty()) return
+        checkNow(AmeliaQuickPick.candidates(locations, AmeliaChecks.load().entries, exclude + first, good))
     }
 
     /**
@@ -499,33 +569,51 @@ object AmeliaDaemon {
      * Moves to the first location of the queue that answers, without a full re-check first.
      * The full check runs at the same time and its results reorder what is left. Nothing
      * works: back to the location it started from.
+     *
+     * 1.6.0 [overLimit]: the switch limit is reached and [failed] is dead; only locations that
+     * passed a check in the last 2 minutes are tried (AmeliaSwitchLimit.verifiedTargets), the
+     * reason gets "сверх лимита: текущая не работает". None answers: stay, as under the limit.
      */
-    private suspend fun switchFast(service: Service, failed: String?, why: String): Long {
+    private suspend fun switchFast(service: Service, failed: String?, why: String, overLimit: Boolean = false): Long {
         val t0 = System.currentTimeMillis()
         val fromName = failed?.let { MmkvManager.decodeServerConfig(it)?.remarks }.orEmpty()
         // 1.5.9: what works for this provider right now, if the hints are older than 2 minutes (≤ 3 s)
         AmeliaHints.refreshIfOlder(service, AmeliaHints.BEFORE_SWITCH_MS)
-        quickPickIfStale(service, failed)
+        // over the limit the candidates were checked just now (switchOverLimit)
+        if (!overLimit) quickPickIfStale(service, failed)
         startFullCheck(service)
+        val reason = if (overLimit) AmeliaSwitchLimit.overLimitReason(why) else why
         val tried = mutableSetOf<String>().apply { failed?.let { add(it) } }
         while (true) {
             // the person picked a location meanwhile: their choice wins, nothing is restored
             if (AmeliaManual.load().at > t0) return interval(service)
             // locations the parallel check has just seen failing are skipped
             val failedNow = AmeliaChecks.load().entries.values.filter { !it.ok && it.ts >= t0 }.map { it.name }.toSet()
-            val skip = tried + AmeliaQueue.locations().filter { it.name in failedNow }.map { it.guid }
-            val next = AmeliaQueue.current(service, exclude = skip).firstOrNull() ?: break
+            val locations = AmeliaQueue.locations()
+            val skip = tried + locations.filter { it.name in failedNow }.map { it.guid }
+            val queue = AmeliaQueue.current(service, exclude = skip)
+            val candidates = if (!overLimit) {
+                queue
+            } else {
+                val names = locations.associate { it.guid to it.name }
+                AmeliaSwitchLimit.verifiedTargets(queue, { names[it] }, AmeliaChecks.load().entries, System.currentTimeMillis())
+            }
+            val next = candidates.firstOrNull() ?: break
             tried += next
             val ms = switchTo(service, next)
             if (ms >= 0) {
                 // 1.5.9: the one we left is not chosen automatically for 30 min on this network
                 if (fromName.isNotEmpty()) AmeliaQuarantine.put(fromName, AmeliaHints.netKey(service))
-                done(service, failed, next, fromName, why, t0, ms)
+                done(service, failed, next, fromName, reason, t0, ms)
                 return interval(service)
             }
             putFailure(service, next)
         }
         restore(service, failed)
+        if (overLimit) {
+            AmeliaJournal.add("$fromName $why — проверенные локации не ответили через туннель")
+            return stayLimited(service, fromName, why)
+        }
         AmeliaJournal.add("$fromName $why — ни одна локация не ответила")
         report(service, Health(Phase.ALL_FAILED.name, guid = MmkvManager.getSelectServer()))
         // 1.5.9: two rounds in a row with nothing working on mobile: check for white lists next

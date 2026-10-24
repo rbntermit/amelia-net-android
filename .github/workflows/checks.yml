@@ -1,0 +1,86 @@
+name: Checks
+
+# Amelia.Net 1.6.0: everything to run before a release — all unit tests, lint and a debug build.
+# For pull requests and by hand (Actions → Checks → Run workflow), so changes made where no
+# Android SDK is available (e.g. a cloud session) are still checked before the tag.
+on:
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  HEV_REPO: https://github.com/heiher/hev-socks5-tunnel
+  NDK_VERSION: 30.0.16248370
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Native dependency versions
+        run: |
+          grep -E "^(LIBV2RAY_TAG|HEV_TAG)=" deps.env | tee -a "$GITHUB_ENV"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          log-accepted-android-sdk-licenses: false
+          cmdline-tools-version: '14742923'
+          packages: 'platforms;android-37.0 build-tools;37.0.0 platform-tools'
+
+      - name: Install NDK
+        run: |
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --channel=0 --install "ndk;$NDK_VERSION"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> $GITHUB_ENV
+          # Lets AGP strip the prebuilt .so files with the same NDK
+          sed -i "s/^    compileSdk = 37$/    compileSdk = 37\n    ndkVersion = \"$NDK_VERSION\"/" V2rayNG/app/build.gradle.kts
+
+      - name: Restore libhevtun
+        id: hev-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: libs
+          key: libhevtun-${{ runner.os }}-${{ env.NDK_VERSION }}-${{ env.HEV_TAG }}-${{ hashFiles('compile-hevtun.sh') }}
+
+      - name: Build libhevtun
+        if: steps.hev-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --quiet "$HEV_REPO" hev-socks5-tunnel
+          git -C hev-socks5-tunnel checkout --quiet "refs/tags/$HEV_TAG"
+          git -C hev-socks5-tunnel submodule update --init --recursive --quiet
+          bash compile-hevtun.sh
+
+      - name: Add native libraries
+        run: |
+          cp -r libs V2rayNG/app
+          mkdir -p V2rayNG/app/libs
+          curl -fsSL -o V2rayNG/app/libs/libv2ray.aar \
+            "https://github.com/2dust/AndroidLibXrayLite/releases/download/$LIBV2RAY_TAG/libv2ray.aar"
+          sha256sum V2rayNG/app/libs/libv2ray.aar
+
+      - name: Setup Java
+        uses: actions/setup-java@v6.0.1
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: All unit tests, lint, debug build
+        working-directory: V2rayNG
+        run: |
+          chmod 755 gradlew
+          echo "sdk.dir=${ANDROID_HOME}" > local.properties
+          ./gradlew --no-daemon --continue :app:testPlaystoreDebugUnitTest :app:lintPlaystoreDebug :app:assemblePlaystoreDebug
+
+      - name: Test and lint reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: checks-reports
+          path: |
+            V2rayNG/app/build/reports/
+            V2rayNG/app/build/test-results/
