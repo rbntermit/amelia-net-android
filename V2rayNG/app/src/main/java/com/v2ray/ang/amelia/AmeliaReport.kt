@@ -67,6 +67,8 @@ object AmeliaReport {
         @SerializedName("sub_active") val subActive: Boolean? = null,
         /** 1.5.4: the last [MAX_JOURNAL] lines of "Журнал" (switches, failures, no internet), oldest first. */
         val journal: List<String> = emptyList(),
+        /** 1.5.9: sent in white-list mode; written as "wl": true only then (AmeliaProbe.withWl). */
+        @Transient val wl: Boolean = false,
     )
 
     // ---- pure logic (unit-tested) ---------------------------------------------------------
@@ -107,13 +109,15 @@ object AmeliaReport {
      */
     fun toJson(body: Body): String {
         var b = body.copy(comment = body.comment.take(MAX_COMMENT))
-        var json = AmeliaProbe.wireGson.toJson(b)
+        // 1.5.9: "wl": true in white-list mode (a few bytes, inside the margin of the limit)
+        fun json(x: Body) = AmeliaProbe.withWl(AmeliaProbe.wireGson.toJson(x), x.wl)
+        var json = json(b)
         if (json.toByteArray().size <= AmeliaNetwork.MAX_BODY_BYTES) return json
         b = b.copy(servers = b.servers.map { it.copy(err = it.err?.take(60)) })
-        json = AmeliaProbe.wireGson.toJson(b)
+        json = json(b)
         while (json.toByteArray().size > AmeliaNetwork.MAX_BODY_BYTES && b.servers.isNotEmpty()) {
             b = b.copy(servers = b.servers.dropLast(1))
-            json = AmeliaProbe.wireGson.toJson(b)
+            json = json(b)
         }
         return json
     }
@@ -139,6 +143,7 @@ object AmeliaReport {
         appendLine("Приложения мимо VPN: ${if (body.bypassRu) "да" else "нет"}")
         body.vpn?.let { appendLine("VPN включён: ${if (it) "да" else "нет"}") }
         body.subActive?.let { appendLine("Подписка действует: ${if (it) "да" else "нет"}") }
+        if (body.wl) appendLine("Оператор включил «белые списки»")
         if (body.comment.isNotBlank()) appendLine("Что случилось: ${body.comment}")
         appendLine()
         body.servers.forEach { s ->
@@ -201,6 +206,7 @@ object AmeliaReport {
         vpn = vpn,
         subActive = AmeliaPolicy.subscriptionActive(AmeliaManager.getSubInfo(), System.currentTimeMillis()),
         journal = journalLines(AmeliaJournal.list(), AmeliaFormat::dateTime),
+        wl = AmeliaWhitelist.isActive(),
     )
 
     /** Blocking. Sends the report; the report id on success, null when no server took it. */

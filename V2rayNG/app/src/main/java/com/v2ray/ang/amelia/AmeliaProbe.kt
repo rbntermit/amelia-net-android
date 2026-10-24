@@ -13,6 +13,7 @@ import androidx.work.WorkerParameters
 import androidx.work.multiprocess.RemoteWorkManager
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
+import com.google.gson.JsonParser
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.handler.MmkvManager
@@ -63,6 +64,8 @@ object AmeliaProbe {
         val stage: String = AmeliaPingStage.DATA,
         val ts: Long = 0L,
         val net: String = "",
+        /** 1.5.9: measured in white-list mode (AmeliaWhitelist). */
+        val wl: Boolean = false,
     )
 
     data class State(
@@ -127,10 +130,23 @@ object AmeliaProbe {
         val op: String,
         val path: String,
         val servers: List<ProbeServer>,
+        /** 1.5.9: written as "wl": true only in white-list mode ([json]). */
+        @Transient val wl: Boolean = false,
     )
 
-    /** Contract with the server: no server names here, only host and port. */
-    fun body(iid: String, nowSec: Long, info: AmeliaNetwork.Info, path: String, entries: List<Entry>): ProbeBody =
+    /**
+     * Contract with the server: no server names here, only host and port. 1.5.9: [whitelist]
+     * (the mode is on now) or any result measured in the mode → "wl": true; the server then
+     * does not count these results as servers being cut.
+     */
+    fun body(
+        iid: String,
+        nowSec: Long,
+        info: AmeliaNetwork.Info,
+        path: String,
+        entries: List<Entry>,
+        whitelist: Boolean = false,
+    ): ProbeBody =
         ProbeBody(
             iid = iid,
             ts = nowSec,
@@ -139,7 +155,18 @@ object AmeliaProbe {
             op = info.op,
             path = path,
             servers = entries.map { ProbeServer(it.host, it.port, it.ok, it.ms?.takeIf { ms -> it.ok && ms >= 0 }, it.stage) },
+            wl = whitelist || entries.any { it.wl },
         )
+
+    fun json(body: ProbeBody): String = withWl(wireGson.toJson(body), body.wl)
+
+    /** 1.5.9: adds "wl": true to a /app/probe or /app/report body; nothing at all otherwise. */
+    fun withWl(json: String, wl: Boolean): String {
+        if (!wl) return json
+        val tree = JsonParser.parseString(json).asJsonObject
+        tree.addProperty("wl", true)
+        return wireGson.toJson(tree)
+    }
 
     /** JSON for /app/report and /app/probe: nulls are written ("ms": null), "<" is not escaped. */
     internal val wireGson: Gson = GsonBuilder().serializeNulls().disableHtmlEscaping().create()
@@ -188,7 +215,7 @@ object AmeliaProbe {
         try {
             val key = netKey(AmeliaNetwork.info(context))
             val now = System.currentTimeMillis()
-            val entry = Entry(host, port, ok, ms.takeIf { ok }, stage, now, key)
+            val entry = Entry(host, port, ok, ms.takeIf { ok }, stage, now, key, wl = AmeliaWhitelist.isActive())
             val reason = synchronized(lock) {
                 val (state, reason) = decide(load(), listOf(entry), key, now)
                 save(state)
@@ -214,8 +241,9 @@ object AmeliaProbe {
         val now = System.currentTimeMillis()
         val entries = synchronized(lock) { shouldSend(load(), key, now, reason) } ?: return
         val iid = installId()
+        val whitelist = AmeliaWhitelist.isActive()
         val answer = AmeliaNetwork.post(context, PATH) { path ->
-            wireGson.toJson(body(iid, now / 1000, info, path, entries))
+            json(body(iid, now / 1000, info, path, entries, whitelist))
         }
         if (answer != null) synchronized(lock) { save(afterSend(load(), key, now, reason)) }
     }

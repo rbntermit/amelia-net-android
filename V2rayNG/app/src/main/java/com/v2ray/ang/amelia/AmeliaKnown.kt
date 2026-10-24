@@ -69,11 +69,22 @@ object AmeliaChecks {
         store.entries.filterValues { now - it.ts in 0..FRESH_MS }
 }
 
-/** GET /app/hints: servers that do not work for this provider right now (asked around the tunnel). */
+/**
+ * GET /app/hints (asked around the tunnel): what does not work (bad) and, since 1.5.9, what
+ * works (good) for other subscribers of this provider (AS), separately for mobile and Wi-Fi.
+ */
 object AmeliaHints {
 
     const val PATH = "/app/hints"
     const val MAX_AGE_MS = 30L * 60 * 1000
+    /** 1.5.9: the whole request, all server addresses together; no answer → as before. */
+    const val TIMEOUT_MS = 3_000L
+    /** 1.5.9: before an automatic switch the hints are asked again if older than this. */
+    const val BEFORE_SWITCH_MS = 2L * 60 * 1000
+    /** 1.5.9: while the VPN is on, asked again this often. */
+    const val WHILE_ON_MS = 15L * 60 * 1000
+    /** Networks kept in the cache (1.5.9: one answer per network). */
+    const val MAX_NETS = 10
 
     data class Bad(
         val host: String = "",
@@ -83,29 +94,62 @@ object AmeliaHints {
         val stage: String? = null,
     )
 
+    /** 1.5.9: worked for [ok] of [of] recent checks from this provider. */
+    data class Good(
+        val host: String = "",
+        val port: Int = 0,
+        val ok: Int = 0,
+        val of: Int = 0,
+    )
+
     data class Hints(
         val asn: Long? = null,
         @SerializedName("as") val asName: String? = null,
         val cc: String? = null,
+        /** 1.5.9: "mobile" / "wifi" as the server understood the request. */
+        val net: String? = null,
         val bad: List<Bad> = emptyList(),
+        val good: List<Good> = emptyList(),
         val ts: Long? = null,
     )
 
     /** [net] = "type|operator" of the physical network the answer came on. */
     data class Cached(val hints: Hints = Hints(), val at: Long = 0L, val net: String = "")
 
+    /** Until 1.5.8: the single last answer. Still read when the per-network cache has nothing. */
     private const val PREF = "amelia_hints"
+    /** 1.5.9: the last answer per network ("type|operator" → Cached). */
+    private const val PREF_BY_NET = "amelia_hints_by_net"
+
+    private class ByNet(val nets: Map<String, Cached> = emptyMap())
 
     fun parse(json: String?): Hints? =
         json?.let { runCatching { AmeliaProbe.wireGson.fromJson(it, Hints::class.java) }.getOrNull() }
 
-    fun cached(): Cached? =
+    /** Pure: "/app/hints?net=mobile" for mobile and Wi-Fi, no parameter for anything else. */
+    fun query(net: String): String = when (net) {
+        AmeliaNetwork.NET_MOBILE, AmeliaNetwork.NET_WIFI -> "$PATH?net=$net"
+        else -> PATH
+    }
+
+    /** Pure: the cache after an answer for [net]; the oldest networks beyond [MAX_NETS] are dropped. */
+    fun store(nets: Map<String, Cached>, net: String, c: Cached): Map<String, Cached> =
+        (nets - net).entries.sortedBy { it.value.at }.takeLast(MAX_NETS - 1).associate { it.key to it.value } + (net to c)
+
+    private fun byNet(): Map<String, Cached> =
+        MmkvManager.decodeSettingsString(PREF_BY_NET)?.takeIf { it.isNotBlank() }
+            ?.let { JsonUtil.fromJsonSafe(it, ByNet::class.java)?.nets }.orEmpty()
+
+    private fun legacy(): Cached? =
         MmkvManager.decodeSettingsString(PREF)?.takeIf { it.isNotBlank() }
             ?.let { JsonUtil.fromJsonSafe(it, Cached::class.java) }
 
+    /** The last answer on [simNet] (any age). */
+    fun cached(simNet: String): Cached? = byNet()[simNet] ?: legacy()?.takeIf { it.net == simNet }
+
     /** The cached answer if it is younger than 30 minutes and from the network we are on. */
     fun current(simNet: String, now: Long = System.currentTimeMillis()): Hints? =
-        cached()?.takeIf { it.net == simNet && now - it.at in 0..MAX_AGE_MS }?.hints
+        cached(simNet)?.takeIf { now - it.at in 0..MAX_AGE_MS }?.hints
 
     /**
      * Network key: type + provider's AS from the hints, or type + SIM operator without them.
@@ -122,13 +166,24 @@ object AmeliaHints {
     /** "host:port" of the servers the hints call bad. */
     fun badHostPorts(h: Hints?): Set<String> = h?.bad.orEmpty().map { "${it.host}:${it.port}" }.toSet()
 
+    /** 1.5.9: "host:port" → how many recent checks from this provider it passed. */
+    fun goodHostPorts(h: Hints?): Map<String, Int> =
+        h?.good.orEmpty().filter { it.ok > 0 }.associate { "${it.host}:${it.port}" to it.ok }
+
     /** Blocking. Asks the server when the cached answer is stale or from another network; errors are ignored. */
-    fun refreshIfStale(context: Context, force: Boolean = false) {
-        val sim = AmeliaProbe.netKey(AmeliaNetwork.info(context))
-        if (!force && current(sim) != null) return
-        val body = AmeliaNetwork.getDirect(context, PATH) ?: return
+    fun refreshIfStale(context: Context, force: Boolean = false) = refreshIfOlder(context, MAX_AGE_MS, force)
+
+    /** Blocking. Asks again when this network's answer is older than [maxAgeMs]. No answer: the old one stays. */
+    fun refreshIfOlder(context: Context, maxAgeMs: Long, force: Boolean = false) {
+        val info = AmeliaNetwork.info(context)
+        val sim = AmeliaProbe.netKey(info)
+        val now = System.currentTimeMillis()
+        if (!force && cached(sim)?.let { now - it.at in 0 until maxAgeMs } == true) return
+        val body = AmeliaNetwork.getDirect(context, query(info.net), TIMEOUT_MS) ?: return
         val h = parse(body) ?: return
-        MmkvManager.encodeSettings(PREF, JsonUtil.toJson(Cached(h, System.currentTimeMillis(), sim)))
+        synchronized(this) {
+            MmkvManager.encodeSettings(PREF_BY_NET, JsonUtil.toJson(ByNet(store(byNet(), sim, Cached(h, now, sim)))))
+        }
     }
 }
 
@@ -171,9 +226,11 @@ object AmeliaEvents {
 
 /**
  * Order in which automatic choice and failover try locations (pure, unit-tested):
- * the network's remembered best first (unless it was just seen failing), then working ones by
- * ping, then unchecked ones, then those the hints call bad for this provider (unless our own
- * check says they work), then those our check saw failing, reserve ("только Telegram") last.
+ * 1.5.9: first those the hints call good for this provider (most passed checks first, then our
+ * own ping), unless our own check saw them failing; then working ones by ping, then unchecked
+ * ones (the network's remembered best first), then those the hints call bad (unless our own check
+ * says they work), then those our check saw failing. Locations in quarantine (left after a
+ * failure in this network, 1.5.9) come after all of those; reserve ("только Telegram") last.
  */
 object AmeliaQueue {
 
@@ -187,6 +244,10 @@ object AmeliaQueue {
         exclude: Set<String> = emptySet(),
         /** 1.4.0: reserve and Moscow only after the subscription ended (AmeliaPolicy). */
         allowLastResort: Boolean = true,
+        /** 1.5.9: "host:port" → checks passed from this provider (AmeliaHints.goodHostPorts). */
+        good: Map<String, Int> = emptyMap(),
+        /** 1.5.9: names in quarantine on this network (AmeliaQuarantine). */
+        quarantined: Set<String> = emptySet(),
     ): List<String> {
         val pool = locations.filter { it.guid !in exclude && (allowLastResort || !AmeliaPolicy.isLastResort(it.name)) }
         // Reserve ("только Telegram") and Russian-exit ("Москва 🇷🇺") locations do not get around
@@ -195,6 +256,8 @@ object AmeliaQueue {
         fun group(l: Location): Int {
             val k = known[l.name]
             return when {
+                // our own failed check here outweighs what others see
+                (good[l.hostPort] ?: 0) > 0 && (k == null || k.ok) -> 0
                 k != null && k.ok -> 1
                 k != null -> 4
                 l.hostPort in bad -> 3
@@ -205,13 +268,20 @@ object AmeliaQueue {
         // the unchecked ones (1.2.1: before, it jumped ahead of faster working locations).
         fun ms(l: Location) = known[l.name]?.ms?.takeIf { it >= 0 } ?: Long.MAX_VALUE
         val ordered = regular.sortedWith(
-            compareBy<Location>({ group(it) }, { ms(it) }, { if (group(it) == 2 && it.name == preferred) 0 else 1 }),
+            compareBy<Location>(
+                { group(it) },
+                { if (group(it) == 0) -(good[it.hostPort] ?: 0) else 0 },
+                { ms(it) },
+                { if (group(it) == 2 && it.name == preferred) 0 else 1 },
+            ),
         )
+        // 1.5.9: quarantined ones only when nothing else is left to try
+        val (held, free) = ordered.partition { it.name in quarantined }
         // Russian exits before reserve ones; working ones first, by ping
         val tail = lastResort.sortedWith(
             compareBy<Location>({ if (AmeliaReserve.isReserve(it.name)) 1 else 0 }, { if (known[it.name]?.ok == true) 0 else 1 }, { ms(it) }),
         )
-        return (ordered + tail).map { it.guid }
+        return (free + held + tail).map { it.guid }
     }
 
     fun locations(): List<Location> =
@@ -225,9 +295,12 @@ object AmeliaQueue {
         val sim = AmeliaProbe.netKey(AmeliaNetwork.info(context))
         val now = System.currentTimeMillis()
         val known = AmeliaChecks.fresh(AmeliaChecks.load(), now)
+        val hints = AmeliaHints.current(sim)
         return order(
-            locations(), known, AmeliaHints.badHostPorts(AmeliaHints.current(sim)), AmeliaBest.get(net), exclude,
+            locations(), known, AmeliaHints.badHostPorts(hints), AmeliaBest.get(net), exclude,
             allowLastResort = AmeliaPolicy.lastResortAllowed(AmeliaManager.getSubInfo(), now),
+            good = AmeliaHints.goodHostPorts(hints),
+            quarantined = AmeliaQuarantine.active(net, now),
         )
     }
 }

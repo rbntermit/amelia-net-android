@@ -438,6 +438,19 @@ internal fun ReserveFallbackBanner(onRenew: () -> Unit) {
     }
 }
 
+/** 1.5.9: "🚧 Оператор включил «белые списки» …" on the main screen (AmeliaWhitelist). */
+@Composable
+internal fun WhitelistCard() {
+    Glass(Modifier.fillMaxWidth(), tint = Color(0x40FFB547)) {
+        Text(
+            stringResource(R.string.amelia_whitelist_card),
+            color = Brand.Text,
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.padding(16.dp),
+        )
+    }
+}
+
 /** "проверено 3 минуты назад · за 7,4 с" under the location list. */
 @Composable
 internal fun CheckedAgo(checkedAt: Long, lastCheckMs: Long, modifier: Modifier = Modifier) {

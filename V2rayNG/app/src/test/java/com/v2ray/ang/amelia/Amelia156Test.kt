@@ -38,7 +38,7 @@ class Amelia156Test {
         // "Казахстан 1" chosen by hand, 3 failures over 30 s
         val chosen = AmeliaManual.chosen(AmeliaManual.State(), "Казахстан 1", now - 60_000)
         val first = now - AmeliaPolicy.MANUAL_SPAN_MS
-        assertTrue(AmeliaPolicy.broken(manual = true, failures = 3, firstFailAt = first, now = now, noTraffic = false))
+        assertTrue(AmeliaPolicy.broken(manual = true, failures = 3, firstFailAt = first, now = now))
         assertTrue(AmeliaPolicy.maySwitch(AmeliaPolicy.modeOf(null), manual = true, respectUntil = chosen.respectUntil, now = now))
         // the switch remembers what was left: the notice says "Казахстан 1 не отвечает — переключились на …"
         val left = AmeliaManual.left(chosen, "Казахстан 1", now)

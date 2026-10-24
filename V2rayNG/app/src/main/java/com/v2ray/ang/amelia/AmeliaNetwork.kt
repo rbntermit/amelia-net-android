@@ -13,6 +13,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.InetAddress
+import java.util.concurrent.TimeUnit
 
 /**
  * The phone's own network (not the VPN) for /app/report and /app/probe, so the server sees the
@@ -98,13 +99,22 @@ object AmeliaNetwork {
      * Blocking. GET [path] from [POST_BASE_URLS] in order, only over the phone's own network
      * (never the tunnel: the server must see the provider). Null when nobody answered.
      */
-    fun getDirect(context: Context, path: String): String? {
+    fun getDirect(context: Context, path: String, timeoutMs: Long? = null): String? {
         val network = physicalNetwork(context) ?: return null
         val client = clientOn(network)
+        // 1.5.9: [timeoutMs] is the whole budget (/app/hints: 3 s), shared by the addresses in turn
+        val deadline = timeoutMs?.let { System.currentTimeMillis() + it }
         for (base in POST_BASE_URLS) {
+            val call = if (deadline == null) {
+                client
+            } else {
+                val left = deadline - System.currentTimeMillis()
+                if (left <= 0) break
+                client.newBuilder().callTimeout(left, TimeUnit.MILLISECONDS).build()
+            }
             try {
                 val request = Request.Builder().url(base + path).header("User-Agent", AmeliaVersions.userAgent()).build()
-                client.newCall(request).execute().use { resp ->
+                call.newCall(request).execute().use { resp ->
                     if (resp.isSuccessful) return resp.body.string()
                     LogUtil.w(AppConfig.TAG, "Amelia: GET $path HTTP ${resp.code} from $base")
                 }

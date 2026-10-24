@@ -28,7 +28,7 @@ object AmeliaPolicy {
     /** Manual choice: failures in a row and the time they must span before it counts as broken. */
     const val MANUAL_FAILURES = 3
     const val MANUAL_SPAN_MS = 30_000L
-    /** Automatic choice: two failures in a row (one when no data came back at all). */
+    /** Automatic choice: two failed checks in a row (1.5.9: also when no data came back at all). */
     const val AUTO_FAILURES = 2
 
     /** Pure: the mode from the stored value; none or unknown → [DEFAULT_MODE]. A stored choice is kept. */
@@ -85,10 +85,21 @@ object AmeliaPolicy {
 
     fun offlineWait(step: Int): Long = OFFLINE_BACKOFF_MS[step.coerceIn(0, OFFLINE_BACKOFF_MS.lastIndex)]
 
-    /** Is the current location broken, given the failures seen so far? */
-    fun broken(manual: Boolean, failures: Int, firstFailAt: Long, now: Long, noTraffic: Boolean): Boolean =
+    /**
+     * Is the current location broken, given the failed checks through the tunnel so far?
+     * 1.5.9: "no traffic" alone no longer counts: an automatic choice needs [AUTO_FAILURES]
+     * failed checks in a row either way.
+     */
+    fun broken(manual: Boolean, failures: Int, firstFailAt: Long, now: Long): Boolean =
         if (manual) failures >= MANUAL_FAILURES && now - firstFailAt >= MANUAL_SPAN_MS
-        else failures >= AUTO_FAILURES || (failures >= 1 && noTraffic)
+        else failures >= AUTO_FAILURES
+
+    /** 1.5.9: the reason written to the switch log: which one was confirmed by the checks. */
+    fun switchReason(manual: Boolean, noTraffic: Boolean): String = when {
+        manual -> "не ответил $MANUAL_FAILURES раза"
+        noTraffic -> "трафика нет, проверка через туннель не прошла 2 раза"
+        else -> "нет ответа 2 раза"
+    }
 
     /** May the daemon move away from the current location on its own? */
     fun maySwitch(mode: Mode, manual: Boolean, respectUntil: Long, now: Long): Boolean = when (mode) {
@@ -146,6 +157,8 @@ object AmeliaManual {
     fun markChosen(guid: String, now: Long = System.currentTimeMillis()) {
         val name = nameOf(guid) ?: return
         save(chosen(load(), name, now))
+        // 1.5.9: the person's choice lifts the quarantine
+        AmeliaQuarantine.releaseName(name)
     }
 
     /** "⚡ Подключить лучший" and other automatic picks: not a manual choice. */

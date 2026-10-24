@@ -45,6 +45,8 @@ enum class ConnPhase {
     ALL_FAILED,
     /** The location chosen by hand does not answer; the daemon leaves it alone (1.4.0). */
     MANUAL_FAILED,
+    /** 1.5.9: the operator lets only allowed sites through; the daemon waits (AmeliaWhitelist). */
+    WHITELIST,
 }
 
 data class AmeliaUiState(
@@ -941,6 +943,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             AmeliaDaemon.Phase.NO_INTERNET.name -> ConnPhase.NO_INTERNET
             AmeliaDaemon.Phase.ALL_FAILED.name -> ConnPhase.ALL_FAILED
             AmeliaDaemon.Phase.MANUAL_FAILED.name -> ConnPhase.MANUAL_FAILED
+            AmeliaDaemon.Phase.WHITELIST.name -> ConnPhase.WHITELIST
             else -> return
         }
         if (phase == ConnPhase.SWITCHING) expectRestart = true

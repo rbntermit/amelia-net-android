@@ -95,13 +95,12 @@ class Amelia140Test {
     @Test
     fun manualChoiceNeedsThreeFailuresOverThirtySeconds() {
         val t = 1_000_000L
-        assertFalse(AmeliaPolicy.broken(manual = true, failures = 2, firstFailAt = t, now = t + 40_000, noTraffic = true))
-        assertFalse(AmeliaPolicy.broken(manual = true, failures = 3, firstFailAt = t, now = t + 20_000, noTraffic = false))
-        assertTrue(AmeliaPolicy.broken(manual = true, failures = 3, firstFailAt = t, now = t + 30_000, noTraffic = false))
-        // automatic choice: two in a row, or one when no data came back at all
-        assertTrue(AmeliaPolicy.broken(manual = false, failures = 2, firstFailAt = t, now = t, noTraffic = false))
-        assertTrue(AmeliaPolicy.broken(manual = false, failures = 1, firstFailAt = t, now = t, noTraffic = true))
-        assertFalse(AmeliaPolicy.broken(manual = false, failures = 1, firstFailAt = t, now = t, noTraffic = false))
+        assertFalse(AmeliaPolicy.broken(manual = true, failures = 2, firstFailAt = t, now = t + 40_000))
+        assertFalse(AmeliaPolicy.broken(manual = true, failures = 3, firstFailAt = t, now = t + 20_000))
+        assertTrue(AmeliaPolicy.broken(manual = true, failures = 3, firstFailAt = t, now = t + 30_000))
+        // automatic choice: two in a row (1.5.9: "no traffic" alone is not enough, see Amelia159Test)
+        assertTrue(AmeliaPolicy.broken(manual = false, failures = 2, firstFailAt = t, now = t))
+        assertFalse(AmeliaPolicy.broken(manual = false, failures = 1, firstFailAt = t, now = t))
     }
 
     @Test

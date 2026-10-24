@@ -42,9 +42,12 @@ import java.util.concurrent.TimeUnit
  *
  * - **Watch**: every [INTERVAL_SCREEN_ON_MS] ([INTERVAL_SCREEN_OFF_MS] with the screen off) a
  *   request through the current location to two generate_204 addresses ([PROBE_URLS], any one
- *   is enough, [PROBE_TIMEOUT_MS]). Broken: two failures in a row for an automatic choice (one
- *   when no data came back at all); for a location chosen by hand three failures over at least
- *   30 s and a last 10 s attempt (AmeliaPolicy).
+ *   is enough, [PROBE_TIMEOUT_MS]). Broken: two failures in a row for an automatic choice (1.5.9:
+ *   also when no data came back at all); for a location chosen by hand three failures over at
+ *   least 30 s and a last 10 s attempt (AmeliaPolicy).
+ * - **1.5.9**: the hints' "good" list goes first in the queue; a location left after a failure is
+ *   in quarantine for 30 min (AmeliaQuarantine); at most 4 switches in 30 min
+ *   (AmeliaSwitchLimit); "белые списки" stop trying locations (AmeliaWhitelist).
  * - **No internet**: without a validated network, or when ya.ru / google do not answer around
  *   the tunnel, nothing is judged or switched; checks back off (30 s … 5 min), and after the
  *   network is back the daemon waits [SETTLE_MS] before the next check.
@@ -59,8 +62,8 @@ import java.util.concurrent.TimeUnit
  */
 object AmeliaDaemon {
 
-    /** Same names as the app's ConnPhase where they overlap. */
-    enum class Phase { CHECKING, CONNECTED, SWITCHING, NO_INTERNET, ALL_FAILED, MANUAL_FAILED }
+    /** Same names as the app's ConnPhase where they overlap. WHITELIST: 1.5.9, see AmeliaWhitelist. */
+    enum class Phase { CHECKING, CONNECTED, SWITCHING, NO_INTERNET, ALL_FAILED, MANUAL_FAILED, WHITELIST }
 
     data class Health(
         val phase: String,
@@ -103,6 +106,9 @@ object AmeliaDaemon {
 
     private const val SWITCH_CHANNEL = "amelia_switch"
     private const val SWITCH_NOTIFICATION_ID = 7303
+    /** 1.5.9: "Оператор режет часть серверов" (switch limit) and "белые списки". */
+    private const val LIMIT_NOTIFICATION_ID = 7304
+    private const val WHITELIST_NOTIFICATION_ID = 7305
 
     private val watchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val bgScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -122,6 +128,14 @@ object AmeliaDaemon {
     @Volatile private var failures = 0
     @Volatile private var firstFailAt = 0L
     @Volatile private var lastLeaveTry = 0L
+    /** 1.5.9: switch rounds in a row that found nothing working (AmeliaWhitelist.EMPTY_ROUNDS). */
+    @Volatile private var emptyRounds = 0
+    /** 1.5.9: the next round checks for white lists first. */
+    @Volatile private var whitelistCheckDue = false
+    /** 1.5.9: last check of group B while in white-list mode (0: check at once). */
+    @Volatile private var lastWhitelistCheck = 0L
+    /** 1.5.9: "Оператор режет часть серверов" already said for this run of the switch limit. */
+    @Volatile private var limitNotified = false
 
     // session traffic
     private var startedAt = 0L
@@ -144,9 +158,14 @@ object AmeliaDaemon {
         resetFailures()
         freshTunnel = true
         lastLeaveTry = 0L
+        emptyRounds = 0
+        whitelistCheckDue = false
+        lastWhitelistCheck = 0L
         lastTraffic = Traffic(0, 0, 0, 0, startedAt)
         startWatch(service, 0L)
         bgScope.launch {
+            // 1.5.9: a white-list mode from an earlier run is found again by the checks if it still holds
+            AmeliaWhitelist.exit()
             // the native library is loaded here anyway: cache the core's own version for the app
             AmeliaVersions.xray()
             AmeliaHints.refreshIfStale(service)
@@ -163,6 +182,8 @@ object AmeliaDaemon {
         lastHealth = null
         lastTraffic = null
         startedAt = 0L
+        // 1.5.9: probe and report must not say "white lists" while the VPN is off
+        bgScope.launch { AmeliaWhitelist.exit() }
     }
 
     /** The app asked for the current state (MSG_REGISTER_CLIENT). */
@@ -185,6 +206,8 @@ object AmeliaDaemon {
         resetFailures()
         settleNetwork = true
         freshTunnel = true
+        // 1.5.9: in white-list mode group B is checked again right away (Wi-Fi ends the mode)
+        lastWhitelistCheck = 0L
         bgScope.launch {
             // the hints tell this provider's AS: the network key and what is cut here
             AmeliaHints.refreshIfStale(service, force = true)
@@ -261,6 +284,14 @@ object AmeliaDaemon {
             settleNetwork = false
             delay(NETWORK_SETTLE_MS)
         }
+        // 1.5.9: white lists: locations are not tried, only group B is checked again
+        if (AmeliaWhitelist.isActive()) {
+            val wait = whitelistTick(service)
+            if (wait > 0) return wait
+        } else if (whitelistCheckDue) {
+            whitelistCheckDue = false
+            checkWhitelist(service)?.let { return it }
+        }
         if (freshTunnel) warmUp()
 
         val selected = MmkvManager.getSelectServer()
@@ -272,8 +303,9 @@ object AmeliaDaemon {
         var ms = probe(reserve)
         val now0 = System.currentTimeMillis()
         val silent = noTraffic(now0, lastProxyUpAt, lastProxyDownAt, lastTrafficAt)
-        if (ms < 0 && !manual && !silent && failures == 0) {
-            // one slow answer is not a dead server: confirm right away
+        if (ms < 0 && !manual && failures == 0) {
+            // one slow answer is not a dead server: confirm right away. 1.5.9: also when no
+            // traffic came back ("трафика нет" alone never switches)
             delay(CONFIRM_DELAY_MS)
             ms = probe(reserve)
         }
@@ -287,8 +319,8 @@ object AmeliaDaemon {
 
         val now = System.currentTimeMillis()
         if (failures == 0) firstFailAt = now
-        failures += if (!manual && failures == 0 && !silent) 2 else 1 // the confirming probe above counted too
-        if (!AmeliaPolicy.broken(manual, failures, firstFailAt, now, silent)) return FAILING_RETRY_MS
+        failures += if (!manual && failures == 0) 2 else 1 // the confirming probe above counted too
+        if (!AmeliaPolicy.broken(manual, failures, firstFailAt, now)) return FAILING_RETRY_MS
         if (manual) {
             // last chance with a longer wait before leaving what the person chose
             val last = probe(reserve, FINAL_PROBE_TIMEOUT_MS)
@@ -303,20 +335,96 @@ object AmeliaDaemon {
         if (!AmeliaFailover.directInternetOk(service)) return offline(service, "нет интернета")
         noInternetStep = 0
         selected?.let { putFailure(service, it) }
-        val why = when {
-            silent -> "трафика нет"
-            manual -> "не ответил ${AmeliaPolicy.MANUAL_FAILURES} раза"
-            else -> "нет ответа 2 раза"
-        }
+        val why = AmeliaPolicy.switchReason(manual, silent)
         val respect = AmeliaManual.load().respectUntil
         if (!AmeliaPolicy.maySwitch(AmeliaPolicy.mode(), manual, respect, now)) {
             AmeliaJournal.add("${name.orEmpty()} $why — автопереключение не трогает этот выбор")
             report(service, Health(if (manual) Phase.MANUAL_FAILED.name else Phase.ALL_FAILED.name, guid = selected))
             return INTERVAL_SCREEN_ON_MS
         }
+        // 1.5.9: at most 4 automatic switches in 30 minutes, then stay and check every 5 minutes
+        if (!AmeliaSwitchLimit.allowed(AmeliaSwitchLimit.times(AmeliaEvents.list()), now)) {
+            resetFailures()
+            return switchLimited(service, name.orEmpty(), why)
+        }
+        limitNotified = false
         val result = switchFast(service, selected, why)
         resetFailures()
         return result
+    }
+
+    /** 1.5.9: the switch limit is reached: stay on the current location, say so once. */
+    private fun switchLimited(service: Service, name: String, why: String): Long {
+        AmeliaJournal.add("$name $why — уже ${AmeliaSwitchLimit.MAX} переключения за 30 мин, остаюсь и проверяю раз в 5 мин")
+        if (!limitNotified) {
+            limitNotified = true
+            notifyQuiet(service, LIMIT_NOTIFICATION_ID, service.getString(R.string.amelia_limit_notice, name))
+        }
+        return AmeliaSwitchLimit.RECHECK_MS
+    }
+
+    /**
+     * 1.5.9: most locations fail. Does the phone reach only allowed Russian sites (white lists)?
+     * Returns the wait before the next round when the round ends here, null to go on as usual.
+     */
+    private suspend fun checkWhitelist(service: Service): Long? {
+        val info = AmeliaNetwork.info(service)
+        if (info.net != AmeliaNetwork.NET_MOBILE) return null
+        val (a, b) = coroutineScope {
+            val a = async { AmeliaWhitelist.anyOpens(service, AmeliaWhitelist.GROUP_A) }
+            val b = async { AmeliaWhitelist.anyOpens(service, AmeliaWhitelist.groupB(AmeliaWhitelist.subscriptionBase())) }
+            a.await() to b.await()
+        }
+        val verdict = AmeliaWhitelist.verdict(a, b)
+        LogUtil.i(AppConfig.TAG, "Amelia white lists: A=$a B=$b → $verdict")
+        return when (verdict) {
+            AmeliaWhitelist.Verdict.WHITELIST -> enterWhitelist(service)
+            AmeliaWhitelist.Verdict.OFFLINE -> offline(service, "не открываются даже российские сайты")
+            AmeliaWhitelist.Verdict.NORMAL -> {
+                AmeliaJournal.add("Обычные сайты открываются — оператор режет отдельные серверы")
+                null
+            }
+        }
+    }
+
+    private fun enterWhitelist(service: Service): Long {
+        val wasActive = AmeliaWhitelist.isActive()
+        AmeliaWhitelist.enter(AmeliaHints.netKey(service))
+        lastWhitelistCheck = System.currentTimeMillis()
+        resetFailures()
+        report(service, Health(Phase.WHITELIST.name, guid = MmkvManager.getSelectServer()))
+        if (!wasActive) {
+            AmeliaJournal.add("Оператор включил «белые списки» — локации не перебираю, проверяю раз в 5 мин")
+            notifyQuiet(service, WHITELIST_NOTIFICATION_ID, service.getString(R.string.amelia_whitelist_notice))
+        }
+        return AmeliaWhitelist.RECHECK_MS
+    }
+
+    /**
+     * 1.5.9: one round in white-list mode. Group B every 5 minutes and right after a network
+     * change; B opens or the phone is on Wi-Fi → the mode ends and the round goes on as usual (0).
+     */
+    private suspend fun whitelistTick(service: Service): Long {
+        val now = System.currentTimeMillis()
+        val onWifi = AmeliaNetwork.info(service).net == AmeliaNetwork.NET_WIFI
+        val due = now - lastWhitelistCheck !in 0 until AmeliaWhitelist.RECHECK_MS
+        if (!onWifi && !due) {
+            report(service, Health(Phase.WHITELIST.name, guid = MmkvManager.getSelectServer()))
+            return AmeliaWhitelist.RECHECK_MS - (now - lastWhitelistCheck)
+        }
+        val bOk = !onWifi && AmeliaWhitelist.anyOpens(service, AmeliaWhitelist.groupB(AmeliaWhitelist.subscriptionBase()))
+        lastWhitelistCheck = now
+        if (!AmeliaWhitelist.shouldExit(bOk, onWifi)) {
+            report(service, Health(Phase.WHITELIST.name, guid = MmkvManager.getSelectServer()))
+            return AmeliaWhitelist.RECHECK_MS
+        }
+        AmeliaWhitelist.exit()
+        AmeliaJournal.add(if (onWifi) "Подключились к Wi‑Fi — «белые списки» позади, подключаюсь как обычно" else "«Белые списки» сняли — подключаюсь как обычно")
+        NotificationManagerCompat.from(service).cancel(WHITELIST_NOTIFICATION_ID)
+        emptyRounds = 0
+        resetFailures()
+        freshTunnel = true
+        return 0L
     }
 
     private fun offline(service: Service, why: String): Long {
@@ -341,7 +449,9 @@ object AmeliaDaemon {
         )
         // only foreign locations are worth starting with on this network
         if (!AmeliaPolicy.isLastResort(config.remarks)) AmeliaBest.remember(net, config.remarks)
-        bgScope.launch { AmeliaHints.refreshIfStale(service) }
+        emptyRounds = 0
+        // 1.5.9: what works for this provider, asked again every 15 minutes while the VPN is on
+        bgScope.launch { AmeliaHints.refreshIfOlder(service, AmeliaHints.WHILE_ON_MS) }
     }
 
     private fun putFailure(service: Service, guid: String) {
@@ -393,6 +503,8 @@ object AmeliaDaemon {
     private suspend fun switchFast(service: Service, failed: String?, why: String): Long {
         val t0 = System.currentTimeMillis()
         val fromName = failed?.let { MmkvManager.decodeServerConfig(it)?.remarks }.orEmpty()
+        // 1.5.9: what works for this provider right now, if the hints are older than 2 minutes (≤ 3 s)
+        AmeliaHints.refreshIfOlder(service, AmeliaHints.BEFORE_SWITCH_MS)
         quickPickIfStale(service, failed)
         startFullCheck(service)
         val tried = mutableSetOf<String>().apply { failed?.let { add(it) } }
@@ -406,6 +518,8 @@ object AmeliaDaemon {
             tried += next
             val ms = switchTo(service, next)
             if (ms >= 0) {
+                // 1.5.9: the one we left is not chosen automatically for 30 min on this network
+                if (fromName.isNotEmpty()) AmeliaQuarantine.put(fromName, AmeliaHints.netKey(service))
                 done(service, failed, next, fromName, why, t0, ms)
                 return interval(service)
             }
@@ -414,8 +528,16 @@ object AmeliaDaemon {
         restore(service, failed)
         AmeliaJournal.add("$fromName $why — ни одна локация не ответила")
         report(service, Health(Phase.ALL_FAILED.name, guid = MmkvManager.getSelectServer()))
+        // 1.5.9: two rounds in a row with nothing working on mobile: check for white lists next
+        emptyRounds++
+        if (AmeliaWhitelist.shouldCheck(onMobile(service), tooManyFailed = false, emptyRounds = emptyRounds)) {
+            whitelistCheckDue = true
+            return FAILING_RETRY_MS
+        }
         return ALL_FAILED_RETRY_MS
     }
+
+    private fun onMobile(context: Context) = AmeliaNetwork.info(context).net == AmeliaNetwork.NET_MOBILE
 
     /** Selects [guid], restarts the core in place and judges it once it has settled. */
     private suspend fun switchTo(service: Service, guid: String): Long {
@@ -469,7 +591,8 @@ object AmeliaDaemon {
             it.guid != failed && fresh[it.name]?.ok == true && !AmeliaPolicy.isLastResort(it.name)
         }
         if (haveFresh) return
-        val guids = AmeliaQuickPick.candidates(locations, store.entries, setOfNotNull(failed))
+        val good = AmeliaHints.goodHostPorts(AmeliaHints.current(AmeliaProbe.netKey(AmeliaNetwork.info(service))))
+        val guids = AmeliaQuickPick.candidates(locations, store.entries, setOfNotNull(failed), good)
         if (guids.isEmpty()) return
         val net = AmeliaHints.netKey(service)
         val answered = AmeliaQuickPick.quickest(guids, check = { AmeliaCheck.checkOne(service, it) }) { r ->
@@ -543,13 +666,25 @@ object AmeliaDaemon {
             val guids = MmkvManager.decodeServerList(AmeliaConfig.SUBSCRIPTION_ID)
             if (guids.isEmpty()) return@launch
             val net = AmeliaHints.netKey(service)
+            var total = 0
+            var failed = 0
             val ms = AmeliaCheck.checkAll(service, guids) { r ->
                 AmeliaChecks.put(service, r, net)
                 MessageHelper.sendMsg2UI(service, AmeliaConfig.MSG_CHECKS, "")
+                synchronized(this@AmeliaDaemon) {
+                    total++
+                    if (!r.ok) failed++
+                }
             }
             AmeliaChecks.putFull(ms)
             MessageHelper.sendMsg2UI(service, AmeliaConfig.MSG_CHECKS, "")
-            LogUtil.i(AppConfig.TAG, "Amelia: full check of ${guids.size} locations took $ms ms")
+            LogUtil.i(AppConfig.TAG, "Amelia: full check of ${guids.size} locations took $ms ms, $failed of $total failed")
+            // 1.5.9: 80% and more fail on mobile: the next round checks for white lists first
+            val many = AmeliaWhitelist.tooManyFailed(failed, total)
+            if (!AmeliaWhitelist.isActive() && AmeliaWhitelist.shouldCheck(onMobile(service), many, emptyRounds)) {
+                whitelistCheckDue = true
+                startWatch(service, 0L)
+            }
         }
     }
 
@@ -559,6 +694,38 @@ object AmeliaDaemon {
     private fun refreshTile(context: Context) {
         runCatching { TileService.requestListeningState(context, ComponentName(context, QSTileService::class.java)) }
         AmeliaWidget.requestUpdate(context)
+    }
+
+    /** 1.5.9: a quiet notice on the switch channel that opens the app ([id]: one per kind). */
+    private fun notifyQuiet(context: Context, id: Int, text: String) {
+        val nm = NotificationManagerCompat.from(context)
+        if (!nm.areNotificationsEnabled()) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.getSystemService(NotificationManager::class.java).createNotificationChannel(
+                NotificationChannel(
+                    SWITCH_CHANNEL, context.getString(R.string.amelia_switch_channel), NotificationManager.IMPORTANCE_LOW,
+                ).apply { setSound(null, null) },
+            )
+        }
+        val open = PendingIntent.getActivity(
+            context, id,
+            Intent(context, AmeliaActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val n = NotificationCompat.Builder(context, SWITCH_CHANNEL)
+            .setSmallIcon(R.drawable.ic_stat_name)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setSilent(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setContentIntent(open)
+            .setAutoCancel(true)
+            .build()
+        try {
+            nm.notify(id, n)
+        } catch (e: SecurityException) {
+            LogUtil.w(AppConfig.TAG, "Amelia: no permission for notice $id", e)
+        }
     }
 
     /**

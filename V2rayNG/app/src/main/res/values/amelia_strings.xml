@@ -301,4 +301,9 @@
     <string name="amelia_widget_description">Включайте VPN в одно касание</string>
     <string name="amelia_widget_sub_until">Подписка до %1$s</string>
     <string name="amelia_widget_connecting">Подключается…</string>
+    <!-- 1.5.9: switch limit and operator white lists -->
+    <string name="amelia_limit_notice">Оператор режет часть серверов — остаёмся на «%1$s», проверяем дальше сами</string>
+    <string name="amelia_phase_whitelist">Оператор включил «белые списки»</string>
+    <string name="amelia_whitelist_card">🚧 Оператор включил «белые списки» — открываются только разрешённые сайты, VPN через мобильную сеть сейчас не пробьётся. Подключитесь к Wi‑Fi. Как только ограничение снимут, приложение подключится само.</string>
+    <string name="amelia_whitelist_notice">Оператор включил «белые списки» — VPN через мобильную сеть сейчас не пробьётся. Подключитесь к Wi‑Fi, остальное приложение сделает само.</string>
 </resources>

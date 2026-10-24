@@ -151,10 +151,22 @@ object AmeliaQuickPick {
      * Foreign (not reserve, not Russian-exit) locations other than [exclude], best past ping
      * first (any age; never-checked ones after), at most [QUICK_COUNT].
      */
-    fun candidates(locations: List<AmeliaQueue.Location>, last: Map<String, AmeliaChecks.Entry>, exclude: Set<String>): List<String> =
+    fun candidates(
+        locations: List<AmeliaQueue.Location>,
+        last: Map<String, AmeliaChecks.Entry>,
+        exclude: Set<String>,
+        /** 1.5.9: what works for this provider (AmeliaHints.goodHostPorts) is checked first. */
+        good: Map<String, Int> = emptyMap(),
+    ): List<String> =
         locations.asSequence()
             .filter { it.guid !in exclude && !AmeliaReserve.isReserve(it.name) && !AmeliaReserve.isRussianExit(it.name) }
-            .sortedWith(compareBy({ if (last[it.name]?.ok == true) 0 else if (last[it.name] == null) 1 else 2 }, { last[it.name]?.ms?.takeIf { ms -> ms >= 0 } ?: Long.MAX_VALUE }))
+            .sortedWith(
+                compareBy(
+                    { -(good[it.hostPort] ?: 0) },
+                    { if (last[it.name]?.ok == true) 0 else if (last[it.name] == null) 1 else 2 },
+                    { last[it.name]?.ms?.takeIf { ms -> ms >= 0 } ?: Long.MAX_VALUE },
+                ),
+            )
             .take(QUICK_COUNT).map { it.guid }.toList()
 
     /** Checks [guids] at the same time; those that answered within [deadlineMs], fastest first. */

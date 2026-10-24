@@ -507,6 +507,11 @@ private fun HomeScreen(
         PowerButton(state.phase, enabled = state.locations.isNotEmpty(), onClick = onToggle)
         Spacer(Modifier.height(16.dp))
         PhaseText(state)
+        if (state.phase == ConnPhase.WHITELIST) {
+            // 1.5.9: instead of error texts: what is going on and what helps
+            Spacer(Modifier.height(12.dp))
+            WhitelistCard()
+        }
         state.traffic?.takeIf { state.isRunning }?.let {
             Spacer(Modifier.height(10.dp))
             TrafficPanel(it)
@@ -683,7 +688,7 @@ private fun phaseColor(phase: ConnPhase): Color = when (phase) {
     ConnPhase.OFF -> Brand.Muted
     ConnPhase.STARTING, ConnPhase.CHECKING, ConnPhase.SWITCHING -> Brand.Sky
     ConnPhase.CONNECTED -> Brand.Green
-    ConnPhase.NO_INTERNET, ConnPhase.ALL_FAILED, ConnPhase.MANUAL_FAILED -> Brand.Amber
+    ConnPhase.NO_INTERNET, ConnPhase.ALL_FAILED, ConnPhase.MANUAL_FAILED, ConnPhase.WHITELIST -> Brand.Amber
 }
 
 private fun ConnPhase.inProgress() =
@@ -798,6 +803,7 @@ private fun PhaseText(state: AmeliaUiState) {
         ConnPhase.MANUAL_FAILED -> stringResource(R.string.amelia_phase_manual_failed)
         ConnPhase.NO_INTERNET -> stringResource(R.string.amelia_phase_no_internet)
         ConnPhase.ALL_FAILED -> stringResource(R.string.amelia_phase_all_failed)
+        ConnPhase.WHITELIST -> stringResource(R.string.amelia_phase_whitelist)
     }
     Text(
         text,
