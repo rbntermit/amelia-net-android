@@ -78,16 +78,19 @@ object HttpUtil {
         host: String,
         timeoutMs: Long,
         lookup: (String) -> Array<InetAddress> = { InetAddress.getAllByName(it) },
+        onFail: (String, Throwable?) -> Unit = { msg, e ->
+            if (e == null) LogUtil.w(AppConfig.TAG, msg) else LogUtil.w(AppConfig.TAG, msg, e)
+        },
     ): Array<InetAddress>? {
         val future = dnsPool.submit<Array<InetAddress>> { lookup(host) }
         return try {
             future.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
         } catch (e: java.util.concurrent.TimeoutException) {
             future.cancel(true)
-            LogUtil.w(AppConfig.TAG, "DNS: no answer for a server name within $timeoutMs ms")
+            onFail("DNS: no answer for a server name within $timeoutMs ms", null)
             null
         } catch (e: Exception) {
-            LogUtil.w(AppConfig.TAG, "DNS: lookup of a server name failed", e)
+            onFail("DNS: lookup of a server name failed", e)
             null
         }
     }
