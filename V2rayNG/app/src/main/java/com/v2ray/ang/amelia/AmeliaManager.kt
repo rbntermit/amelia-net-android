@@ -9,6 +9,7 @@ import com.v2ray.ang.handler.SubscriptionUpdater
 import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
+import okhttp3.OkHttpClient
 
 /**
  * Owns the key and the single Amelia.Net subscription. Data lives in the upstream stores
@@ -75,6 +76,15 @@ object AmeliaManager {
         return load(key, AmeliaHttp.lastBase(), saveKeyOnSuccess = false)
     }
 
+    /**
+     * 1.6.1, blocking: re-downloads the subscription only from msk2, then msk1, over [direct] (the
+     * phone's own network), within [timeoutMs] in all (AmeliaResubscribe). Imported as usual.
+     */
+    fun refreshDirect(direct: OkHttpClient, timeoutMs: Long): Outcome {
+        val key = getKey() ?: return Outcome.INVALID_FORMAT
+        return load(key, saveKeyOnSuccess = false) { AmeliaSubscriptionClient.fetchDirect(key, direct, timeoutMs) }
+    }
+
     private const val PREF_SUB_SOURCE = "amelia_sub_source"
 
     /** Address and route (TUNNEL / DIRECT) of the last successful subscription update. */
@@ -100,8 +110,11 @@ object AmeliaManager {
         AmeliaWidget.requestUpdate(AngApplication.application)
     }
 
-    private fun load(key: String, preferredBaseUrl: String?, saveKeyOnSuccess: Boolean): Outcome {
-        val result = AmeliaSubscriptionClient.fetch(key, preferredBaseUrl)
+    private fun load(key: String, preferredBaseUrl: String?, saveKeyOnSuccess: Boolean): Outcome =
+        load(key, saveKeyOnSuccess) { AmeliaSubscriptionClient.fetch(key, preferredBaseUrl) }
+
+    private fun load(key: String, saveKeyOnSuccess: Boolean, fetch: () -> AmeliaSubscriptionClient.Result): Outcome {
+        val result = fetch()
         if (result !is AmeliaSubscriptionClient.Result.Ok) {
             return if (result is AmeliaSubscriptionClient.Result.UnknownKey) Outcome.UNKNOWN_KEY else Outcome.NETWORK_ERROR
         }

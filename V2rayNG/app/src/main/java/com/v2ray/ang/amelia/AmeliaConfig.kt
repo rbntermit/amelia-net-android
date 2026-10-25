@@ -19,6 +19,15 @@ object AmeliaConfig {
         "https://sub.ameliajustamelia.net:9443",
     )
 
+    /**
+     * 1.6.1: the subscription base (msk2) and its backup (msk1), in this order, for the download
+     * when nothing works (AmeliaResubscribe: the server may have moved a location to another port).
+     */
+    val RESUBSCRIBE_BASE_URLS = listOf(
+        "https://msk2.ameliajustamelia.com:9443",
+        "https://msk1.ameliajustamelia.com:9443",
+    )
+
     /** Our domains: URLs on them may be redirected to whichever mirror answered. */
     val OWN_DOMAINS = listOf("ameliajustamelia.com", "ameliajustamelia.net")
     const val SUB_PATH = "/sub/"

@@ -95,9 +95,12 @@ object AmeliaSwitchLimit {
 
     fun allowed(switchTimes: List<Long>, now: Long): Boolean = switchTimes.count { now - it in 0 until WINDOW_MS } < MAX
 
-    /** Epoch millis of the logged automatic switches; moves over the limit (1.6.0) are not counted. */
+    /**
+     * Epoch millis of the logged automatic switches; moves over the limit (1.6.0) and the lines of
+     * a new subscription download (1.6.1, AmeliaResubscribe) are not counted.
+     */
     fun times(events: List<AmeliaEvents.Event>): List<Long> =
-        events.filter { !isOverLimit(it.why) }.map { it.ts * 1000 }
+        events.filter { !isOverLimit(it.why) && !AmeliaResubscribe.isLogLine(it.why) }.map { it.ts * 1000 }
 
     fun isOverLimit(why: String): Boolean = why.contains(OVER_LIMIT_NOTE)
 
@@ -244,4 +247,72 @@ object AmeliaWhitelist {
 
     /** Base address of the subscription server (the one that last answered). */
     fun subscriptionBase(): String? = AmeliaManager.lastSubscriptionSource()?.first ?: AmeliaConfig.SUB_BASE_URLS.firstOrNull()
+}
+
+/**
+ * 1.6.1: when an operator cuts the way in, the server moves the location to another port, and
+ * the new port comes only with the subscription. So before "nothing works" (and before the white
+ * list check) the daemon downloads the subscription again if it is older than [STALE_MS]: msk2,
+ * then msk1, around the tunnel, [TIMEOUT_MS] in all, at most once in [MIN_INTERVAL_MS] per network.
+ * Locations whose address or port changed are checked at once; their quarantine and old results
+ * are dropped. Unchanged or not downloaded: everything goes on as before.
+ */
+object AmeliaResubscribe {
+
+    const val STALE_MS = 10L * 60 * 1000
+    const val MIN_INTERVAL_MS = 10L * 60 * 1000
+    const val TIMEOUT_MS = 10_000L
+    /** Lines of the switch log written by this check start with it; they are not switches ([AmeliaSwitchLimit.times]). */
+    const val LOG_PREFIX = "подписка "
+    private const val MAX_NETS = 20
+    private const val PREF = "amelia_resubscribe_by_net"
+
+    // ---- pure -------------------------------------------------------------------------------
+
+    /** The subscription is older than [STALE_MS] and this network had no try in the last [MIN_INTERVAL_MS]. */
+    fun due(lastUpdate: Long, lastTry: Long?, now: Long): Boolean =
+        now - lastUpdate > STALE_MS && (lastTry == null || now - lastTry !in 0 until MIN_INTERVAL_MS)
+
+    /**
+     * Names of locations ("name" → "host:port", before and after) whose address or port changed,
+     * new ones included, in the order of [after]. Removed ones are not here: nothing to check.
+     */
+    fun changed(before: Map<String, String>, after: List<Pair<String, String>>): List<String> =
+        after.filter { (name, hostPort) -> before[name] != hostPort }.map { it.first }
+
+    /** For the switch log and the journal: "подписка обновлена: изменилось 2 локации" / "подписка без изменений". */
+    fun logLine(changed: Int): String =
+        if (changed <= 0) "${LOG_PREFIX}без изменений"
+        else "${LOG_PREFIX}обновлена: ${ruCount(changed)}"
+
+    /** "изменилась 1 локация", "изменилось 2 локации", "изменилось 5 локаций". */
+    internal fun ruCount(n: Int): String {
+        val mod10 = n % 10
+        val mod100 = n % 100
+        return when {
+            mod10 == 1 && mod100 != 11 -> "изменилась $n локация"
+            mod10 in 2..4 && mod100 !in 12..14 -> "изменилось $n локации"
+            else -> "изменилось $n локаций"
+        }
+    }
+
+    fun isLogLine(why: String): Boolean = why.startsWith(LOG_PREFIX)
+
+    /** The map of last tries after a try on [net] at [now]; at most [MAX_NETS] networks kept. */
+    fun record(tries: Map<String, Long>, net: String, now: Long): Map<String, Long> =
+        (tries - net).entries.sortedBy { it.value }.takeLast(MAX_NETS - 1).associate { it.key to it.value } + (net to now)
+
+    // ---- storage (MMKV; the daemon writes it) -------------------------------------------------
+
+    private class Store(val nets: Map<String, Long> = emptyMap())
+
+    private fun load(): Map<String, Long> =
+        MmkvManager.decodeSettingsString(PREF)?.takeIf { it.isNotBlank() }
+            ?.let { JsonUtil.fromJsonSafe(it, Store::class.java)?.nets }.orEmpty()
+
+    fun lastTry(net: String): Long? = load()[net]
+
+    fun tried(net: String, now: Long = System.currentTimeMillis()) = synchronized(this) {
+        MmkvManager.encodeSettings(PREF, JsonUtil.toJson(Store(record(load(), net, now))))
+    }
 }

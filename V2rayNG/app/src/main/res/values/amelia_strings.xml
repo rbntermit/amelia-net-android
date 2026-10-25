@@ -208,7 +208,14 @@
     </plurals>
     <string name="amelia_checked_long_ago">проверено давно</string>
     <string name="amelia_checked_took">за %1$s с</string>
-    <string name="amelia_provider_bad">⚠️ у вашего провайдера сейчас не работает</string>
+    <!-- 1.6.1: marks from /app/hints in the list of locations -->
+    <string name="amelia_operator_good">✓ работает у вашего оператора</string>
+    <string name="amelia_operator_bad">⚠ у вашего оператора режут</string>
+    <string name="amelia_operator_note">Пометки — по проверкам других абонентов %1$s, %2$s</string>
+    <string name="amelia_operator_note_short">Пометки — по проверкам других абонентов %1$s</string>
+    <string name="amelia_operator_yours">вашего оператора</string>
+    <string name="amelia_net_mobile">моб. сеть</string>
+    <string name="amelia_net_wifi">Wi‑Fi</string>
     <string name="amelia_connect_best">⚡ Подключить лучший</string>
     <string name="amelia_switch_channel">Переключение локаций</string>
     <string name="amelia_switch_text">%1$s перестал отвечать — переключились на %2$s</string>

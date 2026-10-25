@@ -911,6 +911,7 @@ private fun LocationsSheet(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp),
             )
         }
+        state.operatorNote?.let { OperatorNoteLine(it, Modifier.padding(horizontal = 20.dp)) }
         if (state.locations.isEmpty()) {
             Text(
                 stringResource(R.string.amelia_no_locations),
@@ -950,13 +951,7 @@ private fun LocationsSheet(
                     )
                     Column(Modifier.weight(1f)) {
                         Text(location.name, color = Brand.Text, style = MaterialTheme.typography.bodyLarge)
-                        if (location.guid in state.providerBad) {
-                            Text(
-                                stringResource(R.string.amelia_provider_bad),
-                                color = Brand.Amber,
-                                style = MaterialTheme.typography.labelSmall,
-                            )
-                        }
+                        OperatorMark(state.operatorMarks[location.guid])
                     }
                     Column(horizontalAlignment = Alignment.End) {
                         PingBadge(state.pings[location.guid], state.pinging, AmeliaReserve.isReserve(location.name))
@@ -974,6 +969,40 @@ private fun LocationsSheet(
             }
         }
     }
+}
+
+/** 1.6.1: one line under the name: "✓ работает у вашего оператора" or "⚠ у вашего оператора режут". */
+@Composable
+private fun OperatorMark(mark: AmeliaHints.Mark?) {
+    val (text, color) = when (mark) {
+        AmeliaHints.Mark.GOOD -> R.string.amelia_operator_good to Brand.Green
+        AmeliaHints.Mark.BAD -> R.string.amelia_operator_bad to Brand.Amber
+        null -> return
+    }
+    Text(
+        stringResource(text),
+        color = color,
+        style = MaterialTheme.typography.labelSmall,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
+}
+
+/** 1.6.1: "Пометки — по проверкам других абонентов MTS, моб. сеть" (grey, above the list). */
+@Composable
+private fun OperatorNoteLine(note: OperatorNote, modifier: Modifier = Modifier) {
+    val who = note.operator ?: stringResource(R.string.amelia_operator_yours)
+    val net = when (note.net) {
+        AmeliaNetwork.NET_MOBILE -> stringResource(R.string.amelia_net_mobile)
+        AmeliaNetwork.NET_WIFI -> stringResource(R.string.amelia_net_wifi)
+        else -> null
+    }
+    Text(
+        if (net != null) stringResource(R.string.amelia_operator_note, who, net) else stringResource(R.string.amelia_operator_note_short, who),
+        color = Brand.Muted,
+        style = MaterialTheme.typography.labelSmall,
+        modifier = modifier,
+    )
 }
 
 /** "≈ 48 Мбит/с" from a speed test in the last 24 h, or "замеряю…" while it runs. */
