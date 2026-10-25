@@ -4,7 +4,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.os.LocaleList
 import android.provider.Settings
 import android.util.Base64
@@ -443,15 +442,15 @@ object Utils {
     }
 
     /**
-     * Get the receiver flags based on the Android version.
+     * Flags for the app's runtime broadcast receivers (service commands, state for the screen,
+     * tile and widget).
      *
-     * @return The receiver flags.
+     * Amelia.Net 1.7.0: always not exported. Every process of the app runs under one UID, so
+     * messages between them still arrive, and the system's own broadcasts (screen on/off) too.
+     * Until 1.6.1 Android 13+ got RECEIVER_EXPORTED, and any app could stop the VPN with
+     * `am broadcast … --ei key 4`.
      */
-    fun receiverFlags(): Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        ContextCompat.RECEIVER_EXPORTED
-    } else {
-        ContextCompat.RECEIVER_NOT_EXPORTED
-    }
+    fun receiverFlags(): Int = ContextCompat.RECEIVER_NOT_EXPORTED
 
     /**
      * Check if the package is Xray.

@@ -4,8 +4,10 @@ import com.v2ray.ang.AppConfig
 import com.v2ray.ang.util.LogUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
@@ -13,6 +15,10 @@ import java.util.concurrent.TimeUnit
  * 1.5.7: the service's site on the Russian subscription mirror (opens without VPN and without
  * Telegram): "Личный кабинет", payment by card / СБП and gifts. Opened in the browser.
  * Only the person's key goes into the links, nothing else.
+ *
+ * 1.7.0: the cabinet and payment open with a one-time link ([token]): the key stays out of the
+ * browser's history, its sync and the address checks some browsers send to their servers. No
+ * token (no answer, an error, an older server): the page opens with the key as before.
  */
 object AmeliaSite {
 
@@ -62,6 +68,89 @@ object AmeliaSite {
             .followRedirects(false)
             .build()
     }
+
+    // ---- 1.7.0: the key never goes into the browser's address ------------------------------
+
+    /**
+     * POST <base>/app/site-token {"key": …} → {"ok": true, "t": "t.…", "ttl": 1800, "me": "/me/t.…",
+     * "buy": "/buy?sid=t.…"}; the paths are on the same base. 429: too often, 503: not available.
+     */
+    const val TOKEN_PATH = "/app/site-token"
+    /** The whole request, both addresses together. */
+    const val TOKEN_TIMEOUT_MS = 5_000L
+    /** A token is used at most this long, whatever its ttl says. */
+    const val TOKEN_MAX_CACHE_MS = 20L * 60 * 1000
+
+    /** A one-time link pair from the server, valid until [until] (epoch millis). */
+    data class Token(val base: String, val me: String, val buy: String, val until: Long) {
+        val cabinetUrl: String get() = base + me
+        val buyUrl: String get() = base + buy
+    }
+
+    private class Wire(val ok: Boolean? = null, val t: String? = null, val ttl: Long? = null, val me: String? = null, val buy: String? = null)
+
+    /** Pure: the request body. */
+    fun tokenRequest(key: String): String = com.google.gson.JsonObject().apply { addProperty("key", key) }.toString()
+
+    /**
+     * Pure: the answer of [base] at [now], or null when it is not a usable token. The paths must be
+     * on the same site ("/…"): never a link to somewhere else. Kept for at most 20 minutes.
+     */
+    fun parseToken(base: String, body: String?, now: Long): Token? {
+        val w = body?.let { runCatching { com.google.gson.Gson().fromJson(it, Wire::class.java) }.getOrNull() } ?: return null
+        if (w.ok != true || w.t.isNullOrBlank()) return null
+        fun path(p: String?) = p?.takeIf { it.startsWith("/") && !it.startsWith("//") && it.none(Char::isWhitespace) }
+        val me = path(w.me) ?: return null
+        val buy = path(w.buy) ?: return null
+        val ttlMs = (w.ttl ?: 0L).coerceAtLeast(0L) * 1000
+        val keep = if (ttlMs > 0) minOf(ttlMs, TOKEN_MAX_CACHE_MS) else TOKEN_MAX_CACHE_MS
+        return Token(base, me, buy, now + keep)
+    }
+
+    /** Pure: a token for the same key that has not run out (a minute is left for the page to open). */
+    fun usable(t: Token?, now: Long): Boolean = t != null && now < t.until - 60_000L
+
+    @Volatile private var cached: Pair<String, Token>? = null
+
+    /**
+     * Blocking, any thread: a one-time link pair for [key] from msk2, then msk1, over the phone's
+     * own network (not the tunnel), 5 s in all. Null: no answer or an error → the caller opens the
+     * page with the key as before (better opened than not).
+     */
+    fun token(context: android.content.Context, key: String): Token? {
+        val now = System.currentTimeMillis()
+        cached?.let { (k, t) -> if (k == key && usable(t, now)) return t }
+        val direct = AmeliaNetwork.directClient(context, AmeliaHttp.client).newBuilder()
+            .callTimeout(TOKEN_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            .followRedirects(false)
+            .build()
+        val deadline = now + TOKEN_TIMEOUT_MS
+        for (base in AmeliaConfig.RESUBSCRIBE_BASE_URLS) {
+            val left = deadline - System.currentTimeMillis()
+            if (left <= 0) break
+            try {
+                val request = Request.Builder()
+                    .url(base + TOKEN_PATH)
+                    .header("User-Agent", AmeliaVersions.userAgent())
+                    .post(tokenRequest(key).toRequestBody(JSON))
+                    .build()
+                direct.newBuilder().callTimeout(left, TimeUnit.MILLISECONDS).build().newCall(request).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        parseToken(base, resp.body.string(), System.currentTimeMillis())?.let { t ->
+                            cached = key to t
+                            return t
+                        }
+                    }
+                    LogUtil.w(AppConfig.TAG, "Amelia site: no link token from $base, HTTP ${resp.code}")
+                }
+            } catch (e: Exception) {
+                LogUtil.w(AppConfig.TAG, "Amelia site: link token request failed at $base", e)
+            }
+        }
+        return null
+    }
+
+    private val JSON = "application/json; charset=utf-8".toMediaType()
 
     /** Any HTTP answer from the main address counts; no answer within 5 s → the spare one. */
     suspend fun base(): String = withContext(Dispatchers.IO) {

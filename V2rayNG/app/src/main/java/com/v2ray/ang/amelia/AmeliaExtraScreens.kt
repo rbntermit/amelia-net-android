@@ -108,7 +108,22 @@ class ExtraCallbacks(
     val onGift: () -> Unit,
     /** 1.5.8: the site's shop for someone without a key ("Купить на сайте"). */
     val onShop: () -> Unit,
+    /** 1.7.0: "Заменить ключ на новый?" after an amelia://key/… link: replace, or keep the current one. */
+    val onReplaceKey: () -> Unit = {},
+    val onKeepKey: () -> Unit = {},
 )
+
+/** 1.7.0: a link brought another key than the one entered; nothing changes unless "Заменить" is tapped. */
+@Composable
+internal fun ReplaceKeyDialog(onReplace: () -> Unit, onKeep: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onKeep,
+        title = { Text(stringResource(R.string.amelia_key_replace_title)) },
+        text = { Text(stringResource(R.string.amelia_key_replace_text)) },
+        confirmButton = { TextButton(onClick = onReplace) { Text(stringResource(R.string.amelia_key_replace_yes)) } },
+        dismissButton = { TextButton(onClick = onKeep) { Text(stringResource(R.string.amelia_key_replace_no)) } },
+    )
+}
 
 // ---- shared pieces ---------------------------------------------------------------------------
 

@@ -241,6 +241,10 @@ fun AmeliaApp(
         if (state.installBlocked && state.update != null) {
             InstallBlockedDialog(extra, canDownload = state.update.url != null)
         }
+        // 1.7.0: a link with another key; "Оставить нынешний" and closing keep the key
+        if (state.pendingKeyReplace) {
+            ReplaceKeyDialog(onReplace = extra.onReplaceKey, onKeep = extra.onKeepKey)
+        }
         state.report?.let { r ->
             ReportDialog(
                 r, onSend = extra.onSendReport, onClose = extra.onCloseReport, onCopy = extra.onCopyText,

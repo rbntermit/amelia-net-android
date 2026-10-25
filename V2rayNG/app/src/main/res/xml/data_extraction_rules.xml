@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Amelia.Net 1.7.0, Android 12+ (android:dataExtractionRules): the same as backup_rules.xml,
+     for the cloud backup and for moving to a new phone. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="mmkv/" />
+        <exclude domain="file" path="crashes/" />
+        <exclude domain="file" path="hev-socks5-tunnel.yaml" />
+        <exclude domain="file" path="root/" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="mmkv/" />
+        <exclude domain="file" path="crashes/" />
+        <exclude domain="file" path="hev-socks5-tunnel.yaml" />
+        <exclude domain="file" path="root/" />
+    </device-transfer>
+</data-extraction-rules>

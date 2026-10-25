@@ -30,10 +30,15 @@ import com.v2ray.ang.util.LogUtil
  * 1.6.0: in "белые списки" mode (daemon phase WHITELIST, the same event that shows the card on
  * the main screen) the widget says "Белые списки · нужен Wi‑Fi" in the warning colour, and the
  * button opens the app instead of touching the VPN. The mode ends: the next phase redraws it.
+ *
+ * 1.7.0: "Не работает" (nothing works, the location chosen by hand does not answer) and "Нет
+ * интернета" in the warning colour instead of a green "Подключено", from the same MSG_HEALTH.
+ * The service's state reaches the widget only as an explicit intent ([forward]): the receiver is
+ * not exported and has no filter for the state action, so other apps cannot draw on it.
  */
 object AmeliaWidget {
 
-    enum class Status { OFF, CONNECTING, CONNECTED, WHITELIST }
+    enum class Status { OFF, CONNECTING, CONNECTED, WHITELIST, FAILED, NO_INTERNET }
 
     enum class Button { CONNECT, DISCONNECT, RENEW, OPEN_APP }
 
@@ -64,6 +69,9 @@ object AmeliaWidget {
     fun status(running: Boolean, phase: String?, connectingSince: Long, now: Long): Status = when {
         running && phase == AmeliaDaemon.Phase.WHITELIST.name -> Status.WHITELIST
         running && (phase == AmeliaDaemon.Phase.CHECKING.name || phase == AmeliaDaemon.Phase.SWITCHING.name) -> Status.CONNECTING
+        // 1.7.0: the VPN is on but nothing gets through: never a green "Подключено"
+        running && (phase == AmeliaDaemon.Phase.ALL_FAILED.name || phase == AmeliaDaemon.Phase.MANUAL_FAILED.name) -> Status.FAILED
+        running && phase == AmeliaDaemon.Phase.NO_INTERNET.name -> Status.NO_INTERNET
         running -> Status.CONNECTED
         connectingSince > 0 && now - connectingSince in 0 until CONNECTING_MS -> Status.CONNECTING
         else -> Status.OFF
@@ -115,7 +123,24 @@ object AmeliaWidget {
         Status.CONNECTING -> Lines(R.string.amelia_widget_connecting, null)
         Status.OFF -> Lines(R.string.amelia_phase_off, null)
         Status.WHITELIST -> Lines(R.string.amelia_widget_whitelist, R.string.amelia_widget_need_wifi)
+        Status.FAILED -> Lines(R.string.amelia_widget_not_working, null)
+        Status.NO_INTERNET -> Lines(R.string.amelia_widget_no_internet, null)
     }
+
+    /** 1.7.0: drawn in the warning colour (amber), never green. */
+    fun isWarning(s: Status): Boolean = s == Status.CONNECTING || s == Status.WHITELIST || s == Status.FAILED || s == Status.NO_INTERNET
+
+    /** 1.7.0: the button shows the warning sign instead of the power sign. */
+    fun showsWarningIcon(s: Status): Boolean = s == Status.WHITELIST || s == Status.FAILED || s == Status.NO_INTERNET
+
+    /** 1.7.0: service messages the widget redraws on, sent to it as an explicit intent ([forward]). */
+    val FORWARDED = setOf(
+        AppConfig.MSG_STATE_RUNNING, AppConfig.MSG_STATE_START_SUCCESS,
+        AppConfig.MSG_STATE_NOT_RUNNING, AppConfig.MSG_STATE_START_FAILURE, AppConfig.MSG_STATE_STOP_SUCCESS,
+        AmeliaConfig.MSG_HEALTH,
+    )
+
+    fun forwards(what: Int): Boolean = what in FORWARDED
 
     // ---- state of the :daemon process -------------------------------------------------------
 
@@ -215,9 +240,9 @@ object AmeliaWidget {
         v.setTextViewText(R.id.widget_status, context.getString(lines.status))
         when (m.status) {
             Status.CONNECTED -> v.setTextColor(R.id.widget_status, context.getColor(R.color.amelia_widget_green))
-            // 1.6.0: "белые списки" is a warning, never green
-            Status.CONNECTING, Status.WHITELIST -> v.setTextColor(R.id.widget_status, context.getColor(R.color.amelia_widget_amber))
             Status.OFF -> Unit // the layout's muted colour (day/night)
+            // 1.6.0: "белые списки" is a warning, never green; 1.7.0: "Не работает", "Нет интернета" too
+            else -> v.setTextColor(R.id.widget_status, context.getColor(R.color.amelia_widget_amber))
         }
         v.setTextViewText(
             R.id.widget_location,
@@ -241,13 +266,13 @@ object AmeliaWidget {
                 R.id.widget_power, "setBackgroundResource",
                 when (m.status) {
                     Status.CONNECTED -> R.drawable.amelia_widget_power_on
-                    Status.CONNECTING, Status.WHITELIST -> R.drawable.amelia_widget_power_connecting
                     Status.OFF -> R.drawable.amelia_widget_power_off
+                    else -> R.drawable.amelia_widget_power_connecting
                 },
             )
             v.setImageViewResource(
                 R.id.widget_power_icon,
-                if (m.status == Status.WHITELIST) R.drawable.ic_amelia_warning else R.drawable.ic_amelia_power,
+                if (showsWarningIcon(m.status)) R.drawable.ic_amelia_warning else R.drawable.ic_amelia_power,
             )
             v.setContentDescription(
                 R.id.widget_power,
@@ -279,6 +304,21 @@ object AmeliaWidget {
         Intent(context, AmeliaActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
+
+    /**
+     * Any process (1.7.0): hands a service message ([FORWARDED]) to the widget as an explicit
+     * intent. Nothing is sent when no widget is placed.
+     */
+    fun forward(context: Context, message: Intent) {
+        try {
+            val component = ComponentName(context, WidgetProvider::class.java)
+            val manager = AppWidgetManager.getInstance(context) ?: return
+            if (manager.getAppWidgetIds(component).isEmpty()) return
+            context.sendBroadcast(Intent(message).setComponent(component))
+        } catch (e: RuntimeException) {
+            LogUtil.w(AppConfig.TAG, "Amelia widget: state message not delivered", e)
+        }
+    }
 
     /**
      * Any process: asks the widget (in :daemon) to redraw, e.g. after a location or subscription

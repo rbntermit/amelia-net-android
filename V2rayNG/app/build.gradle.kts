@@ -16,8 +16,8 @@ android {
         minSdk = 24
         targetSdk = 37
         // Bump both on every release (see RELEASING.md); the in-app updater compares versionCode.
-        versionCode = 25
-        versionName = "1.6.1"
+        versionCode = 26
+        versionName = "1.7.0"
         // Oldest versionCode that still works with the servers: goes to version.json as
         // minVersionCode. Older apps must update before they can connect. Raise it only when
         // a server-side change breaks old versions.
@@ -198,8 +198,6 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.coroutines.core)
 
-    // QR Code: ZXing (CameraX scanner removed in Amelia.Net)
-    implementation(libs.core) // zxing core
 
     // AndroidX Lifecycle and Architecture Components
     implementation(libs.lifecycle.viewmodel.ktx)

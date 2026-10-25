@@ -55,19 +55,38 @@ object AmeliaCrash {
     private val UUID = Regex("""(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b""")
     private val HEX16 = Regex("""(?i)(?<![0-9a-z])[0-9a-f]{16}(?![0-9a-z])""")
     private val IPV4 = Regex("""(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])""")
+    /** 1.7.0: "user:pass@" in any address (http, socks, a proxy line in an exception). */
+    private val USERINFO = Regex("""(?:(?<=://)|(?<=[\s"'(=])|^)[^\s@/:"'()]+:[^\s@/"'()]+@""", RegexOption.MULTILINE)
+    /** 1.7.0: passwords and secrets written as `password: …`, `"pass":"…"`, `psk=…` (trojan, shadowsocks, wireguard). */
+    private val SECRET = Regex("""(?i)("?\b(?:password|passwd|pass|psk|secret|private_?key|pre_?shared_?key|auth)"?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;}\]]+)""")
+    /** 1.7.0: IPv6 candidates: hex groups with colons; [isIpv6] decides. */
+    private val IPV6 = Regex("""(?i)(?<![0-9a-z:])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![0-9a-z:])""")
+
+    /**
+     * 1.7.0, pure: an IPv6 address, not a clock ("12:34:56") or a Kotlin "::": it has "::" or
+     * at least 4 colons, and at least two hex groups.
+     */
+    internal fun isIpv6(s: String): Boolean {
+        val groups = s.split(':').filter { it.isNotEmpty() }
+        return (s.contains("::") || s.count { it == ':' } >= 4) && groups.size >= 2
+    }
 
     /**
      * Removes the subscription key ([key] and any 16-hex word), UUIDs, proxy and subscription
-     * links, and IPv4 addresses other than [OUR_IPS].
+     * links, and IPv4 addresses other than [OUR_IPS]. 1.7.0: also IPv6 addresses, passwords
+     * (trojan, shadowsocks and other `password: …` forms) and any `user:pass@`.
      */
     fun scrub(text: String, key: String? = null): String {
         var s = text
         if (!key.isNullOrBlank() && key.length >= 4) s = s.replace(key, "<key>")
         s = LINK.replace(s, "<link>")
         s = SUB_URL.replace(s, "<sub-url>")
+        s = USERINFO.replace(s, "<user>@")
+        s = SECRET.replace(s) { it.groupValues[1] + "<secret>" }
         s = UUID.replace(s, "<uuid>")
         s = HEX16.replace(s, "<key>")
         s = IPV4.replace(s) { if (it.value in OUR_IPS) it.value else "<ip>" }
+        s = IPV6.replace(s) { if (isIpv6(it.value)) "<ip6>" else it.value }
         return s
     }
 

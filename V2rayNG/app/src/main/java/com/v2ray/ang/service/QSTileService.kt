@@ -15,6 +15,8 @@ import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.amelia.AmeliaActivity
 import com.v2ray.ang.amelia.AmeliaBoot
+import com.v2ray.ang.amelia.AmeliaConfig
+import com.v2ray.ang.amelia.AmeliaDaemon
 import com.v2ray.ang.amelia.AmeliaTile
 import com.v2ray.ang.amelia.AmeliaUpdater
 import com.v2ray.ang.core.CoreServiceManager
@@ -37,16 +39,24 @@ class QSTileService : TileService() {
      * @param state The state to set.
      */
     fun setState(state: Int) {
-        qsTile?.icon = Icon.createWithResource(applicationContext, R.drawable.ic_stat_name)
+        val tile = qsTile ?: return
+        tile.icon = Icon.createWithResource(applicationContext, R.drawable.ic_stat_name)
+        // 1.7.0: the daemon's state ("Не работает", "Нет интернета", …) under the name; this
+        // service runs in :daemon, next to AmeliaDaemon
+        val phase = if (state == Tile.STATE_ACTIVE) AmeliaDaemon.phase() else null
+        val stateText = AmeliaTile.stateText(phase)?.let { getString(it) }
         if (state == Tile.STATE_INACTIVE) {
-            qsTile?.state = Tile.STATE_INACTIVE
-            qsTile?.label = getString(R.string.app_tile_name)
+            tile.state = Tile.STATE_INACTIVE
+            tile.label = getString(R.string.app_tile_name)
         } else if (state == Tile.STATE_ACTIVE) {
-            qsTile?.state = Tile.STATE_ACTIVE
-            qsTile?.label = CoreServiceManager.getRunningServerName()
+            tile.state = Tile.STATE_ACTIVE
+            val name = CoreServiceManager.getRunningServerName()
+            // below Android 10 there is no second line: a problem replaces the name
+            tile.label = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q && AmeliaTile.isProblem(phase) && stateText != null) stateText else name
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) tile.subtitle = stateText
 
-        qsTile?.updateTile()
+        tile.updateTile()
     }
 
     /**
@@ -158,6 +168,11 @@ class QSTileService : TileService() {
 
                 AppConfig.MSG_STATE_STOP_SUCCESS -> {
                     context?.setState(Tile.STATE_INACTIVE)
+                }
+
+                // 1.7.0: the state line follows the daemon's checks
+                AmeliaConfig.MSG_HEALTH -> {
+                    if (CoreServiceManager.isRunning()) context?.setState(Tile.STATE_ACTIVE)
                 }
             }
         }

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Amelia.Net 1.7.0, Android 6–11 (android:fullBackupContent): the key, the subscription with
+     every server address, the local proxy's login and crash reports never leave the phone. -->
+<full-backup-content>
+    <exclude domain="file" path="mmkv/" />
+    <exclude domain="file" path="crashes/" />
+    <exclude domain="file" path="hev-socks5-tunnel.yaml" />
+    <exclude domain="file" path="root/" />
+</full-backup-content>

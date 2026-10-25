@@ -18,6 +18,7 @@ class Amelia160Test {
 
     private val now = 1_800_000_000_000L
     private val min = 60_000L
+    private val NET = "mobile|AS8359"
 
     private fun e(name: String, ms: Long, ageMs: Long) =
         AmeliaChecks.Entry(name, "h", 1, ms, if (ms >= 0) "ok" else "data", now - ageMs, "mobile|AS8359")
@@ -42,7 +43,7 @@ class Amelia160Test {
         assertFalse(limitAllowed)
         // Финляндия passed a check a minute ago
         val known = mapOf("Финляндия 2" to e("Финляндия 2", 120, 1 * min))
-        val targets = AmeliaSwitchLimit.verifiedTargets(listOf("fi", "se"), { names[it] }, known, now)
+        val targets = AmeliaSwitchLimit.verifiedTargets(listOf("fi", "se"), { names[it] }, known, now, NET)
         assertEquals(listOf("fi"), targets)
         assertEquals(Decision.OVER_LIMIT, AmeliaSwitchLimit.decide(limitAllowed, failures = 2, haveVerified = targets.isNotEmpty()))
         // a location chosen by hand is judged broken after 3 failures: also dead
@@ -66,7 +67,7 @@ class Amelia160Test {
             "Финляндия 2" to e("Финляндия 2", -1, 10_000),
             "Швеция 1" to e("Швеция 1", 90, 2 * min + 1),
         )
-        assertTrue(AmeliaSwitchLimit.verifiedTargets(listOf("fi", "se", "nl"), { names[it] }, known, now).isEmpty())
+        assertTrue(AmeliaSwitchLimit.verifiedTargets(listOf("fi", "se", "nl"), { names[it] }, known, now, NET).isEmpty())
         assertEquals(5 * min, AmeliaSwitchLimit.RECHECK_MS)
     }
 
@@ -79,13 +80,13 @@ class Amelia160Test {
 
     @Test
     fun verifiedMeansPassedAtMostTwoMinutesAgo() {
-        assertTrue(AmeliaSwitchLimit.verified(e("A", 50, 0), now))
-        assertTrue(AmeliaSwitchLimit.verified(e("A", 50, 2 * min), now))
-        assertFalse(AmeliaSwitchLimit.verified(e("A", 50, 2 * min + 1), now))
-        assertFalse(AmeliaSwitchLimit.verified(e("A", -1, 0), now))
-        assertFalse(AmeliaSwitchLimit.verified(null, now))
+        assertTrue(AmeliaSwitchLimit.verified(e("A", 50, 0), now, NET))
+        assertTrue(AmeliaSwitchLimit.verified(e("A", 50, 2 * min), now, NET))
+        assertFalse(AmeliaSwitchLimit.verified(e("A", 50, 2 * min + 1), now, NET))
+        assertFalse(AmeliaSwitchLimit.verified(e("A", -1, 0), now, NET))
+        assertFalse(AmeliaSwitchLimit.verified(null, now, NET))
         // a clock jump back does not make a check "fresh"
-        assertFalse(AmeliaSwitchLimit.verified(e("A", 50, -5 * min), now))
+        assertFalse(AmeliaSwitchLimit.verified(e("A", 50, -5 * min), now, NET))
     }
 
     @Test
@@ -95,17 +96,17 @@ class Amelia160Test {
             "Швеция 1" to e("Швеция 1", 40, 30_000),
         )
         // the queue (hints good first, then by ping) decides, not the filter
-        assertEquals(listOf("fi", "se"), AmeliaSwitchLimit.verifiedTargets(listOf("fi", "nl", "se"), { names[it] }, known, now))
+        assertEquals(listOf("fi", "se"), AmeliaSwitchLimit.verifiedTargets(listOf("fi", "nl", "se"), { names[it] }, known, now, NET))
     }
 
     @Test
     fun goodFromTheHintsIsCheckedNowExceptAlreadyVerifiedAndLastResort() {
         val good = mapOf("1.1.1.1:443" to 3, "3.3.3.3:443" to 9, "2.2.2.2:443" to 5, "7.7.7.7:443" to 20, "6.6.6.6:443" to 20)
         val known = mapOf("Финляндия 2" to e("Финляндия 2", 80, 30_000))
-        val list = AmeliaSwitchLimit.goodToCheck(locs, good, known, exclude = setOf("nl"), now = now)
+        val list = AmeliaSwitchLimit.goodToCheck(locs, good, known, exclude = setOf("nl"), now = now, net = NET)
         // most passed checks first; the current one, a verified one, Moscow and reserve are not checked
         assertEquals(listOf("se"), list)
-        assertTrue(AmeliaSwitchLimit.goodToCheck(locs, emptyMap(), emptyMap(), emptySet(), now).isEmpty())
+        assertTrue(AmeliaSwitchLimit.goodToCheck(locs, emptyMap(), emptyMap(), emptySet(), now, NET).isEmpty())
     }
 
     @Test

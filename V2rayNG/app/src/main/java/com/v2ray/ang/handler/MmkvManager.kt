@@ -88,6 +88,21 @@ object MmkvManager {
         }
     }
 
+    /**
+     * Amelia.Net 1.7.0: runs a read-modify-write of settings values under the settings store's
+     * lock shared by every process (the VPN daemon, the app, the check and worker processes), so
+     * two processes appending to the same journal do not lose each other's lines.
+     */
+    fun <T> withSettingsLock(block: () -> T): T =
+        synchronized(settingsStorage) {
+            settingsStorage.lock()
+            try {
+                block()
+            } finally {
+                settingsStorage.unlock()
+            }
+        }
+
     private fun removeProfilePayloads(guids: Collection<String>) {
         if (guids.isEmpty()) return
         val keys = guids.toTypedArray()

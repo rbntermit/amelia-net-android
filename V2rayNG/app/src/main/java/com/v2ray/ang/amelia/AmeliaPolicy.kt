@@ -80,6 +80,48 @@ object AmeliaPolicy {
      */
     fun isOffline(validated: Boolean, directOk: Boolean): Boolean = !validated && !directOk
 
+    /**
+     * 1.7.0: the same, but ya.ru / google ([directOk]) are asked only when Android did not
+     * validate the network. Until 1.6.1 they were asked on every check (every 30 s, around the VPN).
+     */
+    fun isOffline(validated: Boolean, directOk: () -> Boolean): Boolean = !validated && !directOk()
+
+    /**
+     * 1.7.0: pauses after "nothing works" rounds in a row: 2, 5, 10, then every 15 minutes; with
+     * the screen off one step longer from the start. A network change or "Проверить" starts over.
+     */
+    val ALL_FAILED_WAITS_MS = listOf(2L, 5L, 10L, 15L).map { it * 60_000L }
+
+    /** [round]: 1 for the first "nothing works" round in a row. */
+    fun allFailedWait(round: Int, screenOn: Boolean): Long {
+        val step = (round - 1).coerceAtLeast(0) + if (screenOn) 0 else 1
+        return ALL_FAILED_WAITS_MS[step.coerceAtMost(ALL_FAILED_WAITS_MS.lastIndex)]
+    }
+
+    /** 1.7.0: a full check of every location at most this often while nothing works. */
+    const val FULL_CHECK_MIN_GAP_MS = 5L * 60 * 1000
+
+    /** 1.7.0: [lastFullAt] (epoch millis of the end of the last full check) is old enough for another one. */
+    fun fullCheckDue(lastFullAt: Long, now: Long): Boolean = now - lastFullAt !in 0 until FULL_CHECK_MIN_GAP_MS
+
+    /** 1.7.0: failed rounds without the right to switch after which the checks slow down. */
+    const val NO_SWITCH_SLOW_AFTER = 3
+
+    /**
+     * 1.7.0: mode "Выключено", or a location chosen by hand that may not be left, does not answer:
+     * the usual interval ([INTERVAL_ON_MS] / [INTERVAL_OFF_MS] with the screen off), from the
+     * [NO_SWITCH_SLOW_AFTER]th failed round in a row 2 min (5 min with the screen off). Until 1.6.1
+     * every 30 s, screen off too.
+     */
+    fun noSwitchWait(round: Int, screenOn: Boolean): Long = when {
+        round >= NO_SWITCH_SLOW_AFTER -> if (screenOn) 2 * 60_000L else 5 * 60_000L
+        else -> if (screenOn) INTERVAL_ON_MS else INTERVAL_OFF_MS
+    }
+
+    /** The daemon's usual check interval (AmeliaDaemon.INTERVAL_SCREEN_ON_MS / _OFF_MS). */
+    const val INTERVAL_ON_MS = 30_000L
+    const val INTERVAL_OFF_MS = 120_000L
+
     /** Waits between checks while offline: 30 s, 1, 2, then every 5 min. */
     val OFFLINE_BACKOFF_MS = listOf(30_000L, 60_000L, 120_000L, 300_000L)
 
@@ -193,6 +235,8 @@ object AmeliaJournal {
     fun append(list: List<Entry>, e: Entry): List<Entry> =
         (if (list.lastOrNull()?.text == e.text) list.dropLast(1) else list).plus(e).takeLast(MAX)
 
-    fun add(text: String, now: Long = System.currentTimeMillis()) =
+    /** 1.7.0: under the settings lock shared by all processes (no line lost when two write at once). */
+    fun add(text: String, now: Long = System.currentTimeMillis()) = MmkvManager.withSettingsLock {
         MmkvManager.encodeSettings(PREF, JsonUtil.toJson(Log(append(list(), Entry(now, text)))))
+    }
 }

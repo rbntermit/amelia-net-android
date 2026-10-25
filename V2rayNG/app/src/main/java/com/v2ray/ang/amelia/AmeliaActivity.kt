@@ -4,7 +4,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
 import android.net.VpnService
-import android.os.Build
 import android.os.Bundle
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
@@ -95,7 +94,8 @@ class AmeliaActivity : HelperBaseComponentActivity() {
         if (!data.scheme.equals(AmeliaConfig.DEEP_LINK_SCHEME, ignoreCase = true)) return
         if (!data.host.equals(AmeliaConfig.DEEP_LINK_HOST_KEY, ignoreCase = true)) return
         val key = data.pathSegments.firstOrNull() ?: return
-        viewModel.submitKey(key)
+        // 1.7.0: any site or app can open this link: another key is taken only after asking
+        viewModel.onKeyLink(key)
     }
 
     @Composable
@@ -141,8 +141,8 @@ class AmeliaActivity : HelperBaseComponentActivity() {
                 onDismissAnnounce = viewModel::dismissAnnounce,
                 onConnectBest = { viewModel.connectBest(::toggle) },
                 onRenew = ::openRenew,
-                onPayOnSite = { openSite { base, key -> AmeliaSite.buyUrl(base, key) } },
-                onCabinet = { openSite { base, key -> AmeliaSite.cabinetUrl(base, key) } },
+                onPayOnSite = { openKeyPage(cabinet = false) },
+                onCabinet = { openKeyPage(cabinet = true) },
                 onGift = { openSite { base, _ -> AmeliaSite.giftUrl(base) } },
                 onShop = ::openShop,
                 onMeasureSpeed = viewModel::measureSpeed,
@@ -179,6 +179,8 @@ class AmeliaActivity : HelperBaseComponentActivity() {
                 onOpenSecurity = ::openSecuritySettings,
                 onDownloadInBrowser = { viewModel.manualDownloadUrl()?.let { Utils.openUri(this, it) } },
                 onGetInTelegram = { Utils.openUri(this, AmeliaConfig.botUrl(AmeliaConfig.BotScreen.APP)) },
+                onReplaceKey = viewModel::replaceKeyFromLink,
+                onKeepKey = viewModel::keepKey,
             ),
         )
     }
@@ -234,6 +236,25 @@ class AmeliaActivity : HelperBaseComponentActivity() {
         }
     }
 
+    /**
+     * 1.7.0: "Личный кабинет" and payment on the site with a one-time link, so the key is not in
+     * the browser's address. No link from the server: opened with the key as before ([openSite]).
+     */
+    private fun openKeyPage(cabinet: Boolean) {
+        val key = AmeliaManager.getKey() ?: return
+        lifecycleScope.launch {
+            val url = keyPageUrl(key, cabinet)
+            Utils.openUri(this@AmeliaActivity, url)
+        }
+    }
+
+    private suspend fun keyPageUrl(key: String, cabinet: Boolean): String {
+        val token = kotlinx.coroutines.withContext(Dispatchers.IO) { AmeliaSite.token(applicationContext, key) }
+        if (token != null) return if (cabinet) token.cabinetUrl else token.buyUrl
+        val base = AmeliaSite.base()
+        return if (cabinet) AmeliaSite.cabinetUrl(base, key) else AmeliaSite.buyUrl(base, key)
+    }
+
     /** 1.5.8: the site's shop (no key yet), main address checked first as in [openSite]. */
     private fun openShop() {
         lifecycleScope.launch {
@@ -246,8 +267,13 @@ class AmeliaActivity : HelperBaseComponentActivity() {
         lifecycleScope.launch {
             val telegram = kotlinx.coroutines.withContext(Dispatchers.IO) { AmeliaPackages.telegram(packageManager) != null }
             val key = AmeliaManager.getKey()
-            val base = if (telegram || key == null) AmeliaSite.BASES[0] else AmeliaSite.base()
-            Utils.openUri(this@AmeliaActivity, AmeliaSite.renewUrl(telegram, base, key))
+            val url = if (telegram || key == null) {
+                AmeliaSite.renewUrl(telegram, AmeliaSite.BASES[0], key)
+            } else {
+                // 1.7.0: payment on the site with a one-time link (the key stays out of the address)
+                keyPageUrl(key, cabinet = false)
+            }
+            Utils.openUri(this@AmeliaActivity, url)
         }
     }
 
@@ -396,10 +422,9 @@ class AmeliaActivity : HelperBaseComponentActivity() {
             viewModel.showMessage(R.string.amelia_err_no_location)
             return
         }
-        // Same as upstream MainActivity: Android 17 asks for local network access separately.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.CINNAMON_BUN) {
-            checkAndRequestPermission(PermissionType.ACCESS_LOCAL_NETWORK) {}
-        }
+        // 1.7.0: no "local network" request (Android 17). The app only talks to 127.0.0.1 and over
+        // the VPN interface, which Android does not count as a local network, and local networks
+        // stay outside the VPN (AmeliaRouting). See docs/LOGIC.md.
         viewModel.onUserConnect()
         LauncherManager.startService(this)
     }

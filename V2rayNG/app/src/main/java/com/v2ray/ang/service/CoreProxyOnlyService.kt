@@ -38,6 +38,8 @@ class CoreProxyOnlyService : Service(), ServiceControl {
             return START_STICKY
         }
 
+        // Amelia.Net 1.7.0: a new start clears the "stopping" mark of the last stop (shared core lifecycle)
+        CoreServiceManager.beginStart()
         if (!CoreServiceManager.startCoreLoop(null)) {
             LogUtil.e(AppConfig.TAG, "StartCore-Proxy: Failed to start core loop")
             stopSelf()

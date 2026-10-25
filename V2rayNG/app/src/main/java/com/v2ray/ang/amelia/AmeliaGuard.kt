@@ -110,15 +110,19 @@ object AmeliaSwitchLimit {
     /** [failures]: tunnel checks of the current location failed in a row. */
     fun currentDead(failures: Int): Boolean = failures >= DEAD_FAILURES
 
-    /** Passed a check (ours: watch, quick pick, full check, "Проверить пинг") at most [VERIFIED_MS] ago. */
-    fun verified(e: AmeliaChecks.Entry?, now: Long): Boolean = e != null && e.ok && now - e.ts in 0..VERIFIED_MS
+    /**
+     * Passed a check (ours: watch, quick pick, full check, "Проверить пинг") at most [VERIFIED_MS]
+     * ago, 1.7.0: on this network ([net], AmeliaHints.netKey).
+     */
+    fun verified(e: AmeliaChecks.Entry?, now: Long, net: String): Boolean =
+        e != null && e.ok && e.net == net && now - e.ts in 0..VERIFIED_MS
 
     /**
      * Locations of [queue] (guids, queue order) that may be taken over the limit: [verified] by
-     * their latest check in [known] (by name).
+     * their latest check in [known] (by name) on [net].
      */
-    fun verifiedTargets(queue: List<String>, nameOf: (String) -> String?, known: Map<String, AmeliaChecks.Entry>, now: Long): List<String> =
-        queue.filter { g -> nameOf(g)?.let { verified(known[it], now) } == true }
+    fun verifiedTargets(queue: List<String>, nameOf: (String) -> String?, known: Map<String, AmeliaChecks.Entry>, now: Long, net: String): List<String> =
+        queue.filter { g -> nameOf(g)?.let { verified(known[it], now, net) } == true }
 
     /**
      * Locations from the hints' "good" list worth checking right now for a move over the limit:
@@ -131,9 +135,10 @@ object AmeliaSwitchLimit {
         known: Map<String, AmeliaChecks.Entry>,
         exclude: Set<String>,
         now: Long,
+        net: String,
     ): List<String> =
         locations.asSequence()
-            .filter { (good[it.hostPort] ?: 0) > 0 && it.guid !in exclude && !verified(known[it.name], now) }
+            .filter { (good[it.hostPort] ?: 0) > 0 && it.guid !in exclude && !verified(known[it.name], now, net) }
             .filter { !AmeliaReserve.isReserve(it.name) && !AmeliaReserve.isRussianExit(it.name) }
             .sortedByDescending { good[it.hostPort] ?: 0 }
             .take(AmeliaQuickPick.QUICK_COUNT).map { it.guid }.toList()

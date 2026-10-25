@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Amelia.Net screens. The audience is Russian-speaking, so Russian is the default locale here. -->
 <resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
-    <string name="amelia_key_title">Вход по ключу</string>
     <string name="amelia_key_prompt">Введите ключ из бота @amelianet_bot</string>
     <string name="amelia_key_hint">Ключ</string>
     <string name="amelia_key_submit">Войти</string>
@@ -44,8 +43,6 @@
     <string name="amelia_act_help">Помощь</string>
     <string name="amelia_act_group">Наша группа</string>
     <string name="amelia_renew">Продлить</string>
-
-    <string name="amelia_traffic_used">Израсходовано %1$s</string>
 
     <string name="amelia_menu">Меню</string>
     <string name="amelia_menu_refresh">Обновить локации</string>
@@ -161,7 +158,6 @@
     <!-- 1.1.0: blocking map -->
     <string name="amelia_probe_title">Помогать находить блокировки</string>
     <string name="amelia_probe_text">Иногда приложение сообщает нам, какие наши локации открываются в вашей сети. Отправляется: случайный номер установки (не связан с подпиской), версия приложения, тип сети (Wi-Fi или мобильная), название оператора и по каждой локации — адрес, порт, работает ли она и задержка. Ключ, номер телефона, названия локаций и сайты, которые вы открываете, не отправляются.</string>
-
 
     <!-- 1.1.0: problem report -->
     <string name="amelia_menu_report">Не работает — сообщить</string>
@@ -317,4 +313,12 @@
     <string name="amelia_widget_whitelist">Белые списки</string>
     <string name="amelia_widget_need_wifi">нужен Wi‑Fi</string>
     <string name="amelia_widget_open_app">Открыть приложение</string>
+    <!-- 1.7.0: widget and tile say when the VPN is on but nothing works -->
+    <string name="amelia_widget_not_working">Не работает</string>
+    <string name="amelia_widget_no_internet">Нет интернета</string>
+    <!-- 1.7.0: amelia://key/… while another key is already entered -->
+    <string name="amelia_key_replace_title">Заменить ключ на новый?</string>
+    <string name="amelia_key_replace_text">Ссылка открыла другой ключ. Если заменить, нынешний ключ пропадёт из приложения.</string>
+    <string name="amelia_key_replace_yes">Заменить</string>
+    <string name="amelia_key_replace_no">Оставить нынешний</string>
 </resources>

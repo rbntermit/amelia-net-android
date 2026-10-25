@@ -17,21 +17,16 @@ import com.v2ray.ang.amelia.AmeliaConfig
 import com.v2ray.ang.amelia.AmeliaCrash
 import com.v2ray.ang.amelia.AmeliaDaemon
 import com.v2ray.ang.amelia.AmeliaReserve
-import com.v2ray.ang.contracts.IDialerService
 import com.v2ray.ang.contracts.ServiceControl
 import com.v2ray.ang.dto.ConnectionTestResult
 import com.v2ray.ang.dto.OutboundTrafficStat
 import com.v2ray.ang.dto.entities.ProfileItem
-import com.v2ray.ang.enums.BrowserDialerMode
 import com.v2ray.ang.extension.delay
-import com.v2ray.ang.extension.isNotNullEmpty
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.NotificationManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.handler.SpeedtestManager
 import com.v2ray.ang.helper.MessageHelper
-import com.v2ray.ang.service.DialerNativeService
-import com.v2ray.ang.service.DialerWebviewService
 import com.v2ray.ang.service.NetworkMonitor
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
@@ -48,6 +43,8 @@ import libv2ray.CoreController
 import libv2ray.ProcessFinder
 import java.lang.ref.SoftReference
 import java.net.InetSocketAddress
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
 
 object CoreServiceManager {
 
@@ -55,12 +52,27 @@ object CoreServiceManager {
     private val mMsgReceive = ReceiveMessageHandler()
     private var currentConfig: ProfileItem? = null
     private var processFinder: XrayProcessFinder? = null
-    private var browserDialer: IDialerService? = null
     private var networkMonitor: NetworkMonitor? = null
     private val connectionTestScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     @Volatile
     private var isReloading = false
+
+    /**
+     * Amelia.Net 1.7.0: start, in-place reload, revive and stop of the core take this lock, so
+     * two of them never overlap (see CoreLifecycleRules). Waits are bounded: a reload or start
+     * holds it for one config build (server names resolve within 3 s) and one core start.
+     */
+    private val lifecycleLock = ReentrantLock()
+    private const val LOCK_WAIT_MS = 5_000L
+
+    /** 1.7.0: a stop was asked; set before the stop takes [lifecycleLock], cleared by [beginStart]. */
+    @Volatile
+    private var stopping = false
+
+    /** 1.7.0: the service started the core once and has not stopped since (revive is allowed). */
+    @Volatile
+    private var started = false
 
     /** Tun descriptor the core was started with, null in the proxy only and root run modes. */
     private var currentVpnInterface: ParcelFileDescriptor? = null
@@ -93,20 +105,34 @@ object CoreServiceManager {
      * `registerReceiver(Context, BroadcastReceiver, IntentFilter, int)`.
      * Starts the V2Ray core service.
      */
-    fun startCoreLoop(vpnInterface: ParcelFileDescriptor?): Boolean {
-        if (isRunning()) {
-            LogUtil.w(AppConfig.TAG, "StartCore-Manager: Core already running")
-            return false
-        }
+    /**
+     * Amelia.Net 1.7.0: a service got a new start command (called on it synchronously, before any
+     * setup work). Clears the "stopping" mark of an earlier stop.
+     */
+    fun beginStart() {
+        stopping = false
+    }
 
+    /** 1.7.0: a stop was asked and no new start since. */
+    fun isStopping(): Boolean = stopping
+
+    fun startCoreLoop(vpnInterface: ParcelFileDescriptor?): Boolean {
         val service = getService()
         if (service == null) {
             LogUtil.e(AppConfig.TAG, "StartCore-Manager: Service is null")
             return false
         }
-
+        if (!lifecycleLock.tryLock(LOCK_WAIT_MS, TimeUnit.MILLISECONDS)) {
+            LogUtil.w(AppConfig.TAG, "StartCore-Manager: start skipped, another start or stop holds the core")
+            return false
+        }
         try {
+            if (!CoreLifecycleRules.mayStart(stopping, isRunning())) {
+                LogUtil.w(AppConfig.TAG, "StartCore-Manager: start skipped, stopping=$stopping running=${isRunning()}")
+                return false
+            }
             doStartCoreLoop(service, vpnInterface)
+            started = true
             return true
         } catch (e: Exception) {
             val message = e.message?.takeUnless { it.isBlank() } ?: e.javaClass.simpleName
@@ -116,6 +142,8 @@ object CoreServiceManager {
             MessageHelper.sendMsg2UI(service, AppConfig.MSG_STATE_START_FAILURE, message)
             NotificationManager.cancelNotification()
             return false
+        } finally {
+            lifecycleLock.unlock()
         }
     }
 
@@ -128,63 +156,44 @@ object CoreServiceManager {
         ContextCompat.registerReceiver(service, mMsgReceive, mFilter, Utils.receiverFlags())
 
         currentVpnInterface = vpnInterface
+        // Amelia.Net 1.7.0: the local inbound's port was checked before tun2socks was configured
+        // (AmeliaLocalProxy.ensurePortFree in the service's setup): both use the same one
         launchCore(service, vpnInterface)
         startNetworkMonitor(service)
     }
 
+    /**
+     * [isReload]: an in-place restart (no "started" message, no new daemon session);
+     * [pickLocation] (1.7.0): the selected location may be gone (a subscription refresh): take
+     * the best one instead of failing, as a first start does.
+     */
     @Throws(Exception::class)
-    private fun launchCore(service: Service, vpnInterface: ParcelFileDescriptor?, isReload: Boolean = false) {
+    private fun launchCore(service: Service, vpnInterface: ParcelFileDescriptor?, isReload: Boolean = false, pickLocation: Boolean = !isReload) {
         // Amelia.Net 1.5.4: Android may start the VPN by itself (Always-on, boot) after a
         // subscription refresh removed the selected location: take the best one, not fail
-        val guid = (if (isReload) MmkvManager.getSelectServer() else AmeliaBoot.ensureLocation(service))
+        val guid = (if (pickLocation) AmeliaBoot.ensureLocation(service) else MmkvManager.getSelectServer())
             ?: error("No server selected")
         val config = MmkvManager.decodeServerConfig(guid) ?: error("Failed to decode server config")
 
         LogUtil.i(AppConfig.TAG, "StartCore-Manager: Starting core loop for ${config.remarks}")
         val result = CoreConfigManager.getV2rayConfig(service, guid)
-        LogUtil.d(AppConfig.TAG, result.content)
+        // Amelia.Net 1.7.0: the config is not logged: it holds server keys and the local proxy login
         if (!result.status) {
             error(result.errorMessage.ifBlank { "Failed to get V2Ray config" })
         }
 
         currentConfig = config
         var tunFd = vpnInterface?.fd ?: 0
-        val dialerMode = BrowserDialerMode.from(config.browserDialerMode)
-        val dialerAddr = if (dialerMode != null) {
-            "127.0.0.1:${Utils.findRandomFreePort()}"
-        } else {
-            ""
-        }
         if (SettingsManager.isUsingHevTun()) {
             tunFd = 0
         }
 
         NotificationManager.showNotification(currentConfig)
-        if (dialerAddr.isNotNullEmpty()) {
-            CoreNativeManager.reconcileBrowserDialer(dialerAddr)
-        }
+        // Amelia.Net 1.7.0: upstream's browser dialer is gone (no profile of the subscription sets it)
         coreController.startLoop(result.content, tunFd)
 
         if (!isRunning()) {
             error("Core failed to start")
-        }
-
-        if (browserDialer != null) {
-            browserDialer!!.stop()
-            browserDialer = null
-        }
-        when (dialerMode) {
-            BrowserDialerMode.OKHTTP -> {
-                browserDialer = DialerNativeService()
-                browserDialer!!.start(service, dialerAddr)
-            }
-
-            BrowserDialerMode.WEBVIEW -> {
-                browserDialer = DialerWebviewService()
-                browserDialer!!.start(service, dialerAddr)
-            }
-
-            else -> {}
         }
 
         if (!isReload) {
@@ -202,10 +211,23 @@ object CoreServiceManager {
      * @return True if the core was stopped successfully, false otherwise.
      */
     fun stopCoreLoop(): Boolean {
+        // Amelia.Net 1.7.0: first mark the stop, so a reload or start waiting for the lock starts
+        // nothing, then wait (bounded) for one that is running right now
+        stopping = true
+        started = false
         connectionTestScope.coroutineContext.cancelChildren()
         AmeliaDaemon.onCoreStopped()
         val service = getService() ?: return false
+        val locked = lifecycleLock.tryLock(LOCK_WAIT_MS, TimeUnit.MILLISECONDS)
+        if (!locked) LogUtil.w(AppConfig.TAG, "StartCore-Manager: stop goes on without the lock, a reload took too long")
+        try {
+            return stopLocked(service)
+        } finally {
+            if (locked) lifecycleLock.unlock()
+        }
+    }
 
+    private fun stopLocked(service: Service): Boolean {
         networkMonitor?.unregister()
         networkMonitor = null
         currentVpnInterface = null
@@ -218,13 +240,6 @@ object CoreServiceManager {
                     LogUtil.e(AppConfig.TAG, "StartCore-Manager: Failed to stop V2Ray loop", e)
                 }
             }
-        }
-
-        // Close existing browser dialer
-        CoreNativeManager.reconcileBrowserDialer("")
-        if (browserDialer != null) {
-            browserDialer!!.stop()
-            browserDialer = null
         }
 
         MessageHelper.sendMsg2UI(service, AppConfig.MSG_STATE_STOP_SUCCESS, "")
@@ -249,14 +264,17 @@ object CoreServiceManager {
         if (networkMonitor != null) return
 
         val connectivity = service.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
-        networkMonitor = NetworkMonitor(
+        var monitor: NetworkMonitor? = null
+        monitor = NetworkMonitor(
             connectivity = connectivity,
             onUnderlyingNetworksChanged = { networks -> serviceControl?.get()?.setUnderlyingNetworks(networks) },
             onHandover = {
-                // Amelia.Net: a new network may cut other locations, check again (AmeliaDaemon)
-                if (reloadCore()) getService()?.let { AmeliaDaemon.onNetworkChanged(it) }
+                // Amelia.Net: a new network may cut other locations, check again (AmeliaDaemon).
+                // 1.7.0: only for the monitor the manager still owns (checked under the lock)
+                if (reloadCore(requester = monitor)) getService()?.let { AmeliaDaemon.onNetworkChanged(it) }
             },
         ).also { it.register() }
+        networkMonitor = monitor
     }
 
     /**
@@ -268,12 +286,19 @@ object CoreServiceManager {
      *
      * @return True if the core is running again.
      */
-    private fun reloadCore(): Boolean {
-        if (isReloading) return false
+    private fun reloadCore(requester: NetworkMonitor? = null): Boolean {
         val service = getService() ?: return false
-        if (!isRunning()) return false
-
+        // 1.7.0: one at a time; a second reload waits for the first instead of being dropped
+        if (!lifecycleLock.tryLock(LOCK_WAIT_MS, TimeUnit.MILLISECONDS)) {
+            LogUtil.w(AppConfig.TAG, "StartCore-Manager: reload skipped, the core is busy")
+            return false
+        }
         return try {
+            val ownMonitor = requester == null || requester === networkMonitor
+            if (!CoreLifecycleRules.mayReload(stopping, isRunning(), ownMonitor)) {
+                LogUtil.i(AppConfig.TAG, "StartCore-Manager: reload skipped, stopping=$stopping running=${isRunning()} ownMonitor=$ownMonitor")
+                return false
+            }
             val tunFd = currentVpnInterface
 
             isReloading = true
@@ -281,6 +306,8 @@ object CoreServiceManager {
             LogUtil.i(AppConfig.TAG, "StartCore-Manager: Core reload start...")
 
             coreController.stopLoop()
+            // a stop asked meanwhile waits for this lock: leave the core stopped
+            if (stopping) return false
             launchCore(service, tunFd, isReload = true)
 
             LogUtil.i(AppConfig.TAG, "StartCore-Manager: Core reload finished")
@@ -292,11 +319,42 @@ object CoreServiceManager {
             false
         } finally {
             isReloading = false
+            lifecycleLock.unlock()
         }
     }
 
+    /**
+     * Amelia.Net 1.7.0: the service lives but the core does not run (a reload failed, e.g. its
+     * location vanished with a subscription refresh): start it again in place on the same VPN
+     * interface. The selected location is taken if it still exists, otherwise the best one
+     * (AmeliaBoot.ensureLocation). Blocking. True when the core runs again.
+     */
+    fun reviveForAmelia(): Boolean {
+        val service = getService() ?: return false
+        if (!lifecycleLock.tryLock(LOCK_WAIT_MS, TimeUnit.MILLISECONDS)) return false
+        return try {
+            if (!CoreLifecycleRules.mayRevive(started, stopping, isRunning())) return false
+            isReloading = true
+            LogUtil.w(AppConfig.TAG, "StartCore-Manager: core is down while the service lives, starting it again")
+            launchCore(service, currentVpnInterface, isReload = true, pickLocation = true)
+            isRunning()
+        } catch (e: Exception) {
+            LogUtil.e(AppConfig.TAG, "StartCore-Manager: revive failed", e)
+            false
+        } finally {
+            isReloading = false
+            lifecycleLock.unlock()
+        }
+    }
+
+    /** Amelia.Net 1.7.0: the service started the core and was not asked to stop. */
+    fun isServiceUp(): Boolean = started && !stopping
+
     /** Amelia.Net: the core runs and is not being reloaded. */
     fun isReadyForAmelia(): Boolean = isRunning() && !isReloading
+
+    /** Amelia.Net 1.7.0: an in-place reload or revive runs right now. */
+    fun isReloadingForAmelia(): Boolean = isReloading
 
     /**
      * Amelia.Net: restart the core in place with the currently selected location (fast
