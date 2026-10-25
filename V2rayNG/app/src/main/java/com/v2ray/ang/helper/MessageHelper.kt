@@ -8,6 +8,7 @@ import android.content.Intent
 import android.os.Build
 import androidx.core.content.ContextCompat
 import com.v2ray.ang.AppConfig
+import com.v2ray.ang.amelia.AmeliaWidget
 import com.v2ray.ang.dto.SubscriptionUpdateMessage
 import com.v2ray.ang.dto.TestServiceMessage
 import com.v2ray.ang.service.CoreTestService
@@ -69,6 +70,8 @@ object MessageHelper {
      */
     fun sendMsg2UI(ctx: Context, what: Int, content: Serializable, requestId: String? = null) {
         sendMsg(ctx, AppConfig.BROADCAST_ACTION_ACTIVITY, what, content, requestId)
+        // 1.7.0: the widget has no intent filter for this action any more: explicit intent only
+        if (AmeliaWidget.forwards(what)) AmeliaWidget.forward(ctx, messageIntent(AppConfig.BROADCAST_ACTION_ACTIVITY, what, content))
     }
 
     /**

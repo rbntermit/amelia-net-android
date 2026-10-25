@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.VpnService
 import android.provider.Settings
 import com.v2ray.ang.AppConfig
+import com.v2ray.ang.R
 import com.v2ray.ang.core.LauncherManager
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.util.LogUtil
@@ -137,4 +138,23 @@ object AmeliaTile {
         !vpnPermission || !hasLocation || updateRequired -> Action.OPEN_APP
         else -> Action.START
     }
+
+    /**
+     * 1.7.0: the state line under the location's name while the VPN is on (the daemon's phase,
+     * the same MSG_HEALTH the widget uses). Null: nothing known yet, the name alone.
+     */
+    fun stateText(phase: String?): Int? = when (phase) {
+        AmeliaDaemon.Phase.CONNECTED.name -> R.string.amelia_phase_connected
+        AmeliaDaemon.Phase.CHECKING.name, AmeliaDaemon.Phase.SWITCHING.name -> R.string.amelia_widget_connecting
+        AmeliaDaemon.Phase.ALL_FAILED.name, AmeliaDaemon.Phase.MANUAL_FAILED.name -> R.string.amelia_widget_not_working
+        AmeliaDaemon.Phase.NO_INTERNET.name -> R.string.amelia_widget_no_internet
+        AmeliaDaemon.Phase.WHITELIST.name -> R.string.amelia_widget_whitelist
+        else -> null
+    }
+
+    /** 1.7.0: below Android 10 a tile has no second line: a problem then replaces the name. */
+    fun isProblem(phase: String?): Boolean = phase in setOf(
+        AmeliaDaemon.Phase.ALL_FAILED.name, AmeliaDaemon.Phase.MANUAL_FAILED.name,
+        AmeliaDaemon.Phase.NO_INTERNET.name, AmeliaDaemon.Phase.WHITELIST.name,
+    )
 }

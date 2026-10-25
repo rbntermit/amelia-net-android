@@ -12,6 +12,7 @@ import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
 import libv2ray.CoreCallbackHandler
+import okhttp3.Credentials
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.net.InetSocketAddress
@@ -47,15 +48,28 @@ object AmeliaSpeed {
     fun format(mbps: Double): String =
         if (mbps >= 10) "%.0f".format(java.util.Locale.US, mbps) else "%.1f".format(java.util.Locale.US, mbps).replace('.', ',')
 
-    /** Adds a local HTTP inbound on [port] to a speed-test config (no inbounds, no routing). */
-    fun withInbound(configJson: String, port: Int): String {
+    /**
+     * Adds a local HTTP inbound on [port] to a speed-test config (no inbounds, no routing).
+     * 1.7.0: with a login ([user], [pass]): other apps cannot use the location through it.
+     */
+    fun withInbound(configJson: String, port: Int, user: String, pass: String): String {
         val root = JsonParser.parseString(configJson).asJsonObject
         val inbound = JsonObject().apply {
             addProperty("tag", "amelia-speed-in")
             addProperty("listen", AppConfig.LOOPBACK)
             addProperty("port", port)
             addProperty("protocol", "http")
-            add("settings", JsonObject())
+            add(
+                "settings",
+                JsonObject().apply {
+                    add(
+                        "accounts",
+                        JsonArray().apply {
+                            add(JsonObject().apply { addProperty("user", user); addProperty("pass", pass) })
+                        },
+                    )
+                },
+            )
         }
         root.add("inbounds", JsonArray().apply { add(inbound) })
         return root.toString()
@@ -101,9 +115,11 @@ object AmeliaSpeed {
         val config = CoreConfigManager.getV2rayConfig4Speedtest(context, guid)
         if (!config.status) return null
         val port = Utils.findRandomFreePort()
+        // 1.7.0: a one-off login for this test's inbound
+        val (user, pass) = AmeliaLocalProxy.oneOffLogin()
         val controller = try {
             CoreNativeManager.initCoreEnv(context)
-            CoreNativeManager.newCoreController(noCallbacks).also { it.startLoop(withInbound(config.content, port), 0) }
+            CoreNativeManager.newCoreController(noCallbacks).also { it.startLoop(withInbound(config.content, port, user, pass), 0) }
         } catch (e: Exception) {
             LogUtil.w(AppConfig.TAG, "Amelia speed: cannot start a core for the test", e)
             return null
@@ -111,6 +127,9 @@ object AmeliaSpeed {
         try {
             val client = OkHttpClient.Builder()
                 .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress(AppConfig.LOOPBACK, port)))
+                .proxyAuthenticator { _, response ->
+                    response.request.newBuilder().header("Proxy-Authorization", Credentials.basic(user, pass)).build()
+                }
                 .connectTimeout(8, TimeUnit.SECONDS)
                 .readTimeout(8, TimeUnit.SECONDS)
                 // a stalled download must not outlast the 20 s limit

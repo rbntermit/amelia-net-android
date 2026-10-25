@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Amelia.Net 1.7.0. Only the app's Java/Kotlin traffic follows this file; the Xray core and
+     tun2socks have their own sockets. -->
 <network-security-config xmlns:tools="http://schemas.android.com/tools">
-    <base-config cleartextTrafficPermitted="true">
+    <!-- Other sites (white-list checks, Telegram, GitHub): as before, but no plain HTTP. -->
+    <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
             <certificates
@@ -8,4 +11,19 @@
                 tools:ignore="AcceptsUserCertificates" />
         </trust-anchors>
     </base-config>
+    <!-- Subscription, version.json, APK, reports, site: only the system's certificates, so a
+         certificate a person installed (a bank's or an employer's root) cannot read the key and
+         the server addresses. No pinning: the servers' certificates are reissued. -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">ameliajustamelia.com</domain>
+        <domain includeSubdomains="true">ameliajustamelia.net</domain>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </domain-config>
+    <!-- The core's own local pages on this phone (browser dialer) are plain HTTP. -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
 </network-security-config>

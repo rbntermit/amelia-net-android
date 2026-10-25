@@ -190,6 +190,9 @@ object AmeliaDaemon {
         bgScope.launch { AmeliaWhitelist.exit() }
     }
 
+    /** 1.7.0: the last reported phase, for the tile (same process); null while off or unknown. */
+    fun phase(): String? = lastHealth?.phase
+
     /** The app asked for the current state (MSG_REGISTER_CLIENT). */
     fun sendSnapshot(service: Service) {
         lastHealth?.let { MessageHelper.sendMsg2UI(service, AmeliaConfig.MSG_HEALTH, it) }
@@ -813,8 +816,6 @@ object AmeliaDaemon {
             .followRedirects(false)
             .build()
 
-    private val probeClient: OkHttpClient by lazy { client(PROBE_TIMEOUT_MS) }
-    private val finalProbeClient: OkHttpClient by lazy { client(FINAL_PROBE_TIMEOUT_MS) }
 
     /**
      * Requests through the current location (the core's local HTTP inbound) to [PROBE_URLS] at
@@ -822,7 +823,9 @@ object AmeliaDaemon {
      * @return delay in ms, -1 when none answered within the timeout
      */
     private suspend fun probe(reserve: Boolean, timeoutMs: Long = PROBE_TIMEOUT_MS): Long = coroutineScope {
-        val c = if (timeoutMs == PROBE_TIMEOUT_MS) probeClient else finalProbeClient
+        // 1.7.0: built per probe (cheap, shares the connection pool): the local proxy's port and
+        // login may have changed since the last one (AmeliaLocalProxy)
+        val c = client(timeoutMs)
         val urls = if (reserve) listOf(AmeliaReserve.TEST_URL) else PROBE_URLS
         urls.map { url ->
             async(Dispatchers.IO) {

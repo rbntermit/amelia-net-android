@@ -25,6 +25,27 @@ object AmeliaKey {
         return s.takeIf { KEY_REGEX.matches(it) }
     }
 
+    /** 1.7.0: what an amelia://key/… link does. */
+    enum class LinkAction {
+        /** No key entered yet: entered as if typed. */
+        SUBMIT,
+        /** Another key is entered: ask "Заменить ключ на новый?" (default: keep it). */
+        ASK,
+        /** The key already entered: nothing to do. */
+        SAME,
+        /** Not a key. */
+        INVALID,
+    }
+
+    fun linkAction(current: String?, incoming: String?): LinkAction {
+        val key = normalize(incoming) ?: return LinkAction.INVALID
+        return when {
+            current.isNullOrBlank() -> LinkAction.SUBMIT
+            current == key -> LinkAction.SAME
+            else -> LinkAction.ASK
+        }
+    }
+
     fun subscriptionUrl(baseUrl: String, key: String): String =
         baseUrl.trimEnd('/') + AmeliaConfig.SUB_PATH + key
 }

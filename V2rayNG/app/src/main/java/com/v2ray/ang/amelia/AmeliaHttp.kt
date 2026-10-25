@@ -106,13 +106,18 @@ object AmeliaHttp {
         false
     }
 
-    private val tunnelClient: OkHttpClient by lazy { buildTunnelClient(proxyPort()) }
+    /** 1.7.0: the local inbound's port and login (AmeliaLocalProxy) may change: one client per set. */
+    private data class TunnelKey(val port: Int, val user: String?, val pass: String?)
 
-    private fun buildTunnelClient(port: Int): OkHttpClient {
-        val b = client.newBuilder().proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", port)))
-        val user = SettingsManager.getSocksUsername()
-        val pass = SettingsManager.getSocksPassword()
+    @Volatile
+    private var tunnelClient: Pair<TunnelKey, OkHttpClient>? = null
+
+    private fun buildTunnelClient(key: TunnelKey): OkHttpClient {
+        val b = client.newBuilder().proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", key.port)))
+        val user = key.user
+        val pass = key.pass
         if (user != null && pass != null) {
+            // also called before the first CONNECT (OkHttp's preemptive challenge): the login goes with it
             b.proxyAuthenticator { _, response ->
                 response.request.newBuilder().header("Proxy-Authorization", Credentials.basic(user, pass)).build()
             }
@@ -120,5 +125,11 @@ object AmeliaHttp {
         return b.build()
     }
 
-    fun clientFor(route: Route): OkHttpClient = if (route == Route.TUNNEL) tunnelClient else client
+    private fun tunnel(): OkHttpClient {
+        val key = TunnelKey(proxyPort(), SettingsManager.getSocksUsername(), SettingsManager.getSocksPassword())
+        tunnelClient?.let { (k, c) -> if (k == key) return c }
+        return buildTunnelClient(key).also { tunnelClient = key to it }
+    }
+
+    fun clientFor(route: Route): OkHttpClient = if (route == Route.TUNNEL) tunnel() else client
 }

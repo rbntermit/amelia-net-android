@@ -199,6 +199,13 @@ object AmeliaRouting {
         // Fixed local inbound port: the app reaches the tunnel through it from any process
         // (a dynamic port is generated per process and would differ from the daemon's)
         MmkvManager.encodeSettings(AppConfig.PREF_DYNAMIC_SOCKS_PORT, false)
+        // 1.7.0: the local inbound has a login (AmeliaLocalProxy): it listens on 127.0.0.1 only and is
+        // never offered to other apps as the system HTTP proxy
+        MmkvManager.encodeSettings(AppConfig.PREF_PROXY_SHARING, false)
+        MmkvManager.encodeSettings(AppConfig.PREF_APPEND_HTTP_PROXY, false)
+        // 1.7.0: local networks stay outside the VPN, so the app itself never opens connections into
+        // the LAN (no "local network" permission needed on Android 17)
+        MmkvManager.encodeSettings(AppConfig.PREF_VPN_BYPASS_LAN, AppConfig.DEFAULT_VPN_BYPASS_LAN)
         // Traffic counters in the core (session traffic on the main screen, speed in the notification)
         MmkvManager.encodeSettings(AppConfig.PREF_SPEED_ENABLED, true)
         // 1.2.0: six locations are checked at the same time (AmeliaCheck.PARALLEL)

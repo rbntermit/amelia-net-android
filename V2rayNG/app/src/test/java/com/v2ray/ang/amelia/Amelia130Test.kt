@@ -108,7 +108,7 @@ class Amelia130Test {
         assertEquals(50.0, AmeliaSpeed.mbps(10_000_000, 1_600), 0.01)
         assertEquals("48", AmeliaSpeed.format(48.4))
         assertEquals("3,2", AmeliaSpeed.format(3.21))
-        val cfg = AmeliaSpeed.withInbound("""{"outbounds":[{"protocol":"vless","tag":"proxy"}],"inbounds":[]}""", 23456)
+        val cfg = AmeliaSpeed.withInbound("""{"outbounds":[{"protocol":"vless","tag":"proxy"}],"inbounds":[]}""", 23456, "u", "p")
         val inbound = JsonParser.parseString(cfg).asJsonObject.getAsJsonArray("inbounds")[0].asJsonObject
         assertEquals("http", inbound.get("protocol").asString)
         assertEquals(23456, inbound.get("port").asInt)

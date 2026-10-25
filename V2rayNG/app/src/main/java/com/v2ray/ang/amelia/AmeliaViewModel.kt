@@ -51,6 +51,8 @@ enum class ConnPhase {
 
 data class AmeliaUiState(
     val loaded: Boolean = false,
+    /** 1.7.0: an amelia://key/… link brought another key: "Заменить ключ на новый?" is shown. */
+    val pendingKeyReplace: Boolean = false,
     val hasKey: Boolean = false,
     val busy: Boolean = false,
     val isRunning: Boolean = false,
@@ -854,6 +856,39 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun submitKey(raw: String) = runLoad(silent = false, isRefresh = false) { AmeliaManager.activate(raw) }
+
+    /** 1.7.0: the key from an amelia://key/… link, until the person answers "Заменить ключ на новый?". */
+    private var linkKey: String? = null
+
+    /**
+     * 1.7.0: amelia://key/… opens the app from any site or app. With no key yet it is entered as
+     * before; the same key changes nothing; another key is only taken after "Заменить".
+     */
+    fun onKeyLink(raw: String) {
+        viewModelScope.launch {
+            val current = withContext(Dispatchers.IO) { AmeliaManager.getKey() }
+            when (AmeliaKey.linkAction(current, raw)) {
+                AmeliaKey.LinkAction.SUBMIT -> submitKey(raw)
+                AmeliaKey.LinkAction.ASK -> {
+                    linkKey = raw
+                    _state.update { it.copy(pendingKeyReplace = true) }
+                }
+                AmeliaKey.LinkAction.SAME, AmeliaKey.LinkAction.INVALID -> Unit
+            }
+        }
+    }
+
+    fun replaceKeyFromLink() {
+        val key = linkKey
+        linkKey = null
+        _state.update { it.copy(pendingKeyReplace = false) }
+        key?.let { submitKey(it) }
+    }
+
+    fun keepKey() {
+        linkKey = null
+        _state.update { it.copy(pendingKeyReplace = false) }
+    }
 
     fun refresh(silent: Boolean = false) = runLoad(silent, isRefresh = true) { AmeliaManager.refresh() }
 
