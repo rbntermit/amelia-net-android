@@ -22,7 +22,12 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import java.util.concurrent.Executors
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Future
+import java.util.concurrent.FutureTask
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 
@@ -61,8 +66,57 @@ object AmeliaCheck {
         val ok: Boolean get() = ms >= 0
     }
 
-    private val nativePool = Executors.newCachedThreadPool { r ->
-        Thread(r, "amelia-check").apply { isDaemon = true }
+    /**
+     * 1.7.0: at most this many test cores run in one process at a time. A thread stays busy until
+     * its core has finished (also when nobody waits for it any more), so abandoned checks count
+     * too. Until 1.6.1 the pool had no limit: with 20–30 servers hanging on TLS (a typical block),
+     * 25–30 cores lived at once and a cheap phone could kill the process, VPN included.
+     */
+    const val MAX_CORES = 8
+    /** 1.7.0: how long a check may wait for a free slot before it counts as "no answer". */
+    const val SLOT_WAIT_MS = 15_000L
+
+    private val nativePool = ThreadPoolExecutor(
+        MAX_CORES, MAX_CORES, 30L, TimeUnit.SECONDS, LinkedBlockingQueue(),
+    ) { r -> Thread(r, "amelia-check").apply { isDaemon = true } }.apply { allowCoreThreadTimeOut(true) }
+
+    /**
+     * 1.7.0: checks running right now, by location (name, address, port). A second check of the
+     * same location joins the running one instead of starting another core.
+     */
+    private val inFlight = ConcurrentHashMap<String, Running>()
+
+    private class Running(val started: CompletableFuture<Long>, val result: Future<Pair<Long, String?>>)
+
+    /** Pure: a location's key for [inFlight] (a new port after a subscription download is another check). */
+    fun inFlightKey(name: String, host: String, port: Int?): String = "$name|$host:${port ?: 0}"
+
+    /** Pure: what is left of the request timeout once the core actually started at [startedAt]. */
+    fun timeLeft(timeoutMs: Long, startedAt: Long, now: Long): Long = (timeoutMs - (now - startedAt)).coerceAtLeast(0L)
+
+    private fun measure(key: String, config: String, url: String): Running {
+        while (true) {
+            val existing = inFlight[key]
+            if (existing != null && !existing.result.isDone) return existing
+            val started = CompletableFuture<Long>()
+            var self: Running? = null
+            val task = FutureTask {
+                started.complete(System.nanoTime())
+                try {
+                    CoreNativeManager.measureOutboundDelayDetailed(config, url)
+                } finally {
+                    self?.let { inFlight.remove(key, it) }
+                }
+            }
+            val running = Running(started, task)
+            self = running
+            val stored = if (existing == null) inFlight.putIfAbsent(key, running) == null else inFlight.replace(key, existing, running)
+            if (stored) {
+                nativePool.execute(task)
+                return running
+            }
+            // another thread stored its check first: join that one
+        }
     }
 
     /** Blocking. Checks one location, at most ~[CONNECT_TIMEOUT_MS] + [REQUEST_TIMEOUT_MS]. */
@@ -92,19 +146,28 @@ object AmeliaCheck {
         val reserve = AmeliaReserve.isReserve(name)
         val url = AmeliaReserve.testUrl(name, SettingsManager.getDelayTestUrl())
         val timeout = if (hy2) HYSTERIA2_TIMEOUT_MS else REQUEST_TIMEOUT_MS
-        val started = System.nanoTime()
-        val future = nativePool.submit<Pair<Long, String?>> {
-            CoreNativeManager.measureOutboundDelayDetailed(configResult.content, url)
+        val running = measure(inFlightKey(name, host, port), configResult.content, url)
+        // 1.7.0: the timeout counts from the moment the core started, not from the queue
+        val startedNs = try {
+            running.started.get(SLOT_WAIT_MS, TimeUnit.MILLISECONDS)
+        } catch (_: Exception) {
+            null
         }
-        val (raw, rawError) = try {
-            future.get(timeout, TimeUnit.MILLISECONDS)
-        } catch (_: TimeoutException) {
+        val (raw, rawError) = if (startedNs == null) {
+            LogUtil.w(AppConfig.TAG, "Amelia check: no free slot for a test core in $SLOT_WAIT_MS ms")
             -1L to TIMEOUT_ERROR
-        } catch (e: Exception) {
-            LogUtil.w(AppConfig.TAG, "Amelia check: measure failed for a location", e)
-            -1L to (e.message ?: e.javaClass.simpleName)
+        } else {
+            try {
+                running.result.get(timeLeft(timeout * 1_000_000, startedNs, System.nanoTime()) / 1_000_000, TimeUnit.MILLISECONDS)
+            } catch (_: TimeoutException) {
+                -1L to TIMEOUT_ERROR
+            } catch (e: Exception) {
+                LogUtil.w(AppConfig.TAG, "Amelia check: measure failed for a location", e)
+                -1L to (e.message ?: e.javaClass.simpleName)
+            }
         }
-        val (ms, error) = AmeliaReserve.interpret(reserve, raw, rawError, (System.nanoTime() - started) / 1_000_000)
+        val elapsedMs = startedNs?.let { (System.nanoTime() - it) / 1_000_000 } ?: SLOT_WAIT_MS
+        val (ms, error) = AmeliaReserve.interpret(reserve, raw, rawError, elapsedMs)
         return result(ms, AmeliaPingStage.classify(ms, tcpOk, error), error)
     }
 

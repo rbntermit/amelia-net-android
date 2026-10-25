@@ -18,6 +18,7 @@ import androidx.work.multiprocess.RemoteWorkManager
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.core.LauncherManager
+import com.v2ray.ang.handler.SubscriptionUpdater
 import com.v2ray.ang.util.LogUtil
 import java.util.concurrent.TimeUnit
 
@@ -52,10 +53,18 @@ class AmeliaUpdateWorker(context: Context, params: WorkerParameters) : Coroutine
     /**
      * Subscription reminders (AmeliaExpiry). Near or after the end the subscription is fetched
      * again first, so a renewal made in the bot clears the reminder.
+     *
+     * 1.7.0: this is the only background refresh of the subscription (upstream's worker is off):
+     * also when the last download is older than the subscription's own interval
+     * ([subscriptionDue], 12 h unless the server says otherwise).
      */
     private fun checkSubscriptionEnd() {
         try {
-            if (AmeliaManager.hasKey() && AmeliaExpiry.needsRefresh(AmeliaManager.getSubInfo(), System.currentTimeMillis())) {
+            val now = System.currentTimeMillis()
+            val info = AmeliaManager.getSubInfo()
+            val due = AmeliaExpiry.needsRefresh(info, now) ||
+                subscriptionDue(AmeliaManager.lastSubscriptionUpdate(), info?.updateIntervalHours, now)
+            if (AmeliaManager.hasKey() && due) {
                 AmeliaManager.refresh()
                 // 1.5.2: new routing lists reach a running VPN (the daemon restarts itself; no-op when off)
                 if (AmeliaManager.takeRoutingChanged()) LauncherManager.restartService(applicationContext)
@@ -67,11 +76,22 @@ class AmeliaUpdateWorker(context: Context, params: WorkerParameters) : Coroutine
     }
 
     companion object {
+        /**
+         * 1.7.0, pure: the last download ([lastUpdate], epoch millis, 0: never) is at least the
+         * subscription's interval old ([intervalHours] from its headers, the default otherwise).
+         */
+        fun subscriptionDue(lastUpdate: Long, intervalHours: Int?, now: Long): Boolean {
+            val hours = (intervalHours ?: AmeliaConfig.DEFAULT_UPDATE_INTERVAL_HOURS).coerceAtLeast(1)
+            return lastUpdate <= 0L || now - lastUpdate >= hours * 3_600_000L
+        }
+
         private const val WORK_NAME = "amelia_update_check"
         private const val CHANNEL_ID = "amelia_updates"
         private const val NOTIFICATION_ID = 7301
 
         fun schedule(context: Context) {
+            // 1.7.0: upstream's subscription task from earlier versions is dropped (this worker refreshes)
+            SubscriptionUpdater.cancelOne(context, AmeliaConfig.SUBSCRIPTION_ID)
             val request = PeriodicWorkRequestBuilder<AmeliaUpdateWorker>(6, TimeUnit.HOURS)
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
                 .setInitialDelay(6, TimeUnit.HOURS)

@@ -62,6 +62,36 @@ object HttpUtil {
         return IDN.toASCII(domain, IDN.ALLOW_UNASSIGNED)
     }
 
+    /** Amelia.Net 1.7.0: a server name resolved while the VPN config is built waits at most this. */
+    const val DNS_TIMEOUT_MS = 3_000L
+
+    private val dnsPool = java.util.concurrent.Executors.newCachedThreadPool { r ->
+        Thread(r, "amelia-dns").apply { isDaemon = true }
+    }
+
+    /**
+     * Amelia.Net 1.7.0: [lookup] of [host] that gives up after [timeoutMs] (Java's resolver has no
+     * timeout of its own and can hang for many seconds on a bad network). Null: no answer in time
+     * or an error. The abandoned lookup ends on its own thread.
+     */
+    fun lookupWithTimeout(
+        host: String,
+        timeoutMs: Long,
+        lookup: (String) -> Array<InetAddress> = { InetAddress.getAllByName(it) },
+    ): Array<InetAddress>? {
+        val future = dnsPool.submit<Array<InetAddress>> { lookup(host) }
+        return try {
+            future.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+        } catch (e: java.util.concurrent.TimeoutException) {
+            future.cancel(true)
+            LogUtil.w(AppConfig.TAG, "DNS: no answer for a server name within $timeoutMs ms")
+            null
+        } catch (e: Exception) {
+            LogUtil.w(AppConfig.TAG, "DNS: lookup of a server name failed", e)
+            null
+        }
+    }
+
     /**
      * Resolves a hostname to an IP address, returns original input if it's already an IP
      *
@@ -69,15 +99,16 @@ object HttpUtil {
      * @param ipv6Preferred Whether to prefer IPv6 addresses, defaults to false
      * @return The resolved IP address or the original input (if it's already an IP or resolution fails)
      */
-    fun resolveHostToIP(host: String, ipv6Preferred: Boolean = false): List<String>? {
+    fun resolveHostToIP(host: String, ipv6Preferred: Boolean = false, timeoutMs: Long = DNS_TIMEOUT_MS): List<String>? {
         try {
             // If it's already an IP address, return it as a list
             if (Utils.isPureIpAddress(host)) {
                 return null
             }
 
-            // Get all IP addresses
-            val addresses = InetAddress.getAllByName(host)
+            // Get all IP addresses. Amelia.Net 1.7.0: at most [timeoutMs]; no answer → null, and
+            // the core resolves the name itself (the config keeps it)
+            val addresses = lookupWithTimeout(host, timeoutMs) ?: return null
             if (addresses.isEmpty()) {
                 return null
             }

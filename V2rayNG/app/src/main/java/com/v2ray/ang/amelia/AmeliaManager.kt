@@ -121,13 +121,14 @@ object AmeliaManager {
 
         val info = result.info
         val hours = info.updateIntervalHours ?: AmeliaConfig.DEFAULT_UPDATE_INTERVAL_HOURS
-        // Upstream's periodic worker re-fetches this URL in the background (no headers, no fallback);
-        // the app refreshes with headers and fallback on every start.
+        // 1.7.0: upstream's periodic worker is off (autoUpdate = false; syncOne below cancels its task).
+        // It downloaded the bare URL without the end date, routing or spare addresses. In the
+        // background only AmeliaUpdateWorker refreshes, through this same function (refresh()).
         val sub = (MmkvManager.decodeSubscription(AmeliaConfig.SUBSCRIPTION_ID) ?: SubscriptionItem()).apply {
             remarks = info.title ?: AmeliaConfig.SUBSCRIPTION_REMARKS
             url = AmeliaKey.subscriptionUrl(result.baseUrl, key)
             enabled = true
-            autoUpdate = true
+            autoUpdate = false
             updateInterval = hours * 60L
             userAgent = AmeliaSubscriptionClient.userAgent
         }

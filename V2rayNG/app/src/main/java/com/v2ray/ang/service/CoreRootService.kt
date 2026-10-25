@@ -49,6 +49,8 @@ class CoreRootService : Service(), ServiceControl {
 
         // Start the in-process core first (this also posts the foreground notification),
         // then install the root routing off the main thread.
+        // Amelia.Net 1.7.0: a new start clears the "stopping" mark of the last stop (shared core lifecycle)
+        CoreServiceManager.beginStart()
         if (!CoreServiceManager.startCoreLoop(null)) {
             LogUtil.e(AppConfig.TAG, "StartCore-Root: core failed to start")
             stopService()

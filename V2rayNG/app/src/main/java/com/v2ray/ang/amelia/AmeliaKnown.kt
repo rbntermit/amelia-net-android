@@ -37,7 +37,9 @@ object AmeliaChecks {
     )
 
     private const val PREF = "amelia_checks"
-    private val lock = Any()
+
+    /** 1.7.0: the daemon, the check process and the app write here: one lock for all of them. */
+    private fun <T> locked(block: () -> T): T = MmkvManager.withSettingsLock(block)
 
     fun load(): Store =
         MmkvManager.decodeSettingsString(PREF)?.takeIf { it.isNotBlank() }
@@ -49,7 +51,7 @@ object AmeliaChecks {
     fun put(context: Context, r: AmeliaCheck.Result, net: String = AmeliaHints.netKey(context)) {
         if (r.name.isEmpty()) return
         val e = Entry(r.name, r.host, r.port, r.ms, r.stage, System.currentTimeMillis(), net)
-        synchronized(lock) { save(load().let { it.copy(entries = it.entries + (r.name to e)) }) }
+        locked { save(load().let { it.copy(entries = it.entries + (r.name to e)) }) }
         AmeliaProbe.recordPing(context, r.guid, r.ms, r.stage, r.error)
     }
 
@@ -61,18 +63,25 @@ object AmeliaChecks {
     }
 
     /** 1.6.1: results of [names] are about an address or port they no longer have (AmeliaResubscribe). */
-    fun forget(names: Collection<String>) = synchronized(lock) {
+    fun forget(names: Collection<String>) = locked {
         val s = load()
         if (names.any { it in s.entries }) save(s.copy(entries = s.entries - names.toSet()))
     }
 
-    fun putFull(durationMs: Long) = synchronized(lock) {
+    fun putFull(durationMs: Long) = locked {
         save(load().copy(lastFullAt = System.currentTimeMillis(), lastFullMs = durationMs))
     }
 
-    /** Results younger than [FRESH_MS], by location name (the latest check of each). */
+    /** Results younger than [FRESH_MS], by location name (the latest check of each), any network. */
     fun fresh(store: Store, now: Long): Map<String, Entry> =
         store.entries.filterValues { now - it.ts in 0..FRESH_MS }
+
+    /**
+     * 1.7.0: results younger than [FRESH_MS] made on [net] (AmeliaHints.netKey). A location checked
+     * on Wi-Fi a minute ago says nothing about the mobile network: it is not "working" there.
+     */
+    fun fresh(store: Store, now: Long, net: String): Map<String, Entry> =
+        store.entries.filterValues { it.net == net && now - it.ts in 0..FRESH_MS }
 }
 
 /**
@@ -287,7 +296,13 @@ object AmeliaEvents {
         MmkvManager.decodeSettingsString(PREF)?.takeIf { it.isNotBlank() }
             ?.let { JsonUtil.fromJsonSafe(it, Log::class.java)?.events } ?: emptyList()
 
-    fun add(e: Event) = MmkvManager.encodeSettings(PREF, JsonUtil.toJson(Log(append(list(), e))))
+    /**
+     * 1.7.0: under the settings lock shared by all processes: a lost line was a switch the limit
+     * did not count (AmeliaSwitchLimit).
+     */
+    fun add(e: Event) = MmkvManager.withSettingsLock {
+        MmkvManager.encodeSettings(PREF, JsonUtil.toJson(Log(append(list(), e))))
+    }
 
     fun append(list: List<Event>, e: Event): List<Event> = (list + e).takeLast(MAX)
 }
@@ -362,7 +377,8 @@ object AmeliaQueue {
         val net = AmeliaHints.netKey(context)
         val sim = AmeliaProbe.netKey(AmeliaNetwork.info(context))
         val now = System.currentTimeMillis()
-        val known = AmeliaChecks.fresh(AmeliaChecks.load(), now)
+        // 1.7.0: only this network's results order the queue
+        val known = AmeliaChecks.fresh(AmeliaChecks.load(), now, net)
         val hints = AmeliaHints.current(sim)
         return order(
             locations(), known, AmeliaHints.badHostPorts(hints), AmeliaBest.get(net), exclude,

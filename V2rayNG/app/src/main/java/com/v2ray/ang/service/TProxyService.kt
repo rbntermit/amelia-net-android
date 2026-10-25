@@ -51,7 +51,7 @@ class TProxyService(
             writeText(configContent)
         }
 //        LogUtil.i(AppConfig.TAG, "Config file created: ${configFile.absolutePath}")
-        LogUtil.d(AppConfig.TAG, "HevSocks5Tunnel Config content:\n$configContent")
+        // Amelia.Net 1.7.0: the config is not logged, it holds the local proxy login
 
         try {
 //            LogUtil.i(AppConfig.TAG, "TProxyStartService...")
