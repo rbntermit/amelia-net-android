@@ -1,7 +1,6 @@
 package com.v2ray.ang.handler
 
 import android.content.Context
-import android.graphics.Bitmap
 import android.text.TextUtils
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.core.CoreConfigManager
@@ -24,7 +23,6 @@ import com.v2ray.ang.fmt.WireguardFmt
 import com.v2ray.ang.util.HttpUtil
 import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.LogUtil
-import com.v2ray.ang.util.QRCodeDecoder
 import com.v2ray.ang.util.Utils
 import java.net.URI
 
@@ -99,26 +97,6 @@ object AngConfigManager {
         } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "Failed to share non-custom configs to clipboard", e)
             return -1
-        }
-    }
-
-    /**
-     * Shares the configuration as a QR code.
-     *
-     * @param guid The GUID of the configuration.
-     * @return The QR code bitmap.
-     */
-    fun share2QRCode(guid: String): Bitmap? {
-        try {
-            val conf = shareConfig(guid)
-            if (TextUtils.isEmpty(conf)) {
-                return null
-            }
-            return QRCodeDecoder.createQRCode(conf)
-
-        } catch (e: Exception) {
-            LogUtil.e(AppConfig.TAG, "Failed to share config as QR code", e)
-            return null
         }
     }
 

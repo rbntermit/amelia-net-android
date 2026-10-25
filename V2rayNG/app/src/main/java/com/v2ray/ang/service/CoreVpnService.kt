@@ -24,7 +24,6 @@ import com.v2ray.ang.handler.AppLocaleManager
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.NotificationManager
 import com.v2ray.ang.handler.SettingsManager
-import com.v2ray.ang.root.RootLanSharing
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
 import kotlinx.coroutines.CoroutineScope
@@ -167,10 +166,7 @@ class CoreVpnService : VpnService(), ServiceControl {
             stopAllService()
             return
         }
-        if (stopRequested) return
-
-        // Start LAN sharing if enabled in settings
-        RootLanSharing.startClientSharing(this)
+        // 1.7.0: upstream's root LAN sharing is removed with the root mode
     }
 
     override fun stopService() {
@@ -388,8 +384,6 @@ class CoreVpnService : VpnService(), ServiceControl {
         synchronized(resourceLock) {
             tun2SocksService?.stopTun2Socks()
             tun2SocksService = null
-
-            RootLanSharing.stopClientSharing(this)
 
             CoreServiceManager.stopCoreLoop()
 

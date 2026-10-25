@@ -12,9 +12,7 @@ import com.v2ray.ang.extension.toastError
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.helper.MessageHelper
-import com.v2ray.ang.root.RootManager
 import com.v2ray.ang.service.CoreProxyOnlyService
-import com.v2ray.ang.service.CoreRootService
 import com.v2ray.ang.service.CoreVpnService
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
@@ -106,16 +104,8 @@ object LauncherManager {
             context.toast(R.string.toast_services_start)
         }
 
-        val isRootMode = SettingsManager.isRootMode()
-        if (isRootMode && !RootManager.isRootAvailable()) {
-            LogUtil.e(AppConfig.TAG, "LauncherManager: root mode requires root but none available")
-            error(context.getString(R.string.toast_root_required))
-        }
-
-        val intent = if (isRootMode) {
-            LogUtil.i(AppConfig.TAG, "LauncherManager: Starting Root service")
-            Intent(context.applicationContext, CoreRootService::class.java)
-        } else if (SettingsManager.isVpnMode()) {
+        // Amelia.Net 1.7.0: upstream's root mode is removed (the app never turns it on)
+        val intent = if (SettingsManager.isVpnMode()) {
             LogUtil.i(AppConfig.TAG, "LauncherManager: Starting VPN service")
             Intent(context.applicationContext, CoreVpnService::class.java)
         } else {

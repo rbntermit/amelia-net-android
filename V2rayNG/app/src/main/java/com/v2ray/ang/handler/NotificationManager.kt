@@ -36,7 +36,14 @@ object NotificationManager {
     private const val QUERY_INTERVAL_MS = 3000L
 
     private var lastQueryTime = 0L
-    private var mBuilder: NotificationCompat.Builder? = null
+    /**
+     * Amelia.Net 1.7.0: what the notification shows, not a Builder: a Builder kept in this static
+     * object held the service (its context) after it stopped. The notification is built from
+     * these values with the current service each time ([build]). Null title: nothing is shown.
+     */
+    @Volatile private var notificationTitle: String? = null
+    @Volatile private var notificationText: String? = null
+    @Volatile private var notificationIcon: Int = R.drawable.ic_stat_name
     private var speedNotificationJob: Job? = null
     private var mNotificationManager: NotificationManager? = null
 
@@ -68,6 +75,14 @@ object NotificationManager {
         // Reset last query time to avoid querying stats too soon after showing the notification
         lastQueryTime = System.currentTimeMillis()
 
+        notificationTitle = currentConfig?.remarks ?: service.getString(R.string.app_name)
+        notificationText = null
+        notificationIcon = R.drawable.ic_stat_name
+        service.startForeground(NOTIFICATION_ID, build(service))
+    }
+
+    /** Amelia.Net 1.7.0: the notification from the stored values, with [service] as its context. */
+    private fun build(service: Service): Notification {
         val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
 
         val startMainIntent = Intent(service, AmeliaActivity::class.java)
@@ -92,9 +107,9 @@ object NotificationManager {
                 ""
             }
 
-        mBuilder = NotificationCompat.Builder(service, channelId)
-            .setSmallIcon(R.drawable.ic_stat_name)
-            .setContentTitle(currentConfig?.remarks ?: service.getString(R.string.app_name))
+        val builder = NotificationCompat.Builder(service, channelId)
+            .setSmallIcon(notificationIcon)
+            .setContentTitle(notificationTitle ?: service.getString(R.string.app_name))
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
             .setShowWhen(false)
@@ -111,9 +126,11 @@ object NotificationManager {
                 restartV2RayPendingIntent
             )
 
-        //mBuilder?.setDefaults(NotificationCompat.FLAG_ONLY_ALERT_ONCE)
-
-        service.startForeground(NOTIFICATION_ID, mBuilder?.build())
+        notificationText?.let {
+            builder.setStyle(NotificationCompat.BigTextStyle().bigText(it))
+            builder.setContentText(it)
+        }
+        return builder.build()
     }
 
     /**
@@ -123,8 +140,7 @@ object NotificationManager {
      */
     fun ensureForeground() {
         val service = getService() ?: return
-        val notification = mBuilder?.build()
-        if (notification == null) showNotification(null) else service.startForeground(NOTIFICATION_ID, notification)
+        if (notificationTitle == null) showNotification(null) else service.startForeground(NOTIFICATION_ID, build(service))
     }
 
     /**
@@ -134,7 +150,8 @@ object NotificationManager {
         val service = getService() ?: return
         service.stopForeground(Service.STOP_FOREGROUND_REMOVE)
 
-        mBuilder = null
+        notificationTitle = null
+        notificationText = null
         speedNotificationJob?.cancel()
         speedNotificationJob = null
         mNotificationManager = null
@@ -179,17 +196,17 @@ object NotificationManager {
      * @param directTraffic The direct traffic.
      */
     private fun updateNotification(contentText: String?, proxyTraffic: Long, directTraffic: Long) {
-        if (mBuilder != null) {
-            if (proxyTraffic < NOTIFICATION_ICON_THRESHOLD && directTraffic < NOTIFICATION_ICON_THRESHOLD) {
-                mBuilder?.setSmallIcon(R.drawable.ic_stat_name)
+        if (notificationTitle != null) {
+            val service = getService() ?: return
+            notificationIcon = if (proxyTraffic < NOTIFICATION_ICON_THRESHOLD && directTraffic < NOTIFICATION_ICON_THRESHOLD) {
+                R.drawable.ic_stat_name
             } else if (proxyTraffic > directTraffic) {
-                mBuilder?.setSmallIcon(R.drawable.ic_stat_proxy)
+                R.drawable.ic_stat_proxy
             } else {
-                mBuilder?.setSmallIcon(R.drawable.ic_stat_direct)
+                R.drawable.ic_stat_direct
             }
-            mBuilder?.setStyle(NotificationCompat.BigTextStyle().bigText(contentText))
-            mBuilder?.setContentText(contentText)
-            getNotificationManager()?.notify(NOTIFICATION_ID, mBuilder?.build())
+            notificationText = contentText
+            getNotificationManager()?.notify(NOTIFICATION_ID, build(service))
         }
     }
 

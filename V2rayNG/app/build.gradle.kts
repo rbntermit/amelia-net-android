@@ -198,8 +198,6 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.coroutines.core)
 
-    // QR Code: ZXing (CameraX scanner removed in Amelia.Net)
-    implementation(libs.core) // zxing core
 
     // AndroidX Lifecycle and Architecture Components
     implementation(libs.lifecycle.viewmodel.ktx)

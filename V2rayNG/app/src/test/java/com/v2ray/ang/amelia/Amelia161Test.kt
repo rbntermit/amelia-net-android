@@ -160,7 +160,7 @@ class Amelia161Test {
         )
         val queue = AmeliaQueue.order(locs, known, bad = emptySet(), preferred = null, quarantined = AmeliaQuarantine.active(q, net, now))
         assertEquals("n2", queue.first())
-        assertEquals(listOf("n2"), AmeliaSwitchLimit.verifiedTargets(queue, { g -> locs.first { it.guid == g }.name }, known, now))
+        assertEquals(listOf("n2"), AmeliaSwitchLimit.verifiedTargets(queue, { g -> locs.first { it.guid == g }.name }, known, now, net))
     }
 
     @Test

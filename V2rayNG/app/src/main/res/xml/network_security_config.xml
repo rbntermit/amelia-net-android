@@ -21,9 +21,7 @@
             <certificates src="system" />
         </trust-anchors>
     </domain-config>
-    <!-- The core's own local pages on this phone (browser dialer) are plain HTTP. -->
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="false">127.0.0.1</domain>
-        <domain includeSubdomains="false">localhost</domain>
-    </domain-config>
+    <!-- No plain-HTTP exception: the app's own code only talks to 127.0.0.1 through the core's
+         proxy (that connection is not checked here), and upstream's browser dialer, which opened
+         http://127.0.0.1 pages, is removed in 1.7.0. -->
 </network-security-config>

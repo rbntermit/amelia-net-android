@@ -17,21 +17,16 @@ import com.v2ray.ang.amelia.AmeliaConfig
 import com.v2ray.ang.amelia.AmeliaCrash
 import com.v2ray.ang.amelia.AmeliaDaemon
 import com.v2ray.ang.amelia.AmeliaReserve
-import com.v2ray.ang.contracts.IDialerService
 import com.v2ray.ang.contracts.ServiceControl
 import com.v2ray.ang.dto.ConnectionTestResult
 import com.v2ray.ang.dto.OutboundTrafficStat
 import com.v2ray.ang.dto.entities.ProfileItem
-import com.v2ray.ang.enums.BrowserDialerMode
 import com.v2ray.ang.extension.delay
-import com.v2ray.ang.extension.isNotNullEmpty
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.NotificationManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.handler.SpeedtestManager
 import com.v2ray.ang.helper.MessageHelper
-import com.v2ray.ang.service.DialerNativeService
-import com.v2ray.ang.service.DialerWebviewService
 import com.v2ray.ang.service.NetworkMonitor
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
@@ -57,7 +52,6 @@ object CoreServiceManager {
     private val mMsgReceive = ReceiveMessageHandler()
     private var currentConfig: ProfileItem? = null
     private var processFinder: XrayProcessFinder? = null
-    private var browserDialer: IDialerService? = null
     private var networkMonitor: NetworkMonitor? = null
     private val connectionTestScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -190,42 +184,16 @@ object CoreServiceManager {
 
         currentConfig = config
         var tunFd = vpnInterface?.fd ?: 0
-        val dialerMode = BrowserDialerMode.from(config.browserDialerMode)
-        val dialerAddr = if (dialerMode != null) {
-            "127.0.0.1:${Utils.findRandomFreePort()}"
-        } else {
-            ""
-        }
         if (SettingsManager.isUsingHevTun()) {
             tunFd = 0
         }
 
         NotificationManager.showNotification(currentConfig)
-        if (dialerAddr.isNotNullEmpty()) {
-            CoreNativeManager.reconcileBrowserDialer(dialerAddr)
-        }
+        // Amelia.Net 1.7.0: upstream's browser dialer is gone (no profile of the subscription sets it)
         coreController.startLoop(result.content, tunFd)
 
         if (!isRunning()) {
             error("Core failed to start")
-        }
-
-        if (browserDialer != null) {
-            browserDialer!!.stop()
-            browserDialer = null
-        }
-        when (dialerMode) {
-            BrowserDialerMode.OKHTTP -> {
-                browserDialer = DialerNativeService()
-                browserDialer!!.start(service, dialerAddr)
-            }
-
-            BrowserDialerMode.WEBVIEW -> {
-                browserDialer = DialerWebviewService()
-                browserDialer!!.start(service, dialerAddr)
-            }
-
-            else -> {}
         }
 
         if (!isReload) {
@@ -272,13 +240,6 @@ object CoreServiceManager {
                     LogUtil.e(AppConfig.TAG, "StartCore-Manager: Failed to stop V2Ray loop", e)
                 }
             }
-        }
-
-        // Close existing browser dialer
-        CoreNativeManager.reconcileBrowserDialer("")
-        if (browserDialer != null) {
-            browserDialer!!.stop()
-            browserDialer = null
         }
 
         MessageHelper.sendMsg2UI(service, AppConfig.MSG_STATE_STOP_SUCCESS, "")
