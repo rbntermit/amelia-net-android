@@ -121,6 +121,10 @@ data class AmeliaUiState(
     val awaitingConfirm: Boolean = false,
     /** 1.5.5: when the person last tapped "Отмена" in the system install window (0: never). */
     val installCancelledAt: Long = 0L,
+    /** 1.7.1: "Google Play Защита не дала установить обновление" is on screen. */
+    val playProtect: Boolean = false,
+    /** 1.7.1: when that window was last offered for the version on offer (0: never); the update window waits a day. */
+    val playOfferedAt: Long = 0L,
     // ---- 1.5.4 ----
     /** "Включать VPN при запуске телефона". */
     val bootEnabled: Boolean = false,
@@ -231,6 +235,10 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             serviceEvents.events.collect(::onServiceEvent)
         }
+        // 1.7.1: a failed install (e.g. Play Protect) shows its window right away
+        viewModelScope.launch {
+            AmeliaInstaller.failures.collect { if (it > 0) refreshInstallBlocked() }
+        }
         viewModelScope.launch {
             reload()
             if (_state.value.hasKey) refresh(silent = true)
@@ -277,7 +285,8 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 if (current == null && answered) AmeliaUpdater.deleteDownloads(app)
                 current?.let { AmeliaUpdater.pruneDownloads(app, it) }
             }
-            refreshInstallBlocked()
+            // 1.7.1: "Проверить обновления" always shows the Play Protect window again
+            refreshInstallBlocked(manual)
             current?.let { onUpdateFound(it) }
             // "О программе" open: its "Обновления проверены …" line follows the new answer
             if (_state.value.about != null) loadAbout()
@@ -678,7 +687,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
      * The phone refused the install of the version on offer (AmeliaInstaller). Never for a
      * version that is installed already, and not while an install is running.
      */
-    private fun refreshInstallBlocked() {
+    private fun refreshInstallBlocked(manual: Boolean = false) {
         viewModelScope.launch {
             // 1.5.3: also drops sessions nobody leads and gives up a stuck install
             val (code, phase) = withContext(Dispatchers.IO) {
@@ -686,12 +695,26 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             }
             val cancelledAt = withContext(Dispatchers.IO) { AmeliaInstaller.cancelledAt() }
             val busy = phase == AmeliaInstaller.Phase.INSTALLING
+            // 1.7.1: Play Protect window: at once after a block, on a manual check, else once a day
+            val play = withContext(Dispatchers.IO) { AmeliaInstaller.playBlock() }
+            val offered = _state.value.update?.versionCode
+            val now = System.currentTimeMillis()
+            val applies = AmeliaInstaller.playBlockApplies(play, BuildConfig.VERSION_CODE, offered)
+            val offerNow = AmeliaInstaller.offerPlayProtect(play, BuildConfig.VERSION_CODE, offered, busy, now, manual)
+            if (offerNow) withContext(Dispatchers.IO) { AmeliaInstaller.playOffered(now) }
+            val playOfferedAt = when {
+                !applies -> 0L
+                offerNow -> now
+                else -> play?.offeredAt ?: 0L
+            }
             _state.update {
                 it.copy(
                     installBlocked = AmeliaInstaller.showBlocked(code, BuildConfig.VERSION_CODE, it.update?.versionCode, busy),
                     installing = busy,
                     awaitingConfirm = phase == AmeliaInstaller.Phase.AWAITING_CONFIRM,
                     installCancelledAt = cancelledAt,
+                    playProtect = !busy && applies && (it.playProtect || offerNow),
+                    playOfferedAt = playOfferedAt,
                 )
             }
             if (busy) watchInstall()
@@ -737,6 +760,9 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             refreshInstallBlocked()
         }
     }
+
+    /** 1.7.1: the Play Protect window closed ("Позже", the bot, or a new try); it waits a day now. */
+    fun playProtectClosed() = _state.update { it.copy(playProtect = false) }
 
     fun installHelpDone() {
         viewModelScope.launch(Dispatchers.IO) { AmeliaInstaller.clearBlocked() }

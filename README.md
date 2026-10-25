@@ -108,6 +108,10 @@ keytool -genkeypair -v -keystore amelia-release.jks -alias amelia -keyalg RSA -k
 (`expire` 0 или впереди); `"journal"` — до 20 последних строк «Журнала» (`"22.10.2026 14:05 Нет интернета"`, до 160
 символов, старые первыми). Ключ остаётся в `"key"` (по нему бот находит подписку и отвечает), в тексте для бота его нет.
 
+С 1.7.1 — необязательное поле `"play_protect"`, только если Google Play Защита не дала установить обновление и эта
+версия ещё не установлена: `{"code": 28, "at": <unix>, "count": 2, "status": 3, "msg": "INSTALL_FAILED_VERIFICATION_FAILURE: Install not allowed"}`
+(`code` — какую версию не дали поставить, `at` — когда последний раз, `count` — сколько раз). Без блокировки поля нет.
+
 Ответ: `{"ok": true, "id": "R1234"}`. `net`: `mobile` | `wifi` | `other`. `stage`: `connect` — к
 серверу не соединиться; `data` — соединение есть, но запрос через сервер не проходит; `ok`.
 `hy2`: hysteria2 встроен в Xray-core, поэтому здесь `xray-<версия Xray-core>`.
