@@ -139,8 +139,13 @@ data class AmeliaUiState(
     val checkedAt: Long = 0L,
     /** How long the last check of all locations took, ms; 0 = unknown. */
     val lastCheckMs: Long = 0L,
-    /** Locations the server says do not work for this provider (and our check does not contradict). */
-    val providerBad: Set<String> = emptySet(),
+    /**
+     * 1.6.1: mark per location guid from the hints of the current network ("✓ работает у вашего
+     * оператора" / "⚠ у вашего оператора режут"); our own fresh check outweighs the hint.
+     */
+    val operatorMarks: Map<String, AmeliaHints.Mark> = emptyMap(),
+    /** 1.6.1: the grey line above the list; null without usable hints. */
+    val operatorNote: OperatorNote? = null,
 ) {
     val selectedName: String?
         get() = locations.firstOrNull { it.guid == selectedGuid }?.name
@@ -202,6 +207,12 @@ data class ReportUi(
 
 /** One installed app in the "мимо VPN" picker. */
 data class AppRow(val pkg: String, val label: String, val bypass: Boolean)
+
+/**
+ * 1.6.1: "Пометки — по проверкам других абонентов <[operator]>, <[net]>" above the list of locations.
+ * [operator]: AmeliaHints.operatorName, null = "вашего оператора"; [net]: AmeliaNetwork.NET_*.
+ */
+data class OperatorNote(val operator: String?, val net: String)
 
 class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -499,7 +510,8 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         val pings: Map<String, Long>,
         val checkedAt: Long,
         val lastCheckMs: Long,
-        val providerBad: Set<String>,
+        val operatorMarks: Map<String, AmeliaHints.Mark>,
+        val operatorNote: OperatorNote?,
         val lastFullAt: Long,
     )
 
@@ -509,14 +521,20 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         val store = AmeliaChecks.load()
         val locations = AmeliaQueue.locations()
         val names = locations.map { it.name }.toSet()
-        val fresh = AmeliaChecks.fresh(store, System.currentTimeMillis())
-        val bad = AmeliaHints.badHostPorts(AmeliaHints.current(AmeliaProbe.netKey(AmeliaNetwork.info(app))))
+        val now = System.currentTimeMillis()
+        val info = AmeliaNetwork.info(app)
+        val hints = AmeliaHints.current(AmeliaProbe.netKey(info), now)
+        val net = AmeliaHints.netKey(app)
+        // 1.6.1: our own check on this network in the last 10 minutes beats the hint, both ways
+        val marks = locations.mapNotNull { l ->
+            AmeliaHints.mark(l.hostPort, hints, store.entries[l.name], net, now)?.let { l.guid to it }
+        }.toMap()
         return ChecksSnapshot(
             pings = AmeliaManager.getPings(),
             checkedAt = store.entries.values.filter { it.name in names }.maxOfOrNull { it.ts } ?: 0L,
             lastCheckMs = store.lastFullMs,
-            // our own check saying it works beats the hint
-            providerBad = locations.filter { it.hostPort in bad && fresh[it.name]?.ok != true }.map { it.guid }.toSet(),
+            operatorMarks = marks,
+            operatorNote = if (!AmeliaHints.usable(hints)) null else OperatorNote(AmeliaHints.operatorName(hints?.asName), hints?.net ?: info.net),
             lastFullAt = store.lastFullAt,
         )
     }
@@ -530,7 +548,8 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                     pings = if (it.pinging) it.pings else c.pings,
                     checkedAt = c.checkedAt,
                     lastCheckMs = c.lastCheckMs,
-                    providerBad = c.providerBad,
+                    operatorMarks = c.operatorMarks,
+                    operatorNote = c.operatorNote,
                 )
             }
         }
@@ -1051,7 +1070,8 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 announceDismissed = snapshot.announceDismissed,
                 checkedAt = checks.checkedAt,
                 lastCheckMs = checks.lastCheckMs,
-                providerBad = checks.providerBad,
+                operatorMarks = checks.operatorMarks,
+                operatorNote = checks.operatorNote,
             )
         }
     }

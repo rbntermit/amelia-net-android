@@ -2,6 +2,7 @@ package com.v2ray.ang.amelia
 
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.util.LogUtil
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
@@ -62,14 +63,30 @@ object AmeliaSubscriptionClient {
         return result
     }
 
-    private fun request(a: AmeliaHttp.Attempt, key: String): Attempt {
+    /**
+     * 1.6.1, blocking: the subscription from [AmeliaConfig.RESUBSCRIBE_BASE_URLS] over [direct] (the phone's own
+     * network, never the tunnel), [timeoutMs] for the whole download, shared by the addresses in turn.
+     */
+    fun fetchDirect(key: String, direct: OkHttpClient, timeoutMs: Long): Result {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        val plan = AmeliaHttp.plan(AmeliaConfig.RESUBSCRIBE_BASE_URLS, tunnel = false)
+        val result = fetchWith(plan) { a ->
+            val left = deadline - System.currentTimeMillis()
+            if (left <= 0) Attempt.Failed
+            else request(a, key, direct.newBuilder().callTimeout(left, TimeUnit.MILLISECONDS).build())
+        }
+        if (result is Result.Ok) AmeliaHttp.rememberBase(result.baseUrl)
+        return result
+    }
+
+    private fun request(a: AmeliaHttp.Attempt, key: String, clientOverride: OkHttpClient? = null): Attempt {
         return try {
             val request = Request.Builder()
                 .url(AmeliaKey.subscriptionUrl(a.base, key))
                 .header("User-Agent", userAgent)
                 .header("Accept", "text/plain, */*")
                 .build()
-            val client = AmeliaHttp.clientFor(a.route).newBuilder()
+            val client = clientOverride ?: AmeliaHttp.clientFor(a.route).newBuilder()
                 .callTimeout(AmeliaConfig.HTTP_TIMEOUT_SECONDS * 2, TimeUnit.SECONDS)
                 .build()
             client.newCall(request).execute().use { response ->

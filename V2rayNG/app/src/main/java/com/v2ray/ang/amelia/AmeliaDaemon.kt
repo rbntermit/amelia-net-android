@@ -50,6 +50,8 @@ import java.util.concurrent.TimeUnit
  *   (AmeliaSwitchLimit); "белые списки" stop trying locations (AmeliaWhitelist).
  * - **1.6.0**: over the switch limit a dead location (tunnel check failed twice in a row) is still
  *   left for one that passed a check in the last 2 minutes ("сверх лимита: текущая не работает").
+ * - **1.6.1**: before "nothing works" and before the white list check the subscription is downloaded
+ *   again if older than 10 minutes (AmeliaResubscribe): the server may have moved locations to new ports.
  * - **No internet**: without a validated network, or when ya.ru / google do not answer around
  *   the tunnel, nothing is judged or switched; checks back off (30 s … 5 min), and after the
  *   network is back the daemon waits [SETTLE_MS] before the next check.
@@ -170,7 +172,7 @@ object AmeliaDaemon {
             AmeliaWhitelist.exit()
             // the native library is loaded here anyway: cache the core's own version for the app
             AmeliaVersions.xray()
-            AmeliaHints.refreshIfStale(service)
+            refreshHints(service, AmeliaHints.MAX_AGE_MS)
         }
         if (System.currentTimeMillis() - AmeliaChecks.load().lastFullAt > AmeliaChecks.FRESH_MS) startFullCheck(service)
         refreshTile(service)
@@ -212,7 +214,7 @@ object AmeliaDaemon {
         lastWhitelistCheck = 0L
         bgScope.launch {
             // the hints tell this provider's AS: the network key and what is cut here
-            AmeliaHints.refreshIfStale(service, force = true)
+            refreshHints(service, AmeliaHints.MAX_AGE_MS, force = true)
         }
         startWatch(service, 0L)
         startFullCheck(service)
@@ -292,7 +294,17 @@ object AmeliaDaemon {
             if (wait > 0) return wait
         } else if (whitelistCheckDue) {
             whitelistCheckDue = false
-            checkWhitelist(service)?.let { return it }
+            // 1.6.1: before the white list check, the subscription again (the server may have moved
+            // locations to new ports); changed: the new ones were just checked, the round goes on as usual
+            val r = resubscribeIfStale(service)
+            if (r == null) {
+                checkWhitelist(service)?.let { return it }
+            } else if (MmkvManager.getSelectServer()?.let { MmkvManager.decodeServerConfig(it)?.remarks } in r.changed) {
+                // the core still runs the old port of the current location
+                CoreServiceManager.reloadForAmelia()
+                waitCoreReady()
+                freshTunnel = true
+            }
         }
         if (freshTunnel) warmUp()
 
@@ -372,18 +384,26 @@ object AmeliaDaemon {
      * left anyway for one that passed a check in the last 2 minutes (a "good" one from the hints is
      * checked right now first), over the limit. Nothing like that: stay as in 1.5.9.
      */
-    private suspend fun switchOverLimit(service: Service, current: String?, name: String, why: String, failedInRow: Int): Long {
+    private suspend fun switchOverLimit(service: Service, currentGuid: String?, name: String, why: String, failedInRow: Int): Long {
+        var current = currentGuid
         var targets = emptyList<String>()
         if (AmeliaSwitchLimit.currentDead(failedInRow)) {
-            AmeliaHints.refreshIfOlder(service, AmeliaHints.BEFORE_SWITCH_MS)
+            refreshHints(service, AmeliaHints.BEFORE_SWITCH_MS)
             targets = verifiedTargets(service, current)
             if (targets.isEmpty()) {
                 checkCandidatesNow(service, current)
                 targets = verifiedTargets(service, current)
             }
+            if (targets.isEmpty()) {
+                // 1.6.1: nothing works: the subscription again (new ports); the changed ones were checked just now
+                resubscribeIfStale(service)?.let { r ->
+                    current = guidOf(name, current)
+                    targets = verifiedTargets(service, current.takeIf { name !in r.changed })
+                }
+            }
         }
         return when (AmeliaSwitchLimit.decide(limitAllowed = false, failures = failedInRow, haveVerified = targets.isNotEmpty())) {
-            AmeliaSwitchLimit.Decision.OVER_LIMIT -> switchFast(service, current, why, overLimit = true)
+            AmeliaSwitchLimit.Decision.OVER_LIMIT -> switchFast(service, current, why, overLimit = true, retryFailed = current != null && current in targets)
             else -> stayLimited(service, name, why)
         }
     }
@@ -521,8 +541,59 @@ object AmeliaDaemon {
         if (!AmeliaPolicy.isLastResort(config.remarks)) AmeliaBest.remember(net, config.remarks)
         emptyRounds = 0
         // 1.5.9: what works for this provider, asked again every 15 minutes while the VPN is on
-        bgScope.launch { AmeliaHints.refreshIfOlder(service, AmeliaHints.WHILE_ON_MS) }
+        bgScope.launch { refreshHints(service, AmeliaHints.WHILE_ON_MS) }
     }
+
+    /** Hints for this network if older than [maxAgeMs]; 1.6.1: a new answer redraws the marks in the list. */
+    private fun refreshHints(service: Service, maxAgeMs: Long, force: Boolean = false) {
+        if (AmeliaHints.refreshIfOlder(service, maxAgeMs, force)) MessageHelper.sendMsg2UI(service, AmeliaConfig.MSG_CHECKS, "")
+    }
+
+    /** What changed after a new download of the subscription (1.6.1). */
+    private class Resubscribed(val changed: Set<String>)
+
+    /**
+     * 1.6.1: before "nothing works" (and before the white list check). The subscription is older
+     * than 10 minutes and this network had no try in 10 minutes: download it again (msk2, then msk1,
+     * around the tunnel, 10 s). Locations whose address or port changed lose their quarantine and
+     * old results and are checked at once. Null: not due, not downloaded or nothing changed, so
+     * everything goes on as before. Import gives every location a new guid: callers look theirs up
+     * again by name ([guidOf]).
+     */
+    private suspend fun resubscribeIfStale(service: Service): Resubscribed? {
+        val now = System.currentTimeMillis()
+        val net = AmeliaHints.netKey(service)
+        if (!AmeliaManager.hasKey()) return null
+        if (!AmeliaResubscribe.due(AmeliaManager.lastSubscriptionUpdate(), AmeliaResubscribe.lastTry(net), now)) return null
+        AmeliaResubscribe.tried(net, now)
+        val before = AmeliaQueue.locations().associate { it.name to it.hostPort }
+        val outcome = AmeliaManager.refreshDirect(AmeliaNetwork.directClient(service, AmeliaHttp.client), AmeliaResubscribe.TIMEOUT_MS)
+        if (outcome != AmeliaManager.Outcome.OK) {
+            LogUtil.w(AppConfig.TAG, "Amelia watch: new subscription download failed: $outcome")
+            AmeliaJournal.add("Подписку заново скачать не вышло — проверяю как обычно")
+            return null
+        }
+        val after = AmeliaQueue.locations()
+        val changed = AmeliaResubscribe.changed(before, after.map { it.name to it.hostPort })
+        val line = AmeliaResubscribe.logLine(changed.size)
+        AmeliaEvents.add(AmeliaEvents.Event(now / 1000, "", "", line))
+        AmeliaJournal.add(line.replaceFirstChar(Char::uppercaseChar))
+        MessageHelper.sendMsg2UI(service, AmeliaConfig.MSG_CHECKS, "")
+        if (changed.isEmpty()) return null
+        changed.forEach { AmeliaQuarantine.releaseName(it) }
+        AmeliaChecks.forget(changed)
+        val guids = after.filter { it.name in changed }.map { it.guid }
+        val answered = AmeliaQuickPick.quickest(guids, deadlineMs = PROBE_TIMEOUT_MS, check = { AmeliaCheck.checkOne(service, it) }) { r ->
+            AmeliaChecks.put(service, r, net)
+            MessageHelper.sendMsg2UI(service, AmeliaConfig.MSG_CHECKS, "")
+        }
+        LogUtil.i(AppConfig.TAG, "Amelia watch: subscription changed, ${answered.size} of ${guids.size} new locations answered")
+        return Resubscribed(changed.toSet())
+    }
+
+    /** The current guid of the location named [name] (a subscription import gives new guids). */
+    private fun guidOf(name: String, fallback: String?): String? =
+        AmeliaQueue.locations().firstOrNull { it.name == name }?.guid ?: fallback?.takeIf { MmkvManager.decodeServerConfig(it) != null }
 
     private fun putFailure(service: Service, guid: String) {
         val config = MmkvManager.decodeServerConfig(guid) ?: return
@@ -574,16 +645,20 @@ object AmeliaDaemon {
      * passed a check in the last 2 minutes are tried (AmeliaSwitchLimit.verifiedTargets), the
      * reason gets "сверх лимита: текущая не работает". None answers: stay, as under the limit.
      */
-    private suspend fun switchFast(service: Service, failed: String?, why: String, overLimit: Boolean = false): Long {
+    private suspend fun switchFast(service: Service, failedGuid: String?, why: String, overLimit: Boolean = false, retryFailed: Boolean = false): Long {
         val t0 = System.currentTimeMillis()
-        val fromName = failed?.let { MmkvManager.decodeServerConfig(it)?.remarks }.orEmpty()
+        val fromName = failedGuid?.let { MmkvManager.decodeServerConfig(it)?.remarks }.orEmpty()
+        // 1.6.1: a new subscription download gives new guids; this one follows the location by name
+        var failed = failedGuid
+        var resubscribed = false
+        var reimported = false
         // 1.5.9: what works for this provider right now, if the hints are older than 2 minutes (≤ 3 s)
-        AmeliaHints.refreshIfOlder(service, AmeliaHints.BEFORE_SWITCH_MS)
+        refreshHints(service, AmeliaHints.BEFORE_SWITCH_MS)
         // over the limit the candidates were checked just now (switchOverLimit)
         if (!overLimit) quickPickIfStale(service, failed)
         startFullCheck(service)
         val reason = if (overLimit) AmeliaSwitchLimit.overLimitReason(why) else why
-        val tried = mutableSetOf<String>().apply { failed?.let { add(it) } }
+        val tried = mutableSetOf<String>().apply { if (!retryFailed) failed?.let { add(it) } }
         while (true) {
             // the person picked a location meanwhile: their choice wins, nothing is restored
             if (AmeliaManual.load().at > t0) return interval(service)
@@ -598,10 +673,29 @@ object AmeliaDaemon {
                 val names = locations.associate { it.guid to it.name }
                 AmeliaSwitchLimit.verifiedTargets(queue, { names[it] }, AmeliaChecks.load().entries, System.currentTimeMillis())
             }
-            val next = candidates.firstOrNull() ?: break
+            val next = candidates.firstOrNull()
+            if (next == null) {
+                // 1.6.1: before "nothing works", the subscription again: the server may have moved a location to another port
+                if (resubscribed) break
+                resubscribed = true
+                val r = resubscribeIfStale(service) ?: break
+                reimported = true
+                failed = guidOf(fromName, failed)
+                tried.clear()
+                // the one we are leaving is tried again only if its address or port changed
+                if (fromName !in r.changed) failed?.let { tried += it }
+                continue
+            }
             tried += next
             val ms = switchTo(service, next)
             if (ms >= 0) {
+                if (MmkvManager.decodeServerConfig(next)?.remarks == fromName) {
+                    // 1.6.1: the same location on its new port: not a switch, no quarantine, not counted
+                    AmeliaJournal.add("«$fromName» снова работает — сервер перенёс её на новый порт")
+                    onWorking(service, next, ms)
+                    refreshTile(service)
+                    return interval(service)
+                }
                 // 1.5.9: the one we left is not chosen automatically for 30 min on this network
                 if (fromName.isNotEmpty()) AmeliaQuarantine.put(fromName, AmeliaHints.netKey(service))
                 done(service, failed, next, fromName, reason, t0, ms)
@@ -609,7 +703,7 @@ object AmeliaDaemon {
             }
             putFailure(service, next)
         }
-        restore(service, failed)
+        restore(service, failed, force = reimported)
         if (overLimit) {
             AmeliaJournal.add("$fromName $why — проверенные локации не ответили через туннель")
             return stayLimited(service, fromName, why)
@@ -643,8 +737,9 @@ object AmeliaDaemon {
     }
 
     /** Nothing worked: the core goes back to [guid] (not left on the last one tried). */
-    private suspend fun restore(service: Service, guid: String?) {
-        if (guid == null || MmkvManager.getSelectServer() == guid) return
+    private suspend fun restore(service: Service, guid: String?, force: Boolean = false) {
+        // [force] (1.6.1): after a new subscription download the core may still run the old address of [guid]
+        if (guid == null || (!force && MmkvManager.getSelectServer() == guid)) return
         MmkvManager.setSelectServer(guid)
         AmeliaReserveState.setAuto(AmeliaReserveState.isReserveGuid(guid) && AmeliaReserveState.isAuto())
         CoreServiceManager.reloadForAmelia()

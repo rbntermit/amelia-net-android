@@ -60,6 +60,12 @@ object AmeliaChecks {
         put(context, AmeliaCheck.Result(guid, c.remarks, c.server.orEmpty(), c.serverPort?.toIntOrNull(), ms, stage, error))
     }
 
+    /** 1.6.1: results of [names] are about an address or port they no longer have (AmeliaResubscribe). */
+    fun forget(names: Collection<String>) = synchronized(lock) {
+        val s = load()
+        if (names.any { it in s.entries }) save(s.copy(entries = s.entries - names.toSet()))
+    }
+
     fun putFull(durationMs: Long) = synchronized(lock) {
         save(load().copy(lastFullAt = System.currentTimeMillis(), lastFullMs = durationMs))
     }
@@ -173,17 +179,79 @@ object AmeliaHints {
     /** Blocking. Asks the server when the cached answer is stale or from another network; errors are ignored. */
     fun refreshIfStale(context: Context, force: Boolean = false) = refreshIfOlder(context, MAX_AGE_MS, force)
 
-    /** Blocking. Asks again when this network's answer is older than [maxAgeMs]. No answer: the old one stays. */
-    fun refreshIfOlder(context: Context, maxAgeMs: Long, force: Boolean = false) {
+    /**
+     * Blocking. Asks again when this network's answer is older than [maxAgeMs]. No answer: the old one stays.
+     * @return true when a new answer was stored (1.6.1: the list of locations redraws its marks)
+     */
+    fun refreshIfOlder(context: Context, maxAgeMs: Long, force: Boolean = false): Boolean {
         val info = AmeliaNetwork.info(context)
         val sim = AmeliaProbe.netKey(info)
         val now = System.currentTimeMillis()
-        if (!force && cached(sim)?.let { now - it.at in 0 until maxAgeMs } == true) return
-        val body = AmeliaNetwork.getDirect(context, query(info.net), TIMEOUT_MS) ?: return
-        val h = parse(body) ?: return
+        if (!force && cached(sim)?.let { now - it.at in 0 until maxAgeMs } == true) return false
+        val body = AmeliaNetwork.getDirect(context, query(info.net), TIMEOUT_MS) ?: return false
+        val h = parse(body) ?: return false
         synchronized(this) {
             MmkvManager.encodeSettings(PREF_BY_NET, JsonUtil.toJson(ByNet(store(byNet(), sim, Cached(h, now, sim)))))
         }
+        return true
+    }
+
+    // ---- 1.6.1: marks "у вашего оператора" in the list of locations (pure, unit-tested) -----------
+
+    /** Our own check on this network at most this old outweighs the hint. */
+    const val OWN_CHECK_MS = 10L * 60 * 1000
+
+    enum class Mark {
+        /** "✓ работает у вашего оператора": in good. */
+        GOOD,
+        /** "⚠ у вашего оператора режут": in bad. */
+        BAD,
+    }
+
+    /** The hints say something about this provider: an answer with a known AS. */
+    fun usable(h: Hints?): Boolean = h != null && (h.asn ?: 0L) > 0L
+
+    /**
+     * Mark of one location from the hints of the current network. [own]: our latest check of it;
+     * it counts only when made on [net] (AmeliaHints.netKey) at most [OWN_CHECK_MS] ago: a working
+     * one never gets [Mark.BAD], a failing one never [Mark.GOOD]. No usable hints: no mark.
+     */
+    fun mark(hostPort: String, h: Hints?, own: AmeliaChecks.Entry?, net: String, now: Long): Mark? {
+        if (!usable(h)) return null
+        val ownFresh = own?.takeIf { it.net == net && now - it.ts in 0..OWN_CHECK_MS }
+        val good = (goodHostPorts(h)[hostPort] ?: 0) > 0
+        val bad = hostPort in badHostPorts(h)
+        return when {
+            good && ownFresh?.ok != false -> Mark.GOOD
+            bad && ownFresh?.ok != true -> Mark.BAD
+            else -> null
+        }
+    }
+
+    /** Words in the AS name that say nothing to a person (legal forms, "AS"). */
+    private val TECH_WORDS = setOf(
+        "as", "pjsc", "ojsc", "cjsc", "jsc", "llc", "ltd", "inc", "ooo", "pao", "zao", "oao", "ao", "gmbh", "plc", "co",
+        "ооо", "пао", "оао", "зао", "ао",
+    )
+
+    /**
+     * "MTS-AS" → "MTS", "PJSC MegaFon" → "MegaFon", "AS12389 Rostelecom" → "Rostelecom",
+     * "MEGAFON-AS" → "Megafon". Null when nothing readable is left (the line says "вашего оператора").
+     */
+    fun operatorName(asName: String?): String? {
+        val asNumber = Regex("(?i)as\\d+")
+        // "MEGAFON" reads better as "Megafon"; short ones ("MTS", "T2") stay as they are
+        fun readable(p: String) = if (p.length > 3 && p.all { !it.isLetter() || it.isUpperCase() }) p.lowercase().replaceFirstChar(Char::uppercaseChar) else p
+        val words = asName.orEmpty()
+            .replace(Regex("[\"«»“”,.()]"), " ")
+            .split(Regex("\\s+"))
+            .map { w ->
+                w.split('-', '_')
+                    .filter { p -> p.any(Char::isLetter) && p.lowercase() !in TECH_WORDS && !asNumber.matches(p) }
+                    .joinToString("-") { readable(it) }
+            }
+            .filter { it.isNotBlank() }
+        return words.joinToString(" ").trim().ifEmpty { null }
     }
 }
 
