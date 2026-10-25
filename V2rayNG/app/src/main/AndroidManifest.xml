@@ -10,6 +10,14 @@
         android:smallScreens="true"
         android:xlargeScreens="true" />
 
+    <!-- Kept although there is no camera code: the CAMERA permission below is only removed from
+         merged libraries (tools:node="remove"), and lint wants a matching optional feature. -->
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera.autofocus"
+        android:required="false" />
     <uses-feature
         android:name="android.software.leanback"
         android:required="false" />
