@@ -13,7 +13,10 @@ import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.core.LauncherManager
 import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.util.JsonUtil
 import com.v2ray.ang.util.LogUtil
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -53,6 +56,8 @@ object AmeliaInstaller {
     /** 1.5.5: when the person last cancelled the system install window / when update_cancel went out. */
     private const val PREF_CANCELLED_AT = "amelia_install_cancelled_at"
     private const val PREF_CANCEL_REPORTED_AT = "amelia_install_cancel_reported_at"
+    /** 1.7.1: [PlayBlock] as JSON. */
+    private const val PREF_PLAY = "amelia_install_play_protect"
 
     /** "Устанавливается…" longer than this without a final status: give up (1.5.3). */
     const val STUCK_MS = 3 * 60 * 1000L
@@ -60,6 +65,9 @@ object AmeliaInstaller {
     fun blockedCode(): Int = MmkvManager.decodeSettingsString(PREF_BLOCKED)?.toIntOrNull() ?: 0
 
     fun clearBlocked() = MmkvManager.encodeSettings(PREF_BLOCKED, "")
+
+    /** 1.7.1: the update went through: no Play Protect screen and no "play_protect" in reports any more. */
+    fun clearPlayBlock() = MmkvManager.encodeSettings(PREF_PLAY, "")
 
     // ---- pure logic (unit-tested) ---------------------------------------------------------
 
@@ -125,9 +133,22 @@ object AmeliaInstaller {
         REFUSED,
         /** 1.5.5: the person tapped "Отмена" in Android's "Обновить приложение?": not a refusal. */
         CANCELLED,
+        /**
+         * 1.7.1: Google Play Protect stopped the install ("Не устанавливать", or its check could
+         * not reach Google, e.g. on mobile data with white lists). Not an app error: own screen,
+         * a journal line and "play_protect" in /app/report, never /app/crash.
+         */
+        PLAY_PROTECT,
         /** Anything else (storage, broken file …): the system installer, no help screen. */
         OTHER,
     }
+
+    private const val VERIFICATION_FAILURE = "INSTALL_FAILED_VERIFICATION_FAILURE"
+
+    /** Samsung Auto Blocker sends the same code as Play Protect, with its own name in the text. */
+    private fun isAutoBlocker(message: String): Boolean =
+        message.contains("auto blocker", ignoreCase = true) || message.contains("autoblocker", ignoreCase = true) ||
+            message.contains("auto_blocker", ignoreCase = true)
 
     /**
      * Final failure statuses only. STATUS_PENDING_USER_ACTION never comes here: it is not a
@@ -137,7 +158,9 @@ object AmeliaInstaller {
         val m = message.orEmpty()
         return when {
             m.contains("INSTALL_FAILED_DUPLICATE_PACKAGE") || m.contains("in pending install requests", ignoreCase = true) -> Failure.DUPLICATE
-            status == PackageInstaller.STATUS_FAILURE_BLOCKED || m.contains("INSTALL_FAILED_VERIFICATION_FAILURE") -> Failure.REFUSED
+            // 1.7.1: "INSTALL_FAILED_VERIFICATION_FAILURE: Install not allowed" (status 3 = ABORTED) is Play Protect
+            m.contains(VERIFICATION_FAILURE) && !isAutoBlocker(m) -> Failure.PLAY_PROTECT
+            status == PackageInstaller.STATUS_FAILURE_BLOCKED || m.contains(VERIFICATION_FAILURE) -> Failure.REFUSED
             // 1.5.5: "Отмена" in "Обновить приложение?" and "Установка неизвестных приложений"
             // denied both come as ABORTED "User rejected permissions"; the permission tells them apart
             status == PackageInstaller.STATUS_FAILURE_ABORTED -> if (canInstallApps) Failure.CANCELLED else Failure.REFUSED
@@ -155,21 +178,90 @@ object AmeliaInstaller {
      * 1.5.5: after a cancel the update window does not pop up by itself for a day (the card
      * with "Установить" stays); a required update is always offered.
      */
-    fun offerUpdateDialog(cancelledAt: Long, now: Long, required: Boolean): Boolean =
-        required || cancelledAt <= 0 || now - cancelledAt !in 0 until CANCEL_REPORT_MS
+    fun offerUpdateDialog(cancelledAt: Long, now: Long, required: Boolean, playOfferedAt: Long = 0L): Boolean =
+        required || listOf(cancelledAt, playOfferedAt).all { it <= 0 || now - it !in 0 until CANCEL_REPORT_MS }
 
     fun cancelledAt(): Long = MmkvManager.decodeSettingsString(PREF_CANCELLED_AT)?.toLongOrNull() ?: 0L
 
     /** What a failed session leads to. */
-    data class Reaction(val helpScreen: Boolean, val report: String?, val systemInstaller: Boolean)
+    data class Reaction(
+        val helpScreen: Boolean,
+        val report: String?,
+        val systemInstaller: Boolean,
+        /** 1.7.1: "Google Play Защита не дала установить обновление" and a journal line. */
+        val playProtectScreen: Boolean = false,
+    )
 
     fun reaction(failure: Failure): Reaction = when (failure) {
         Failure.DUPLICATE -> Reaction(helpScreen = false, report = null, systemInstaller = false)
         Failure.REFUSED -> Reaction(helpScreen = true, report = "update_blocked", systemInstaller = true)
         // the card comes back with "Установить"; nothing opens by itself
         Failure.CANCELLED -> Reaction(helpScreen = false, report = "update_cancel", systemInstaller = false)
+        // 1.7.1: no crash report; the system installer would only ask Play Protect again
+        Failure.PLAY_PROTECT -> Reaction(helpScreen = false, report = null, systemInstaller = false, playProtectScreen = true)
         Failure.OTHER -> Reaction(helpScreen = false, report = "update", systemInstaller = true)
     }
+
+    // ---- 1.7.1: Play Protect blocked the update ---------------------------------------------
+
+    /** The update screen offers itself again after a Play Protect block at most this often. */
+    const val PLAY_OFFER_MS = 24 * 60 * 60 * 1000L
+    private const val MAX_PLAY_MESSAGE = 160
+
+    /** The last Play Protect block, kept until the update goes through. */
+    data class PlayBlock(
+        /** versionCode whose install was stopped. */
+        val code: Int = 0,
+        /** When it last happened, ms. */
+        val at: Long = 0L,
+        /** How many times this version was stopped. */
+        val count: Int = 0,
+        val status: Int = 0,
+        /** Android's text, e.g. "INSTALL_FAILED_VERIFICATION_FAILURE: Install not allowed". */
+        val message: String = "",
+        /** When the screen was last offered (0: not yet). */
+        val offeredAt: Long = 0L,
+        /** A fresh block: the screen opens at once, not a day later. */
+        val pending: Boolean = false,
+    )
+
+    fun recordPlayBlock(prev: PlayBlock?, code: Int, status: Int, message: String, now: Long): PlayBlock = PlayBlock(
+        code = code,
+        at = now,
+        count = if (prev != null && prev.code == code) prev.count + 1 else 1,
+        status = status,
+        message = message.take(MAX_PLAY_MESSAGE),
+        offeredAt = prev?.takeIf { it.code == code }?.offeredAt ?: 0L,
+        pending = true,
+    )
+
+    /** The block is about the version on offer, newer than the installed one. */
+    fun playBlockApplies(b: PlayBlock?, installedCode: Int, offeredCode: Int?): Boolean =
+        b != null && b.code > installedCode && b.code == offeredCode
+
+    /**
+     * The Play Protect screen: right after a block, after a manual "Проверить обновления", and
+     * otherwise at most once a day; never while an install runs.
+     */
+    fun offerPlayProtect(b: PlayBlock?, installedCode: Int, offeredCode: Int?, busy: Boolean, now: Long, manual: Boolean): Boolean =
+        !busy && playBlockApplies(b, installedCode, offeredCode) &&
+            (b!!.pending || manual || b.offeredAt <= 0 || now - b.offeredAt !in 0 until PLAY_OFFER_MS)
+
+    fun markPlayOffered(b: PlayBlock, now: Long): PlayBlock = b.copy(pending = false, offeredAt = now)
+
+    fun playBlock(): PlayBlock? =
+        MmkvManager.decodeSettingsString(PREF_PLAY)?.takeIf { it.isNotBlank() }?.let { JsonUtil.fromJsonSafe(it, PlayBlock::class.java) }
+
+    private fun savePlayBlock(b: PlayBlock?) = MmkvManager.encodeSettings(PREF_PLAY, b?.let { JsonUtil.toJson(it) } ?: "")
+
+    /** The screen is up now: the next offer waits a day. */
+    fun playOffered(now: Long = System.currentTimeMillis()) {
+        playBlock()?.let { savePlayBlock(markPlayOffered(it, now)) }
+    }
+
+    /** A status receiver got a failure (any process-wide listener refreshes its screen). */
+    private val _failures = MutableStateFlow(0L)
+    val failures: StateFlow<Long> = _failures
 
     /** "Телефон не дал установить обновление": only for the version on offer, newer than the installed one, and not while installing. */
     fun showBlocked(blockedCode: Int, installedCode: Int, offeredCode: Int?, busy: Boolean): Boolean =
@@ -269,6 +361,7 @@ object AmeliaInstaller {
         val from = MmkvManager.decodeSettingsString(PREF_FROM_CODE)?.toIntOrNull() ?: 0
         if (!updatedSince(currentCode, from)) return
         clearBlocked()
+        clearPlayBlock()
         clearOwned(context)
         MmkvManager.encodeSettings(PREF_FROM_CODE, "")
         MmkvManager.encodeSettings(PREF_APK, "")
@@ -432,14 +525,15 @@ object AmeliaInstaller {
                         onCancelled(message)
                         return
                     }
-                    onSessionFailed(context, message, failure)
+                    onSessionFailed(context, message, failure, status, text)
                 }
             }
         }
 
         /**
-         * 1.4.0: the session install was refused (Samsung Auto Blocker, Play Protect: BLOCKED,
-         * INSTALL_FAILED_VERIFICATION_FAILURE, ABORTED without "install unknown apps"). Right away the
+         * 1.4.0: the session install was refused (Samsung Auto Blocker: BLOCKED,
+         * INSTALL_FAILED_VERIFICATION_FAILURE "Auto Blocker", ABORTED without "install unknown apps";
+         * 1.7.1: Play Protect has its own screen, see [onPlayProtect]). Right away the
          * classic system installer screen; the app also shows how to let the install through.
          * Reported to /app/crash once per version as "update_blocked". 1.5.1: other failures
          * only get the system installer screen and an "update" report, no help screen.
@@ -459,10 +553,23 @@ object AmeliaInstaller {
             reaction(Failure.CANCELLED).report?.let { AmeliaCrash.nonFatal(it, null, message) }
         }
 
-        private fun onSessionFailed(context: Context, message: String, failure: Failure) {
+        /**
+         * 1.7.1: Play Protect stopped the update. Remembered for the screen (shown at once, then
+         * at most once a day) and for "play_protect" in /app/report; a line in "Журнал".
+         */
+        private fun onPlayProtect(context: Context, code: Int, status: Int, text: String) {
+            val now = System.currentTimeMillis()
+            // the version being installed; unknown (0) would never match the offer, so the last answer's
+            val version = code.takeIf { it > 0 } ?: AmeliaUpdater.cached()?.versionCode ?: 0
+            savePlayBlock(recordPlayBlock(playBlock(), version, status, text, now))
+            AmeliaJournal.add(context.getString(R.string.amelia_journal_play_protect), now)
+        }
+
+        private fun onSessionFailed(context: Context, message: String, failure: Failure, status: Int, text: String) {
             val code = MmkvManager.decodeSettingsString(PREF_CODE)?.toIntOrNull() ?: 0
             val r = reaction(failure)
             if (r.helpScreen) MmkvManager.encodeSettings(PREF_BLOCKED, code.toString())
+            if (r.playProtectScreen) onPlayProtect(context, code, status, text)
             when (r.report) {
                 null -> Unit
                 "update_blocked" -> if (MmkvManager.decodeSettingsString(PREF_BLOCKED_REPORTED) != code.toString()) {
@@ -471,6 +578,8 @@ object AmeliaInstaller {
                 }
                 else -> AmeliaCrash.nonFatal(r.report, null, message)
             }
+            // the screen asks again now, not only when the next 3-second check notices
+            _failures.value = System.currentTimeMillis()
             if (!r.systemInstaller) return
             val apk = MmkvManager.decodeSettingsString(PREF_APK)?.let { File(it) }?.takeIf { it.isFile } ?: return
             runCatching { context.startActivity(AmeliaUpdater.installIntent(context, apk)) }
@@ -495,6 +604,7 @@ object AmeliaInstaller {
             // 1.3.0: the downloaded APK is installed now, free the space
             AmeliaUpdater.deleteDownloads(context)
             clearBlocked()
+            clearPlayBlock()
             clearOwned(context)
             if (!MmkvManager.decodeSettingsBool(PREF_RESTART_VPN, false)) return
             MmkvManager.encodeSettings(PREF_RESTART_VPN, false)

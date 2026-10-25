@@ -265,6 +265,13 @@
     <string name="amelia_install_permission_open">Открыть настройки</string>
     <string name="amelia_install_bad_signature">Скачанный файл подписан не нашим ключом. Устанавливать его нельзя — скачайте обновление в боте.</string>
     <string name="amelia_install_bad_version">Скачанный файл — не та версия (%1$s). Попробуйте проверить обновления ещё раз.</string>
+    <!-- 1.7.1: Google Play Protect stopped the update -->
+    <string name="amelia_play_protect_title">Google Play Защита не дала установить обновление</string>
+    <string name="amelia_play_protect_text">Нажмите «Попробовать снова» и в окне Google выберите «Проверить» (или «Установить без проверки»).</string>
+    <string name="amelia_play_protect_wifi">Если вы на мобильном интернете — подключитесь к Wi‑Fi: проверке Google нужен доступ к своим серверам.</string>
+    <string name="amelia_play_protect_retry">Попробовать снова</string>
+    <string name="amelia_play_protect_telegram">Скачать в Telegram-боте</string>
+    <string name="amelia_journal_play_protect">Google Play Защита не дала установить обновление</string>
 
     <!-- 1.5.0: subscription line, Telegram proxy, apps around the VPN -->
     <string name="amelia_sub_until_days">Подписка до %1$s · осталось %2$d дн.</string>

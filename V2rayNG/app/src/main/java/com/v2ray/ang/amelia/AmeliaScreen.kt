@@ -227,8 +227,11 @@ fun AmeliaApp(
         var postponed by rememberSaveable { mutableStateOf(0) }
         val update = state.update
         // 1.5.5: after "Отмена" in the system window the window does not pop up by itself for a day
-        if (update != null && (state.updateRequired || postponed != update.versionCode) &&
-            AmeliaInstaller.offerUpdateDialog(state.installCancelledAt, System.currentTimeMillis(), state.updateRequired)
+        // 1.7.1: after a Play Protect block its own window instead, and the same day-long pause
+        if (state.playProtect && update != null) {
+            PlayProtectDialog(extra)
+        } else if (update != null && (state.updateRequired || postponed != update.versionCode) &&
+            AmeliaInstaller.offerUpdateDialog(state.installCancelledAt, System.currentTimeMillis(), state.updateRequired, state.playOfferedAt)
         ) {
             UpdateDialog(
                 state, updates,

@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.os.Build
+import com.google.gson.JsonParser
 import com.google.gson.annotations.SerializedName
 import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.handler.MmkvManager
@@ -69,9 +70,29 @@ object AmeliaReport {
         val journal: List<String> = emptyList(),
         /** 1.5.9: sent in white-list mode; written as "wl": true only then (AmeliaProbe.withWl). */
         @Transient val wl: Boolean = false,
+        /** 1.7.1: Google Play Protect stopped the update; written as "play_protect" only then ([withPlayProtect]). */
+        @Transient val playProtect: PlayProtect? = null,
     )
 
+    /**
+     * 1.7.1: "play_protect" in /app/report: Google Play Protect stopped the install of [code].
+     * [at] in Unix seconds, [count] times for this version, Android's [status] and [msg].
+     */
+    data class PlayProtect(val code: Int, val at: Long, val count: Int, val status: Int, val msg: String)
+
     // ---- pure logic (unit-tested) ---------------------------------------------------------
+
+    /** 1.7.1: the remembered block, while that version is still not installed. */
+    fun playProtect(b: AmeliaInstaller.PlayBlock?, installedCode: Int): PlayProtect? =
+        b?.takeIf { it.code > installedCode && it.count > 0 }?.let { PlayProtect(it.code, it.at / 1000, it.count, it.status, it.message) }
+
+    /** 1.7.1: adds "play_protect": {…} to the report body; nothing at all without a block. */
+    fun withPlayProtect(json: String, p: PlayProtect?): String {
+        if (p == null) return json
+        val tree = JsonParser.parseString(json).asJsonObject
+        tree.add("play_protect", AmeliaProbe.wireGson.toJsonTree(p))
+        return AmeliaProbe.wireGson.toJson(tree)
+    }
 
     /** Locations in subscription order with their check; a location without a result failed. */
     fun servers(locations: List<Location>, checks: Map<String, Check>): List<Server> = locations.map { l ->
@@ -110,7 +131,7 @@ object AmeliaReport {
     fun toJson(body: Body): String {
         var b = body.copy(comment = body.comment.take(MAX_COMMENT))
         // 1.5.9: "wl": true in white-list mode (a few bytes, inside the margin of the limit)
-        fun json(x: Body) = AmeliaProbe.withWl(AmeliaProbe.wireGson.toJson(x), x.wl)
+        fun json(x: Body) = withPlayProtect(AmeliaProbe.withWl(AmeliaProbe.wireGson.toJson(x), x.wl), x.playProtect)
         var json = json(b)
         if (json.toByteArray().size <= AmeliaNetwork.MAX_BODY_BYTES) return json
         b = b.copy(servers = b.servers.map { it.copy(err = it.err?.take(60)) })
@@ -144,6 +165,7 @@ object AmeliaReport {
         body.vpn?.let { appendLine("VPN включён: ${if (it) "да" else "нет"}") }
         body.subActive?.let { appendLine("Подписка действует: ${if (it) "да" else "нет"}") }
         if (body.wl) appendLine("Оператор включил «белые списки»")
+        body.playProtect?.let { appendLine("Google Play Защита не дала установить обновление (версия ${it.code}), сколько раз: ${it.count}") }
         if (body.comment.isNotBlank()) appendLine("Что случилось: ${body.comment}")
         appendLine()
         body.servers.forEach { s ->
@@ -207,6 +229,7 @@ object AmeliaReport {
         subActive = AmeliaPolicy.subscriptionActive(AmeliaManager.getSubInfo(), System.currentTimeMillis()),
         journal = journalLines(AmeliaJournal.list(), AmeliaFormat::dateTime),
         wl = AmeliaWhitelist.isActive(),
+        playProtect = playProtect(AmeliaInstaller.playBlock(), BuildConfig.VERSION_CODE),
     )
 
     /** Blocking. Sends the report; the report id on success, null when no server took it. */

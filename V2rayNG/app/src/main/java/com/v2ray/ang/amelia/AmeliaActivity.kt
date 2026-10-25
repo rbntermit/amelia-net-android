@@ -179,6 +179,16 @@ class AmeliaActivity : HelperBaseComponentActivity() {
                 onOpenSecurity = ::openSecuritySettings,
                 onDownloadInBrowser = { viewModel.manualDownloadUrl()?.let { Utils.openUri(this, it) } },
                 onGetInTelegram = { Utils.openUri(this, AmeliaConfig.botUrl(AmeliaConfig.BotScreen.APP)) },
+                // 1.7.1: Play Protect stopped the update: the same checked file in a new install session
+                onPlayProtectRetry = {
+                    viewModel.playProtectClosed()
+                    viewModel.state.value.updateApkPath?.let { installUpdate(it) } ?: viewModel.downloadUpdate()
+                },
+                onPlayProtectTelegram = {
+                    viewModel.playProtectClosed()
+                    Utils.openUri(this, AmeliaConfig.botUrl(AmeliaConfig.BotScreen.APP))
+                },
+                onPlayProtectLater = viewModel::playProtectClosed,
                 onReplaceKey = viewModel::replaceKeyFromLink,
                 onKeepKey = viewModel::keepKey,
             ),

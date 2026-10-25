@@ -93,6 +93,10 @@ class ExtraCallbacks(
     val onOpenSecurity: () -> Unit,
     val onDownloadInBrowser: () -> Unit,
     val onGetInTelegram: () -> Unit,
+    /** 1.7.1: "Google Play Защита не дала установить обновление": a new install of the same file. */
+    val onPlayProtectRetry: () -> Unit,
+    val onPlayProtectTelegram: () -> Unit,
+    val onPlayProtectLater: () -> Unit,
     /** Opens the system dialog that lets the app run in the background. */
     val onAllowBackground: () -> Unit,
     val onBatteryCardDone: () -> Unit,
@@ -634,6 +638,27 @@ internal fun InstallPermissionDialog(onOpen: () -> Unit, onDismiss: () -> Unit) 
         text = { Text(stringResource(R.string.amelia_install_permission_text)) },
         confirmButton = { TextButton(onClick = onOpen) { Text(stringResource(R.string.amelia_install_permission_open)) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.amelia_cancel)) } },
+    )
+}
+
+/**
+ * 1.7.1: Google Play Protect stopped the update ("Не устанавливать", or no access to Google).
+ * "Попробовать снова" starts a new install of the file already downloaded and checked.
+ */
+@Composable
+internal fun PlayProtectDialog(extra: ExtraCallbacks) {
+    AlertDialog(
+        onDismissRequest = extra.onPlayProtectLater,
+        title = { Text(stringResource(R.string.amelia_play_protect_title)) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.amelia_play_protect_text))
+                Text(stringResource(R.string.amelia_play_protect_wifi), style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = extra.onPlayProtectTelegram) { Text(stringResource(R.string.amelia_play_protect_telegram)) }
+            }
+        },
+        confirmButton = { TextButton(onClick = extra.onPlayProtectRetry) { Text(stringResource(R.string.amelia_play_protect_retry)) } },
+        dismissButton = { TextButton(onClick = extra.onPlayProtectLater) { Text(stringResource(R.string.amelia_update_later)) } },
     )
 }
 
