@@ -53,6 +53,8 @@ class AmeliaActivity : HelperBaseComponentActivity() {
             AmeliaInstaller.resetIfUpdated(applicationContext, BuildConfig.VERSION_CODE)
             // 1.5.3: sessions left by an earlier run (nobody leads them) are dropped at start
             AmeliaInstaller.check(applicationContext)
+            // 1.7.2: a damaged geo base would stop the VPN from starting: the built-in one replaces it
+            AmeliaGeoUpdater.repairIfDamaged(applicationContext)
             AmeliaRouting.apply(applicationContext)
             AmeliaGeoUpdater.schedule(applicationContext)
             AmeliaUpdateWorker.schedule(applicationContext)
