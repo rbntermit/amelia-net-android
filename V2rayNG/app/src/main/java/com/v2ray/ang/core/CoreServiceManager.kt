@@ -16,6 +16,7 @@ import com.v2ray.ang.amelia.AmeliaBoot
 import com.v2ray.ang.amelia.AmeliaConfig
 import com.v2ray.ang.amelia.AmeliaCrash
 import com.v2ray.ang.amelia.AmeliaDaemon
+import com.v2ray.ang.amelia.AmeliaGeoUpdater
 import com.v2ray.ang.amelia.AmeliaReserve
 import com.v2ray.ang.contracts.ServiceControl
 import com.v2ray.ang.dto.ConnectionTestResult
@@ -169,6 +170,22 @@ object CoreServiceManager {
      */
     @Throws(Exception::class)
     private fun launchCore(service: Service, vpnInterface: ParcelFileDescriptor?, isReload: Boolean = false, pickLocation: Boolean = !isReload) {
+        // Amelia.Net 1.7.2: a damaged geoip.dat / geosite.dat ("invalid body length") stopped the
+        // core for good. Then the bases built into the APK come back and the core starts once more,
+        // with the config built again for them; still failing, the error goes on as before
+        // (core_start report). Recovered: no report, a line in "Журнал". Same for start, reload
+        // and revive in every run mode, under the caller's lifecycle lock.
+        AmeliaGeoUpdater.withGeoRecovery(
+            start = { launchCoreOnce(service, vpnInterface, isReload, pickLocation) },
+            restore = {
+                LogUtil.w(AppConfig.TAG, "StartCore-Manager: core start failed on a geo base, restoring the built-in ones (reload=$isReload)")
+                AmeliaGeoUpdater.restoreBuiltIn(service)
+            },
+        )
+    }
+
+    @Throws(Exception::class)
+    private fun launchCoreOnce(service: Service, vpnInterface: ParcelFileDescriptor?, isReload: Boolean, pickLocation: Boolean) {
         // Amelia.Net 1.5.4: Android may start the VPN by itself (Always-on, boot) after a
         // subscription refresh removed the selected location: take the best one, not fail
         val guid = (if (pickLocation) AmeliaBoot.ensureLocation(service) else MmkvManager.getSelectServer())

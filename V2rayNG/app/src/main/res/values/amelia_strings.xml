@@ -272,6 +272,8 @@
     <string name="amelia_play_protect_retry">Попробовать снова</string>
     <string name="amelia_play_protect_telegram">Скачать в Telegram-боте</string>
     <string name="amelia_journal_play_protect">Google Play Защита не дала установить обновление</string>
+    <!-- 1.7.2: a damaged geoip.dat / geosite.dat was replaced by the one built into the app -->
+    <string name="amelia_journal_geo_restored">Гео-база была повреждена — восстановлена встроенная</string>
 
     <!-- 1.5.0: subscription line, Telegram proxy, apps around the VPN -->
     <string name="amelia_sub_until_days">Подписка до %1$s · осталось %2$d дн.</string>
