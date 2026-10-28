@@ -330,4 +330,27 @@
     <string name="amelia_key_replace_text">Ссылка открыла другой ключ. Если заменить, нынешний ключ пропадёт из приложения.</string>
     <string name="amelia_key_replace_yes">Заменить</string>
     <string name="amelia_key_replace_no">Оставить нынешний</string>
+    <!-- 1.7.3: main screen while the internet is checked after connecting and while switching -->
+    <string name="amelia_phase_checking_on">Проверяем интернет через «%1$s»…</string>
+    <string name="amelia_phase_checking_on_auto">Проверяем интернет через «%1$s»… Если не ответит, приложение само переключится на следующий</string>
+    <string name="amelia_phase_switching_from">«%1$s» не ответил — пробуем «%2$s»</string>
+    <!-- 1.7.3: journal: why the list is tried in this order and why this location -->
+    <string name="amelia_journal_order_top">Перебор по порядку подписки, с начала списка</string>
+    <string name="amelia_journal_order_after">Перебор по порядку подписки, начиная со следующей после «%1$s»</string>
+    <string name="amelia_journal_order_hints">в конец по подсказкам: у вашего оператора режут %1$s</string>
+    <string name="amelia_journal_order_past">в конец после недавних неудач: %1$s</string>
+    <string name="amelia_journal_order_last_resort">в самом конце (подписка закончилась): %1$s</string>
+    <string name="amelia_journal_order_skip_reserve">пропускаю «только Telegram»: %1$s</string>
+    <string name="amelia_journal_order_skip_russian">пропускаю российский выход: %1$s</string>
+    <string name="amelia_journal_order_over_limit">лимит переключений исчерпан — беру только проверенные за последние 2 мин</string>
+    <string name="amelia_journal_try">«%1$s» не ответил — пробую «%2$s» (%3$s)</string>
+    <string name="amelia_journal_why_list">следующий по списку</string>
+    <string name="amelia_journal_why_hints">дальше остались только те, что режут у вашего оператора</string>
+    <string name="amelia_journal_why_past">дальше остались только недавно не отвечавшие</string>
+    <string name="amelia_journal_why_last_resort">обычные локации не ответили</string>
+    <string name="amelia_journal_skipped_now">пропущены — не ответили на проверке сейчас: %1$s</string>
+    <!-- 1.7.3: journal: which address the subscription came from -->
+    <string name="amelia_journal_sub_from">Подписка скачана: %1$s, %2$s</string>
+    <string name="amelia_journal_sub_tunnel">через VPN</string>
+    <string name="amelia_journal_sub_direct">напрямую</string>
 </resources>

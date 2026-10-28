@@ -132,7 +132,7 @@ class Amelia158Test {
 
     @Test
     fun shopOnMainThenSpare() {
-        assertEquals("$main/shop", AmeliaSite.shopUrl(AmeliaSite.pickBase(mainAnswered = true)))
-        assertEquals("$spare/shop", AmeliaSite.shopUrl(AmeliaSite.pickBase(mainAnswered = false)))
+        assertEquals("$main/shop", AmeliaSite.shopUrl(AmeliaSite.pickBase(listOf(true, false, false))))
+        assertEquals("$spare/shop", AmeliaSite.shopUrl(AmeliaSite.pickBase(listOf(false, false, false))))
     }
 }

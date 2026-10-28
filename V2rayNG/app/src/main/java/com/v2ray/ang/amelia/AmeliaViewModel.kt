@@ -152,9 +152,31 @@ data class AmeliaUiState(
     val operatorMarks: Map<String, AmeliaHints.Mark> = emptyMap(),
     /** 1.6.1: the grey line above the list; null without usable hints. */
     val operatorNote: OperatorNote? = null,
+    // ---- 1.7.3 ----
+    /** SWITCHING: the location that did not answer just before the selected one is tried. */
+    val switchFrom: String? = null,
+    /** CHECKING: when the location does not answer, the app moves to the next one by itself. */
+    val autoSwitch: Boolean = false,
 ) {
     val selectedName: String?
         get() = locations.firstOrNull { it.guid == selectedGuid }?.name
+
+    /**
+     * 1.7.3: the line under the main button while the internet is checked after connecting and
+     * while switching, as a string resource and its arguments; null: the plain phase text.
+     * "Проверяем интернет через «Казахстан 2»… Если не ответит, приложение само переключится на
+     * следующий", then "«Казахстан 2» не ответил — пробуем «Казахстан 1»". Not a pop-up: the main
+     * button still cancels.
+     */
+    val progressText: Pair<Int, List<String>>?
+        get() {
+            val name = selectedName ?: return null
+            return when (phase) {
+                ConnPhase.CHECKING -> (if (autoSwitch) R.string.amelia_phase_checking_on_auto else R.string.amelia_phase_checking_on) to listOf(name)
+                ConnPhase.SWITCHING -> switchFrom?.takeIf { it.isNotEmpty() && it != name }?.let { R.string.amelia_phase_switching_from to listOf(it, name) }
+                else -> null
+            }
+        }
 
     /** Installed version is below the server's minVersionCode: no connecting until updated. */
     val updateRequired: Boolean
@@ -1042,6 +1064,8 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 pingMs = h.pingMs.takeIf { ms -> phase == ConnPhase.CONNECTED && ms >= 0 },
                 selectedGuid = h.guid ?: it.selectedGuid,
                 reserveFallback = phase == ConnPhase.CONNECTED && h.reserveFallback,
+                switchFrom = h.fromName.takeIf { phase == ConnPhase.SWITCHING },
+                autoSwitch = phase == ConnPhase.CHECKING && h.autoSwitch,
             )
         }
     }

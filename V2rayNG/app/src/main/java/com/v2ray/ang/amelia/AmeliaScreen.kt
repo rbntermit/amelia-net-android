@@ -791,7 +791,9 @@ private fun PowerGlyph(color: Color, modifier: Modifier) {
 
 @Composable
 private fun PhaseText(state: AmeliaUiState) {
-    val text = when (state.phase) {
+    // 1.7.3: which location is checked, and which one did not answer
+    val progress = state.progressText
+    val text = if (progress != null) stringResource(progress.first, *progress.second.toTypedArray()) else when (state.phase) {
         ConnPhase.OFF -> stringResource(R.string.amelia_phase_off)
         ConnPhase.STARTING -> stringResource(R.string.amelia_phase_starting)
         ConnPhase.CHECKING -> stringResource(R.string.amelia_phase_checking)

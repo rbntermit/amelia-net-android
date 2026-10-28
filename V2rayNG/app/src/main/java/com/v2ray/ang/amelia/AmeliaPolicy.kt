@@ -225,6 +225,11 @@ object AmeliaJournal {
 
     data class Entry(val ts: Long = 0L, val text: String = "")
 
+    /** 1.7.3: texts of journal lines built by pure functions: Context.getString, a fake in unit tests. */
+    fun interface Strings {
+        fun get(id: Int, vararg args: Any): String
+    }
+
     private class Log(val entries: List<Entry> = emptyList())
 
     fun list(): List<Entry> =

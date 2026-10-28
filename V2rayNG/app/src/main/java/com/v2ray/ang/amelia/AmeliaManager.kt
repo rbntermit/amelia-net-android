@@ -77,7 +77,7 @@ object AmeliaManager {
     }
 
     /**
-     * 1.6.1, blocking: re-downloads the subscription only from msk2, then msk1, over [direct] (the
+     * 1.6.1, blocking: re-downloads the subscription only from msk2, msk1, msk3, over [direct] (the
      * phone's own network), within [timeoutMs] in all (AmeliaResubscribe). Imported as usual.
      */
     fun refreshDirect(direct: OkHttpClient, timeoutMs: Long): Outcome {
@@ -149,6 +149,12 @@ object AmeliaManager {
         MmkvManager.encodeSubscription(AmeliaConfig.SUBSCRIPTION_ID, sub)
         MmkvManager.encodeSettings(AmeliaConfig.PREF_SUB_INFO, JsonUtil.toJson(info))
         MmkvManager.encodeSettings(PREF_SUB_SOURCE, "${result.baseUrl} ${result.route.name}")
+        // 1.7.3: which address it came from (msk1, msk2, msk3 or the spare one); a mirror that did not
+        // answer or answered 404 was passed over quietly (AmeliaSubscriptionClient.fetchWith)
+        val app = AngApplication.application
+        AmeliaJournal.add(
+            AmeliaAbout.subSourceLine(result.baseUrl, result.route == AmeliaHttp.Route.TUNNEL) { id, args -> app.getString(id, *args) },
+        )
         // 1.5.2: site lists of the subscription's routing profile; a missing or broken header keeps the rules
         if (AmeliaRouteProfile.update(info.routing) { Utils.decode(it).ifEmpty { null } }) {
             LogUtil.i(AppConfig.TAG, "Amelia: routing profile from the subscription changed, rules rewritten")

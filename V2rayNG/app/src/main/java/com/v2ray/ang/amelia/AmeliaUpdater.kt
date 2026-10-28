@@ -220,7 +220,7 @@ object AmeliaUpdater {
 
     /**
      * Blocking download with sha256 check, walking [downloadPlan]. 1.3.1: an interrupted download
-     * continues where it stopped (HTTP Range; msk1/msk2 serve the APK in parts), files of other
+     * continues where it stopped (HTTP Range; the Russian mirrors serve the APK in parts), files of other
      * versions are removed, and only one process downloads at a time.
      * @param onProgress 0..100, or -1 when the size is unknown
      */

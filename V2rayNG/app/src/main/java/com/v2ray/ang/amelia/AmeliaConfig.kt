@@ -6,27 +6,70 @@ package com.v2ray.ang.amelia
  * Amelia.Net is a derivative of v2rayNG (https://github.com/2dust/v2rayNG), GPL-3.0.
  */
 object AmeliaConfig {
+
+    // ---- 1.7.3: our Russian entries, the only place their names and addresses are written ----
+
     /**
-     * Servers for the subscription (`/sub/<key>`), version.json and APK (`/app/`) and geo bases
-     * (`/geo/`), tried in order (the one that answered last goes first, see AmeliaHttp): two
-     * Russian mirrors, then the main domain and its backup on .net.
+     * One Russian entry of the service: a server in Russia with the subscription mirror on
+     * [MIRROR_PORT] (subscription, /app/…, the site) and locations on its address. [ipv6]: null
+     * when it has none.
      */
-    val SUB_BASE_URLS = listOf(
-        // Russian mirrors first: from Russia TLS to foreign addresses is often cut (1.0.5)
-        "https://msk1.ameliajustamelia.com:9443",
-        "https://msk2.ameliajustamelia.com:9443",
-        "https://sub.ameliajustamelia.com:9443",
-        "https://sub.ameliajustamelia.net:9443",
+    data class Entry(val name: String, val domain: String, val ipv4: String, val ipv6: String? = null) {
+        val baseUrl: String get() = "https://$domain:$MIRROR_PORT"
+    }
+
+    const val MIRROR_PORT = 9443
+
+    /** In the order the mirrors are asked (msk1 → msk2 → msk3). A new entry is added here only. */
+    val ENTRIES = listOf(
+        Entry("msk1", "msk1.ameliajustamelia.com", "79.137.192.178"),
+        Entry("msk2", "msk2.ameliajustamelia.com", "188.120.243.206"),
+        // 1.7.3: Kemerovo, a mirror of msk2 (same site and /app/ paths, certificate on .com and .net)
+        Entry("msk3", "msk3.ameliajustamelia.com", "138.124.77.193", "2a05:541:142:1aa::1"),
+    )
+
+    fun entry(name: String): Entry = ENTRIES.first { it.name == name }
+
+    /** The main domain and its backup on .net: abroad, asked after every Russian mirror. */
+    val BACKUP_BASE_URLS = listOf(
+        "https://sub.ameliajustamelia.com:$MIRROR_PORT",
+        "https://sub.ameliajustamelia.net:$MIRROR_PORT",
     )
 
     /**
-     * 1.6.1: the subscription base (msk2) and its backup (msk1), in this order, for the download
-     * when nothing works (AmeliaResubscribe: the server may have moved a location to another port).
+     * Servers for the subscription (`/sub/<key>`), version.json and APK (`/app/`) and geo bases
+     * (`/geo/`), tried in order (the one that answered last goes first, see AmeliaHttp): the
+     * Russian mirrors ([ENTRIES]), then the main domain and its backup on .net.
      */
-    val RESUBSCRIBE_BASE_URLS = listOf(
-        "https://msk2.ameliajustamelia.com:9443",
-        "https://msk1.ameliajustamelia.com:9443",
-    )
+    val SUB_BASE_URLS: List<String> =
+        // Russian mirrors first: from Russia TLS to foreign addresses is often cut (1.0.5)
+        ENTRIES.map { it.baseUrl } + BACKUP_BASE_URLS
+
+    /**
+     * The subscription base (msk2) first, then its backup (msk1), then msk3 (1.7.3). Used by
+     * the site, its one-time links (/app/site-token) and, since 1.6.1, the download of the
+     * subscription when nothing works (AmeliaResubscribe: the server may have moved a location
+     * to another port). Russian mirrors only, never the tunnel.
+     */
+    val SITE_BASE_URLS: List<String> = listOf("msk2", "msk1", "msk3").map { entry(it).baseUrl }
+
+    val RESUBSCRIBE_BASE_URLS: List<String> = SITE_BASE_URLS
+
+    /**
+     * Foreign servers of the service (exits). Not entries (no mirror on them), but their
+     * addresses are ours too ([OUR_SERVER_IPS]).
+     */
+    val FOREIGN_SERVER_IPS = listOf("91.184.241.246", "153.80.241.66", "139.28.240.139", "199.189.253.231")
+
+    /**
+     * Addresses of our own servers, IPv4 and IPv6: kept in crash reports (they are not a
+     * person's address and help to read the report), everything else is removed (AmeliaCrash).
+     */
+    val OUR_SERVER_IPS: Set<String> =
+        (ENTRIES.flatMap { listOfNotNull(it.ipv4, it.ipv6) } + FOREIGN_SERVER_IPS).toSet()
+
+    /** Short name of the entry whose mirror is [baseUrl] ("msk3"), null for any other address. */
+    fun entryNameOf(baseUrl: String?): String? = ENTRIES.firstOrNull { it.baseUrl == baseUrl?.trimEnd('/') }?.name
 
     /** Our domains: URLs on them may be redirected to whichever mirror answered. */
     val OWN_DOMAINS = listOf("ameliajustamelia.com", "ameliajustamelia.net")

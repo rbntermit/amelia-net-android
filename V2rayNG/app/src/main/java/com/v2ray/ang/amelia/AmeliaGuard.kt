@@ -258,7 +258,8 @@ object AmeliaWhitelist {
  * 1.6.1: when an operator cuts the way in, the server moves the location to another port, and
  * the new port comes only with the subscription. So before "nothing works" (and before the white
  * list check) the daemon downloads the subscription again if it is older than [STALE_MS]: msk2,
- * then msk1, around the tunnel, [TIMEOUT_MS] in all, at most once in [MIN_INTERVAL_MS] per network.
+ * msk1, msk3 (AmeliaConfig.RESUBSCRIBE_BASE_URLS), around the tunnel, [TIMEOUT_MS] in all, at most
+ * once in [MIN_INTERVAL_MS] per network.
  * Locations whose address or port changed are checked at once; their quarantine and old results
  * are dropped. Unchanged or not downloaded: everything goes on as before.
  */
