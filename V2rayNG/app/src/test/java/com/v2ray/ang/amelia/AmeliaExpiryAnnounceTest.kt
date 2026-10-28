@@ -76,11 +76,12 @@ class AmeliaExpiryAnnounceTest {
             AmeliaAbout.baseLabel("https://sub.ameliajustamelia.net:9443", "запасной"),
         )
         assertNull(AmeliaAbout.baseLabel(null, "запасной"))
-        // contract: report/probe go to msk1, msk2, sub.com in this order
+        // contract: report/probe go to msk1, msk2, msk3 (1.7.3), sub.com in this order
         assertEquals(
             listOf(
                 "https://msk1.ameliajustamelia.com:9443",
                 "https://msk2.ameliajustamelia.com:9443",
+                "https://msk3.ameliajustamelia.com:9443",
                 "https://sub.ameliajustamelia.com:9443",
             ),
             AmeliaNetwork.POST_BASE_URLS,

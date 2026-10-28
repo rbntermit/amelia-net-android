@@ -2,6 +2,7 @@ package com.v2ray.ang.amelia
 
 import android.content.Context
 import com.google.gson.annotations.SerializedName
+import com.v2ray.ang.R
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.util.JsonUtil
 
@@ -308,7 +309,8 @@ object AmeliaEvents {
 }
 
 /**
- * Order in which automatic choice and failover try locations (pure, unit-tested):
+ * Order in which automatic choice tries locations ([order], pure, unit-tested; 1.7.3: a switch
+ * after a failure goes down the list instead, [failoverPlan]):
  * 1.5.9: first those the hints call good for this provider (most passed checks first, then our
  * own ping), unless our own check saw them failing; then working ones by ping, then unchecked
  * ones (the network's remembered best first), then those the hints call bad (unless our own check
@@ -365,6 +367,140 @@ object AmeliaQueue {
             compareBy<Location>({ if (AmeliaReserve.isReserve(it.name)) 1 else 0 }, { if (known[it.name]?.ok == true) 0 else 1 }, { ms(it) }),
         )
         return (free + held + tail).map { it.guid }
+    }
+
+    // ---- 1.7.3: failover goes down the list (pure, unit-tested) ----------------------------------
+
+    /** Why a location stands where it does in the failover order, or why it is not in it. */
+    enum class Why {
+        /** Next in the subscription's own order. */
+        LIST,
+        /** Moved to the end: the hints call it cut for this provider (our own fresh check does not say it works). */
+        HINT_BAD,
+        /** Moved to the end: our own check on this network failed lately, or it was left after a failure (quarantine). */
+        PAST_FAIL,
+        /** At the very end: reserve or Russian exit, allowed only after the subscription ended. */
+        LAST_RESORT,
+        /** Not tried: reserve ("только Telegram") while the subscription is valid. */
+        SKIP_RESERVE,
+        /** Not tried: Russian exit ("Москва 🇷🇺") while the subscription is valid. */
+        SKIP_RUSSIAN,
+    }
+
+    data class Step(val guid: String, val name: String, val why: Why)
+
+    /** [steps]: what is tried, in this order; [skipped]: what is not tried at all, and why. */
+    data class Plan(val steps: List<Step>, val skipped: List<Step>)
+
+    /**
+     * Order of an automatic switch after [current] did not answer: the subscription's own order
+     * ([locations] as the server sent it), starting right after [current] and wrapping around.
+     * Nothing jumps ahead. Moved to the end, keeping their order: those the hints call cut here
+     * ([bad] "host:port"; our own fresh OK check in [known] outweighs it), then those that failed
+     * lately ([known] failed, or [quarantined]). Reserve ("только Telegram") and Russian exits only
+     * when [allowLastResort] (subscription ended), last. [tried]: names that did not answer during
+     * this attempt, left out. Before 1.7.3 the queue of [order] was used: working ones by ping first,
+     * so a fast location far down the list jumped ahead of the next one.
+     */
+    fun failoverPlan(
+        locations: List<Location>,
+        current: String?,
+        tried: Set<String>,
+        bad: Set<String>,
+        known: Map<String, AmeliaChecks.Entry>,
+        quarantined: Set<String>,
+        allowLastResort: Boolean,
+    ): Plan {
+        val at = locations.indexOfFirst { it.name == current }
+        val ring = if (at < 0) locations else locations.drop(at + 1) + locations.take(at + 1)
+        val steps = mutableListOf<Step>()
+        val skipped = mutableListOf<Step>()
+        for (l in ring) {
+            if (l.name in tried) continue
+            val k = known[l.name]
+            val why = when {
+                AmeliaReserve.isReserve(l.name) -> if (allowLastResort) Why.LAST_RESORT else Why.SKIP_RESERVE
+                AmeliaReserve.isRussianExit(l.name) -> if (allowLastResort) Why.LAST_RESORT else Why.SKIP_RUSSIAN
+                l.name in quarantined || (k != null && !k.ok) -> Why.PAST_FAIL
+                l.hostPort in bad && k?.ok != true -> Why.HINT_BAD
+                else -> Why.LIST
+            }
+            val step = Step(l.guid, l.name, why)
+            if (why == Why.SKIP_RESERVE || why == Why.SKIP_RUSSIAN) skipped += step else steps += step
+        }
+        // stable: inside each group the list order stays; Russian exits before reserve ones (as in [order])
+        val rank = { s: Step ->
+            when (s.why) {
+                Why.LIST -> 0
+                Why.HINT_BAD -> 1
+                Why.PAST_FAIL -> 2
+                else -> if (AmeliaReserve.isReserve(s.name)) 4 else 3
+            }
+        }
+        return Plan(steps.sortedBy(rank), skipped)
+    }
+
+    /**
+     * The first [AmeliaQuickPick.QUICK_COUNT] of [plan] that have no fresh result on this network
+     * ([fresh]): checked at once before the switch, so a dead one is passed over without waiting
+     * for the tunnel (the order itself does not change).
+     */
+    fun toCheckFirst(plan: Plan, fresh: Map<String, AmeliaChecks.Entry>): List<String> =
+        plan.steps.take(AmeliaQuickPick.QUICK_COUNT).filter { fresh[it.name] == null }.map { it.guid }
+
+    /** The failover plan now, from everything stored; blocking (MMKV, network info). */
+    fun failoverNow(context: Context, current: String?, tried: Set<String>): Plan {
+        val net = AmeliaHints.netKey(context)
+        val sim = AmeliaProbe.netKey(AmeliaNetwork.info(context))
+        val now = System.currentTimeMillis()
+        return failoverPlan(
+            locations(), current, tried,
+            bad = AmeliaHints.badHostPorts(AmeliaHints.current(sim)),
+            // only this network's own results (1.7.0)
+            known = AmeliaChecks.fresh(AmeliaChecks.load(), now, net),
+            quarantined = AmeliaQuarantine.active(net, now),
+            allowLastResort = AmeliaPolicy.lastResortAllowed(AmeliaManager.getSubInfo(), now),
+        )
+    }
+
+    private fun names(steps: List<Step>): String = steps.joinToString(", ") { "«${it.name}»" }
+
+    /**
+     * 1.7.3, for the journal: why the list is in this order. The order itself is the
+     * subscription's; the app only moves the groups named here to the end (or leaves them out).
+     */
+    fun orderLine(plan: Plan, current: String?, overLimit: Boolean, str: AmeliaJournal.Strings): String {
+        val parts = mutableListOf(
+            if (current.isNullOrEmpty()) str.get(R.string.amelia_journal_order_top)
+            else str.get(R.string.amelia_journal_order_after, current),
+        )
+        fun add(why: Why, id: Int, from: List<Step> = plan.steps) {
+            val list = from.filter { it.why == why }
+            if (list.isNotEmpty()) parts += str.get(id, names(list))
+        }
+        add(Why.HINT_BAD, R.string.amelia_journal_order_hints)
+        add(Why.PAST_FAIL, R.string.amelia_journal_order_past)
+        add(Why.LAST_RESORT, R.string.amelia_journal_order_last_resort)
+        add(Why.SKIP_RESERVE, R.string.amelia_journal_order_skip_reserve, plan.skipped)
+        add(Why.SKIP_RUSSIAN, R.string.amelia_journal_order_skip_russian, plan.skipped)
+        if (overLimit) parts += str.get(R.string.amelia_journal_order_over_limit)
+        return parts.joinToString("; ")
+    }
+
+    /**
+     * 1.7.3, for the journal: "«Казахстан 2» не ответил — пробую «Казахстан 1» (следующий по
+     * списку)"; [skippedNow]: names a check during this attempt saw failing, passed over.
+     */
+    fun tryLine(failed: String, next: Step, skippedNow: List<String>, str: AmeliaJournal.Strings): String {
+        val why = when (next.why) {
+            Why.HINT_BAD -> R.string.amelia_journal_why_hints
+            Why.PAST_FAIL -> R.string.amelia_journal_why_past
+            Why.LAST_RESORT -> R.string.amelia_journal_why_last_resort
+            else -> R.string.amelia_journal_why_list
+        }
+        val line = str.get(R.string.amelia_journal_try, failed, next.name, str.get(why))
+        return if (skippedNow.isEmpty()) line
+        else line + "; " + str.get(R.string.amelia_journal_skipped_now, skippedNow.joinToString(", ") { "«$it»" })
     }
 
     fun locations(): List<Location> =

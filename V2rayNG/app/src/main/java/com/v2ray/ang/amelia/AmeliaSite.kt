@@ -3,6 +3,8 @@ package com.v2ray.ang.amelia
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.util.LogUtil
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -22,13 +24,13 @@ import java.util.concurrent.TimeUnit
  */
 object AmeliaSite {
 
-    /** Main address, then the spare one (same mirrors as the subscription, but msk2 first). */
-    val BASES = listOf(
-        "https://msk2.ameliajustamelia.com:9443",
-        "https://msk1.ameliajustamelia.com:9443",
-    )
+    /**
+     * Main address, then the spare ones: msk2 → msk1 → msk3 (1.7.3), the Russian mirrors of the
+     * subscription in the order of AmeliaConfig.SITE_BASE_URLS.
+     */
+    val BASES: List<String> get() = AmeliaConfig.SITE_BASE_URLS
 
-    /** The main address must answer within this, or the spare one is opened. */
+    /** The addresses must answer within this (all are asked at the same time), or the spare one is opened. */
     const val CHECK_TIMEOUT_MS = 5_000L
 
     private fun enc(key: String): String = URLEncoder.encode(key, "UTF-8").replace("+", "%20")
@@ -59,8 +61,12 @@ object AmeliaSite {
 
     fun keyPay(telegramInstalled: Boolean): KeyPay = if (telegramInstalled) KeyPay.ASK else KeyPay.SITE
 
-    /** Pure: the main address when it answered, otherwise the spare one. */
-    fun pickBase(mainAnswered: Boolean): String = if (mainAnswered) BASES[0] else BASES[1]
+    /**
+     * 1.7.3, pure: the first of [BASES] that answered ([answered] in the same order); none
+     * answered — the spare one (msk1), as before msk3: a new mirror may not answer yet.
+     */
+    fun pickBase(answered: List<Boolean>): String =
+        BASES.indices.firstOrNull { answered.getOrNull(it) == true }?.let { BASES[it] } ?: BASES[1]
 
     private val client by lazy {
         OkHttpClient.Builder()
@@ -113,9 +119,9 @@ object AmeliaSite {
     @Volatile private var cached: Pair<String, Token>? = null
 
     /**
-     * Blocking, any thread: a one-time link pair for [key] from msk2, then msk1, over the phone's
-     * own network (not the tunnel), 5 s in all. Null: no answer or an error → the caller opens the
-     * page with the key as before (better opened than not).
+     * Blocking, any thread: a one-time link pair for [key] from msk2, then msk1, then msk3 (1.7.3;
+     * [BASES]), over the phone's own network (not the tunnel), 5 s in all. Null: no answer or an
+     * error → the caller opens the page with the key as before (better opened than not).
      */
     fun token(context: android.content.Context, key: String): Token? {
         val now = System.currentTimeMillis()
@@ -125,7 +131,7 @@ object AmeliaSite {
             .followRedirects(false)
             .build()
         val deadline = now + TOKEN_TIMEOUT_MS
-        for (base in AmeliaConfig.RESUBSCRIBE_BASE_URLS) {
+        for (base in BASES) {
             val left = deadline - System.currentTimeMillis()
             if (left <= 0) break
             try {
@@ -152,14 +158,21 @@ object AmeliaSite {
 
     private val JSON = "application/json; charset=utf-8".toMediaType()
 
-    /** Any HTTP answer from the main address counts; no answer within 5 s → the spare one. */
+    /**
+     * Any HTTP answer counts. 1.7.3: every address is asked at the same time (still 5 s at most)
+     * and the first one in [BASES] order that answered is opened; none — the spare one.
+     */
     suspend fun base(): String = withContext(Dispatchers.IO) {
-        val answered = runCatching {
-            client.newCall(Request.Builder().url(BASES[0] + "/").head().build()).execute().use { true }
-        }.getOrElse {
-            LogUtil.w(AppConfig.TAG, "Amelia site: main address did not answer, using the spare one", it)
-            false
-        }
+        val answered = BASES.map { b ->
+            async {
+                runCatching {
+                    client.newCall(Request.Builder().url("$b/").head().build()).execute().use { true }
+                }.getOrElse {
+                    LogUtil.w(AppConfig.TAG, "Amelia site: $b did not answer", it)
+                    false
+                }
+            }
+        }.awaitAll()
         pickBase(answered)
     }
 }

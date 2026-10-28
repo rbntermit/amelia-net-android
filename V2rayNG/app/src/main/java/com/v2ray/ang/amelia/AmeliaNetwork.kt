@@ -30,8 +30,12 @@ object AmeliaNetwork {
     const val PATH_DIRECT = "direct"
     const val PATH_TUNNEL = "tunnel"
 
-    /** /app/report and /app/probe go to these servers, in this order (contract with the server). */
-    val POST_BASE_URLS = AmeliaConfig.SUB_BASE_URLS.filter { !it.contains(".net:") }
+    /**
+     * /app/report, /app/probe, /app/crash and /app/hints go to these servers, in this order
+     * (contract with the server): every Russian mirror (msk1 → msk2 → msk3, AmeliaConfig.ENTRIES),
+     * then the main domain. Not .net: it is the same server as the main domain.
+     */
+    val POST_BASE_URLS: List<String> = AmeliaConfig.ENTRIES.map { it.baseUrl } + AmeliaConfig.BACKUP_BASE_URLS.first()
 
     /** Request bodies above this are cut down by the caller (server limit). */
     const val MAX_BODY_BYTES = 64 * 1024

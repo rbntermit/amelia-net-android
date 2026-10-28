@@ -10,9 +10,10 @@ class AmeliaFallbackTest {
 
     private val msk1 = "https://msk1.ameliajustamelia.com:9443"
     private val msk2 = "https://msk2.ameliajustamelia.com:9443"
+    private val msk3 = "https://msk3.ameliajustamelia.com:9443"
     private val com = "https://sub.ameliajustamelia.com:9443"
     private val net = "https://sub.ameliajustamelia.net:9443"
-    private val all = listOf(msk1, msk2, com, net)
+    private val all = listOf(msk1, msk2, msk3, com, net)
     private val ok = Attempt.Ok("dmxlc3M6Ly8=", AmeliaSubInfo(title = "Amelia.Net"))
 
     @Test
@@ -33,7 +34,7 @@ class AmeliaFallbackTest {
 
     @Test
     fun lastWorkingAddressIsTriedFirst() {
-        assertEquals(listOf(com, msk1, msk2, net), AmeliaHttp.orderBases(com, all))
+        assertEquals(listOf(com, msk1, msk2, msk3, net), AmeliaHttp.orderBases(com, all))
         assertEquals(all, AmeliaHttp.orderBases(null, all))
         assertEquals(all, AmeliaHttp.orderBases("https://evil.example", all))
     }
@@ -59,7 +60,7 @@ class AmeliaFallbackTest {
             if (a.base == com) ok else Attempt.Failed
         }
         assertEquals(com, (r as Result.Ok).baseUrl)
-        assertEquals(listOf(msk1, msk2, com), tried)
+        assertEquals(listOf(msk1, msk2, msk3, com), tried)
     }
 
     @Test
@@ -100,7 +101,7 @@ class AmeliaFallbackTest {
         assertEquals("$msk2/app/A.apk" to Route.TUNNEL, plan.first())
         assertEquals(all.size * 2, plan.size)
         assertEquals("$msk2/app/A.apk" to Route.DIRECT, plan[all.size])
-        assertEquals(listOf("$msk2/app/A.apk", "$msk1/app/A.apk", "$com/app/A.apk", "$net/app/A.apk"),
+        assertEquals(listOf("$msk2/app/A.apk", "$msk1/app/A.apk", "$msk3/app/A.apk", "$com/app/A.apk", "$net/app/A.apk"),
             plan.take(all.size).map { it.first })
         // a GitHub URL is used as given, tunnel then direct
         val gh = "https://github.com/o/r/releases/download/v1/a.apk"

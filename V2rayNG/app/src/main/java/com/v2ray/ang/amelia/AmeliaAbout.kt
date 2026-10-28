@@ -61,14 +61,22 @@ object AmeliaAbout {
     }
 
     /**
-     * Short name of one of our addresses: "msk1", "msk2", or "запасной (<host>)" for the
-     * main and backup domains. Unknown addresses are shown by host.
+     * Short name of one of our addresses: the entry's name ("msk1", "msk2", "msk3"; 1.7.3: from
+     * AmeliaConfig.ENTRIES), or "запасной (<host>)" for the main and backup domains and anything else.
      */
     fun baseLabel(base: String?, backupWord: String): String? {
         val host = base?.let { runCatching { URI(it).host }.getOrNull() } ?: return null
-        val first = host.substringBefore('.')
-        return if (first.startsWith("msk")) first else "$backupWord ($host)"
+        return AmeliaConfig.entryNameOf(base) ?: "$backupWord ($host)"
     }
+
+    /**
+     * 1.7.3, for the journal: "Подписка скачана: msk3, через VPN" / "…: запасной (sub.ameliajustamelia.com), напрямую".
+     */
+    fun subSourceLine(base: String, viaTunnel: Boolean, str: AmeliaJournal.Strings): String = str.get(
+        R.string.amelia_journal_sub_from,
+        baseLabel(base, str.get(R.string.amelia_about_backup)) ?: base,
+        str.get(if (viaTunnel) R.string.amelia_journal_sub_tunnel else R.string.amelia_journal_sub_direct),
+    )
 
     /** "только что", "12 мин назад", "3 ч назад", or the date for older. */
     fun ago(context: Context, at: Long, now: Long = System.currentTimeMillis()): String {

@@ -199,7 +199,7 @@ class Amelia170Test {
         assertNull(AmeliaSite.parseToken(base, """{"ok":true,"t":"t.a","me":"//evil.example/me","buy":"/buy?sid=t.a"}""", now))
         assertFalse(AmeliaSite.usable(null, now))
         assertEquals("""{"key":"abcd1234"}""", AmeliaSite.tokenRequest("abcd1234"))
-        assertEquals(listOf(base, "https://msk1.ameliajustamelia.com:9443"), AmeliaConfig.RESUBSCRIBE_BASE_URLS)
+        assertEquals(listOf(base, "https://msk1.ameliajustamelia.com:9443", "https://msk3.ameliajustamelia.com:9443"), AmeliaConfig.RESUBSCRIBE_BASE_URLS)
         assertEquals(5_000L, AmeliaSite.TOKEN_TIMEOUT_MS)
     }
 

@@ -64,7 +64,7 @@ class Amelia157Test {
 
     @Test
     fun mainAddressThenSpare() {
-        assertEquals(main, AmeliaSite.pickBase(mainAnswered = true))
-        assertEquals(spare, AmeliaSite.pickBase(mainAnswered = false))
+        assertEquals(main, AmeliaSite.pickBase(listOf(true, true, true)))
+        assertEquals(spare, AmeliaSite.pickBase(listOf(false, true, true)))
     }
 }

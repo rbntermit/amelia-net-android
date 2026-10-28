@@ -172,9 +172,9 @@ class Amelia161Test {
     }
 
     @Test
-    fun resubscribeUsesMsk2ThenMsk1AroundTheTunnel() {
+    fun resubscribeUsesMsk2ThenMsk1ThenMsk3AroundTheTunnel() {
         assertEquals(
-            listOf("https://msk2.ameliajustamelia.com:9443", "https://msk1.ameliajustamelia.com:9443"),
+            listOf("https://msk2.ameliajustamelia.com:9443", "https://msk1.ameliajustamelia.com:9443", "https://msk3.ameliajustamelia.com:9443"),
             AmeliaConfig.RESUBSCRIBE_BASE_URLS,
         )
         val plan = AmeliaHttp.plan(AmeliaConfig.RESUBSCRIBE_BASE_URLS, tunnel = false)
