@@ -157,6 +157,11 @@ data class AmeliaUiState(
     val switchFrom: String? = null,
     /** CHECKING: when the location does not answer, the app moves to the next one by itself. */
     val autoSwitch: Boolean = false,
+    // ---- 1.8.0 ----
+    /** "Поддержка" screen; null when closed. */
+    val support: SupportUi? = null,
+    /** The dot on "💬 Поддержка": support answered and the screen has not shown it yet. */
+    val supportUnread: Boolean = false,
 ) {
     val selectedName: String?
         get() = locations.firstOrNull { it.guid == selectedGuid }?.name
@@ -232,6 +237,18 @@ data class ReportUi(
     val working: List<String> get() = AmeliaReport.split(servers).first
     val failing: List<String> get() = AmeliaReport.split(servers).second
 }
+
+/** 1.8.0 "Поддержка": the thread, the text being written and how sending went. */
+data class SupportUi(
+    val items: List<AmeliaSupport.Item> = emptyList(),
+    /** Not fetched since the screen opened (the kept thread is shown meanwhile). */
+    val loading: Boolean = true,
+    /** The last fetch got no answer: the kept thread may be old. */
+    val stale: Boolean = false,
+    val draft: String = "",
+    val sending: Boolean = false,
+    @StringRes val error: Int? = null,
+)
 
 /** One installed app in the "мимо VPN" picker. */
 data class AppRow(val pkg: String, val label: String, val bypass: Boolean)
@@ -402,7 +419,11 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             val key = AmeliaManager.getKey().orEmpty()
             val active = _state.value.selectedName
             val vpn = _state.value.isRunning
-            val id = withContext(Dispatchers.IO) { AmeliaReport.send(app, key, r.servers, active, comment, r.checkMs, vpn) }
+            val id = withContext(Dispatchers.IO) {
+                AmeliaReport.send(app, key, r.servers, active, comment, r.checkMs, vpn)
+                    // 1.8.0: the report is in the "Поддержка" thread; its answer is awaited there
+                    ?.also { if (key.isNotEmpty()) AmeliaSupport.reportSent(app, key) }
+            }
             if (id != null) {
                 _state.update { it.copy(report = it.report?.copy(phase = ReportPhase.SENT, reportId = id)) }
             } else {
@@ -423,6 +444,87 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             serviceEvents.cancelPingAll()
         }
         _state.update { it.copy(report = null) }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // "Поддержка" (1.8.0)
+    // ---------------------------------------------------------------------------------------
+
+    private var supportJob: Job? = null
+
+    /** Opens the screen with the kept thread; the screen then asks the server ([pollSupport]). */
+    fun openSupport() {
+        _state.update { it.copy(support = it.support ?: SupportUi()) }
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            val kept = withContext(Dispatchers.IO) { AmeliaManager.getKey()?.let { AmeliaSupport.markSeen(app, it) } }
+            if (kept == null) {
+                // no key (e.g. a notification after logout): nothing to show
+                _state.update { it.copy(support = null) }
+                return@launch
+            }
+            _state.update { s -> s.copy(support = s.support?.copy(items = kept.items), supportUnread = false) }
+        }
+    }
+
+    fun closeSupport() {
+        supportJob?.cancel()
+        _state.update { it.copy(support = null) }
+    }
+
+    /** The open screen asks every 30 s (AmeliaSupport.SCREEN_POLL_MS); one request at a time. */
+    fun pollSupport() {
+        if (_state.value.support == null || supportJob?.isActive == true) return
+        supportJob = viewModelScope.launch {
+            val app = getApplication<Application>()
+            val (fresh, kept) = withContext(Dispatchers.IO) {
+                val key = AmeliaManager.getKey() ?: return@withContext null to null
+                val fresh = AmeliaSupport.refresh(app, key)
+                fresh to AmeliaSupport.markSeen(app, key)
+            }
+            _state.update { s ->
+                s.copy(
+                    support = s.support?.let { it.copy(items = kept?.items ?: it.items, loading = false, stale = fresh == null) },
+                    supportUnread = false,
+                )
+            }
+        }
+    }
+
+    /** Blocking: the kept thread of the current key has an answer the screen has not shown. */
+    private fun supportUnread(): Boolean = AmeliaManager.getKey()?.let { AmeliaSupport.unread(AmeliaSupport.current(it)) } ?: false
+
+    fun setSupportDraft(text: String) {
+        _state.update { s -> s.copy(support = s.support?.copy(draft = text.take(AmeliaSupport.MAX_TEXT), error = null)) }
+    }
+
+    /** "Отправить": the text with "about" (no key in it, no personal data) to /app/support. */
+    fun sendSupport() {
+        val sup = _state.value.support ?: return
+        val text = AmeliaSupport.cut(sup.draft)
+        if (text.isEmpty() || sup.sending) return
+        _state.update { s -> s.copy(support = s.support?.copy(sending = true, error = null)) }
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            val location = _state.value.selectedName
+            val vpn = _state.value.isRunning
+            val (result, kept) = withContext(Dispatchers.IO) {
+                val key = AmeliaManager.getKey() ?: return@withContext AmeliaSupport.SendResult.BadKey to null
+                AmeliaSupport.send(app, key, text, AmeliaSupport.aboutFor(app, location, vpn)) to AmeliaSupport.current(key)
+            }
+            _state.update { s ->
+                val cur = s.support ?: return@update s
+                s.copy(
+                    support = when (result) {
+                        is AmeliaSupport.SendResult.Sent -> cur.copy(sending = false, draft = "", items = kept?.items ?: cur.items)
+                        AmeliaSupport.SendResult.Empty -> cur.copy(sending = false, error = R.string.amelia_support_err_empty)
+                        AmeliaSupport.SendResult.BadKey -> cur.copy(sending = false, error = R.string.amelia_support_err_key)
+                        AmeliaSupport.SendResult.TooOften -> cur.copy(sending = false, error = R.string.amelia_support_err_often)
+                        AmeliaSupport.SendResult.Failed -> cur.copy(sending = false, error = R.string.amelia_support_err_failed)
+                    },
+                )
+            }
+        }
     }
 
     // ---------------------------------------------------------------------------------------
@@ -526,7 +628,14 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val app = getApplication<Application>()
             val (ok, vpn) = withContext(Dispatchers.IO) { AmeliaBattery.isAllowed(app) to AmeliaBoot.hasVpnPermission(app) }
-            _state.update { it.copy(batteryOk = ok, showBatteryCard = it.showBatteryCard && !ok, vpnPermission = vpn) }
+            // 1.8.0: the background check may have brought an answer while the app was away
+            val unread = withContext(Dispatchers.IO) { supportUnread() }
+            _state.update {
+                it.copy(
+                    batteryOk = ok, showBatteryCard = it.showBatteryCard && !ok, vpnPermission = vpn,
+                    supportUnread = unread && it.support == null,
+                )
+            }
         }
         val now = System.currentTimeMillis()
         if (!s.hasKey || s.busy || now - lastResumeRefresh < 60_000L) return
@@ -1072,6 +1181,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
 
     fun logout() {
         loadJob?.cancel()
+        closeSupport()
         viewModelScope.launch {
             onUserDisconnect()
             if (_state.value.isRunning) LauncherManager.stopService(getApplication())
@@ -1131,6 +1241,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 vpnPermission = AmeliaBoot.hasVpnPermission(getApplication()),
                 speeds = AmeliaSpeed.byGuid(),
                 announceDismissed = AmeliaAnnounce.dismissed(),
+                supportUnread = supportUnread(),
             ).also { AmeliaExpiry.check(getApplication(), it.info) }
         }
         val checks = withContext(Dispatchers.IO) { checksSnapshot() }
@@ -1153,6 +1264,8 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 batteryOk = snapshot.batteryOk,
                 speeds = snapshot.speeds,
                 announceDismissed = snapshot.announceDismissed,
+                // the open screen shows the thread: nothing unread there
+                supportUnread = snapshot.supportUnread && it.support == null,
                 checkedAt = checks.checkedAt,
                 lastCheckMs = checks.lastCheckMs,
                 operatorMarks = checks.operatorMarks,

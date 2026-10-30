@@ -61,6 +61,20 @@ object AmeliaSite {
 
     fun keyPay(telegramInstalled: Boolean): KeyPay = if (telegramInstalled) KeyPay.ASK else KeyPay.SITE
 
+    /** 1.8.0: the service's state page, open without VPN and without Telegram. */
+    fun statusUrl(base: String): String = "$base/status"
+
+    /** 1.8.0: what "🩺 Не работает?" does. */
+    enum class NotWorking {
+        /** Check every location and offer to send the result, as before 1.8.0. */
+        REPORT,
+        /** The VPN is off and Telegram is not installed: the state page on the site ([statusUrl]). */
+        STATUS_PAGE,
+    }
+
+    fun notWorking(vpnOn: Boolean, telegramInstalled: Boolean): NotWorking =
+        if (!vpnOn && !telegramInstalled) NotWorking.STATUS_PAGE else NotWorking.REPORT
+
     /**
      * 1.7.3, pure: the first of [BASES] that answered ([answered] in the same order); none
      * answered — the spare one (msk1), as before msk3: a new mirror may not answer yet.

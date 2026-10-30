@@ -115,6 +115,14 @@ class ExtraCallbacks(
     /** 1.7.0: "Заменить ключ на новый?" after an amelia://key/… link: replace, or keep the current one. */
     val onReplaceKey: () -> Unit = {},
     val onKeepKey: () -> Unit = {},
+    /** 1.8.0 "Поддержка": the chat screen, its text field, "Отправить" and the 30-second check. */
+    val onOpenSupport: () -> Unit,
+    val onCloseSupport: () -> Unit,
+    val onSupportDraft: (String) -> Unit,
+    val onSendSupport: () -> Unit,
+    val onPollSupport: () -> Unit,
+    /** 1.8.0 "🩺 Не работает?": the report, or the state page on the site without VPN and Telegram. */
+    val onNotWorking: () -> Unit,
 )
 
 /** 1.7.0: a link brought another key than the one entered; nothing changes unless "Заменить" is tapped. */
@@ -234,6 +242,8 @@ internal fun ReportDialog(
     onOpenBot: () -> Unit,
     /** 1.5.4: after sending, https://t.me/amelianet_bot itself. */
     onOpenBotHome: () -> Unit = onOpenBot,
+    /** 1.8.0: after sending, the "Поддержка" screen, where the answer comes. */
+    onOpenSupport: () -> Unit = onOpenBotHome,
 ) {
     var comment by rememberSaveable { mutableStateOf("") }
     // Server unreachable: the report goes to the clipboard right away, for the bot chat
@@ -289,7 +299,7 @@ internal fun ReportDialog(
         confirmButton = {
             when (report.phase) {
                 ReportPhase.TESTING -> Unit
-                ReportPhase.SENT -> TextButton(onClick = onClose) { Text(stringResource(R.string.amelia_close)) }
+                ReportPhase.SENT -> TextButton(onClick = onOpenSupport) { Text(stringResource(R.string.amelia_report_open_support)) }
                 ReportPhase.SENDING -> CircularProgressIndicator(Modifier.padding(8.dp))
                 ReportPhase.FAILED -> TextButton(onClick = { report.fallbackText?.let(onCopy); onOpenBot() }) {
                     Text(stringResource(R.string.amelia_report_open_bot))
@@ -305,7 +315,9 @@ internal fun ReportDialog(
                     TextButton(onClick = { onSend(comment) }) { Text(stringResource(R.string.amelia_report_retry)) }
                 }
                 if (report.phase == ReportPhase.SENT) {
+                    // 1.8.0: the bot is the second way; "Закрыть" stays for TV remotes
                     TextButton(onClick = onOpenBotHome) { Text(stringResource(R.string.amelia_report_bot)) }
+                    TextButton(onClick = onClose) { Text(stringResource(R.string.amelia_close)) }
                 }
                 if (report.phase != ReportPhase.SENT && report.phase != ReportPhase.SENDING) {
                     TextButton(onClick = onClose) { Text(stringResource(R.string.amelia_cancel)) }

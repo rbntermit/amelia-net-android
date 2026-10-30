@@ -107,6 +107,8 @@ object AmeliaManager {
         MmkvManager.encodeSettings(AmeliaConfig.PREF_SUB_INFO, "")
         MmkvManager.encodeSettings(PREF_SUB_SOURCE, "")
         AmeliaRouteProfile.clear()
+        // 1.8.0: the support thread and its background check belong to the old key
+        AmeliaSupport.clear(AngApplication.application)
         AmeliaWidget.requestUpdate(AngApplication.application)
     }
 

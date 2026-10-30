@@ -31,7 +31,7 @@ object AmeliaNetwork {
     const val PATH_TUNNEL = "tunnel"
 
     /**
-     * /app/report, /app/probe, /app/crash and /app/hints go to these servers, in this order
+     * /app/report, /app/probe, /app/crash, /app/hints and (1.8.0) /app/support go to these servers, in this order
      * (contract with the server): every Russian mirror (msk1 → msk2 → msk3, AmeliaConfig.ENTRIES),
      * then the main domain. Not .net: it is the same server as the main domain.
      */
@@ -146,7 +146,17 @@ object AmeliaNetwork {
      * network, then through the tunnel. [json] is built per path, so the body can say which
      * path it took. Returns the answer body and the path, or null.
      */
-    fun post(context: Context, path: String, json: (String) -> String): Pair<String, String>? {
+    fun post(context: Context, path: String, json: (String) -> String): Pair<String, String>? =
+        postAnswer(context, path, json = json)?.let { it.body to it.path }
+
+    /** 1.8.0: an answer of [postAnswer]: HTTP [code], [body] and the path it took. */
+    data class Answer(val code: Int, val body: String, val path: String)
+
+    /**
+     * 1.8.0: [post] that also stops at an error code for which [final] is true (/app/support: 400
+     * and 429 are the same answer at every address) and returns it with its code.
+     */
+    fun postAnswer(context: Context, path: String, final: (Int) -> Boolean = { false }, json: (String) -> String): Answer? {
         val routes = buildList {
             physicalNetwork(context)?.let { add(PATH_DIRECT to clientOn(it)) }
             if (AmeliaHttp.tunnelAvailable()) add(PATH_TUNNEL to AmeliaHttp.clientFor(AmeliaHttp.Route.TUNNEL))
@@ -161,7 +171,7 @@ object AmeliaNetwork {
                         .post(body.toRequestBody(JSON))
                         .build()
                     client.newCall(request).execute().use { resp ->
-                        if (resp.isSuccessful) return resp.body.string() to name
+                        if (resp.isSuccessful || final(resp.code)) return Answer(resp.code, resp.body.string(), name)
                         LogUtil.w(AppConfig.TAG, "Amelia: POST $path HTTP ${resp.code} from $base ($name)")
                     }
                 } catch (e: Exception) {
