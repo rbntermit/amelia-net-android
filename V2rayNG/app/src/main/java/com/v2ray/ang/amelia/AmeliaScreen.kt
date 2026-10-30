@@ -179,8 +179,21 @@ fun AmeliaApp(
         val openJournal = { extra.onOpenJournal(); showJournal = true }
 
         BrandBackground {
+            val support = state.support
             when {
                 !state.loaded -> Unit
+                // 1.8.0: also opened by the notification about an answer, over any other screen
+                support != null && state.hasKey -> {
+                    BackHandler(onBack = extra.onCloseSupport)
+                    SupportScreen(
+                        support,
+                        onBack = extra.onCloseSupport,
+                        onDraft = extra.onSupportDraft,
+                        onSend = extra.onSendSupport,
+                        onPoll = extra.onPollSupport,
+                        onTelegram = { onOpenUrl(AmeliaConfig.botUrl(BotScreen.SUPPORT)) },
+                    )
+                }
                 showAbout -> {
                     BackHandler { showAbout = false }
                     AboutScreen(
@@ -253,6 +266,7 @@ fun AmeliaApp(
                 r, onSend = extra.onSendReport, onClose = extra.onCloseReport, onCopy = extra.onCopyText,
                 onOpenBot = { onOpenUrl(AmeliaConfig.botUrl(BotScreen.SUPPORT)) },
                 onOpenBotHome = { onOpenUrl(AmeliaConfig.BOT_URL) },
+                onOpenSupport = { extra.onCloseReport(); extra.onOpenSupport() },
             )
         }
     }
@@ -548,9 +562,13 @@ private fun HomeScreen(
         ActionGrid(
             onAction = { screen -> onOpenUrl(AmeliaConfig.botUrl(screen)) },
             onPay = extra.onRenew,
-            // Checks every location, shows which work, offers to send the result to support
-            onNotWorking = extra.onStartReport,
+            // Checks every location, shows which work, offers to send the result to support;
+            // 1.8.0: the VPN off and no Telegram — the service's state page on the site
+            onNotWorking = extra.onNotWorking,
             onGroup = { onOpenUrl(AmeliaConfig.GROUP_URL) },
+            // 1.8.0: the chat in the app while there is a key (always, on this screen); the bot without one
+            onSupport = if (state.hasKey) extra.onOpenSupport else ({ onOpenUrl(AmeliaConfig.botUrl(BotScreen.SUPPORT)) }),
+            supportDot = state.supportUnread,
         )
         Spacer(Modifier.height(8.dp))
         TextButton(onClick = onAbout) {
@@ -1028,7 +1046,8 @@ private fun SpeedBadge(mbps: Double?, testing: Boolean) {
 }
 // ---- Bot actions -----------------------------------------------------------------------------
 
-private class ActionItem(val emoji: String, val label: Int, val onClick: () -> Unit)
+/** [dot]: 1.8.0, something new behind the tile (an unread answer of support). */
+private class ActionItem(val emoji: String, val label: Int, val dot: Boolean = false, val onClick: () -> Unit)
 
 @Composable
 private fun ActionGrid(
@@ -1036,35 +1055,50 @@ private fun ActionGrid(
     onPay: () -> Unit,
     onNotWorking: () -> Unit,
     onGroup: () -> Unit,
+    onSupport: () -> Unit,
+    supportDot: Boolean,
 ) {
     val items = listOf(
-        ActionItem("💳", R.string.amelia_act_pay, onPay),
+        ActionItem("💳", R.string.amelia_act_pay, onClick = onPay),
         ActionItem("🎁", R.string.amelia_act_referral) { onAction(BotScreen.REFERRAL) },
-        ActionItem("🩺", R.string.amelia_act_not_working, onNotWorking),
-        ActionItem("💬", R.string.amelia_act_support) { onAction(BotScreen.SUPPORT) },
+        ActionItem("🩺", R.string.amelia_act_not_working, onClick = onNotWorking),
+        ActionItem("💬", R.string.amelia_act_support, dot = supportDot, onClick = onSupport),
         ActionItem("❓", R.string.amelia_act_help) { onAction(BotScreen.HELP) },
-        ActionItem("📢", R.string.amelia_act_group, onGroup),
+        ActionItem("📢", R.string.amelia_act_group, onClick = onGroup),
     )
+    val newAnswer = stringResource(R.string.amelia_support_unread)
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         items.chunked(3).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 row.forEach { item ->
                     Glass(Modifier.weight(1f), onClick = item.onClick) {
-                        Column(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 14.dp, horizontal = 6.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            Text(item.emoji, fontSize = 24.sp)
-                            Spacer(Modifier.height(6.dp))
-                            Text(
-                                stringResource(item.label),
-                                color = Brand.Text,
-                                style = MaterialTheme.typography.labelMedium,
-                                textAlign = TextAlign.Center,
-                                maxLines = 2,
-                            )
+                        Box(Modifier.fillMaxWidth()) {
+                            Column(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 14.dp, horizontal = 6.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                Text(item.emoji, fontSize = 24.sp)
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    stringResource(item.label),
+                                    color = Brand.Text,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    textAlign = TextAlign.Center,
+                                    maxLines = 2,
+                                )
+                            }
+                            if (item.dot) {
+                                Box(
+                                    Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(10.dp)
+                                        .size(10.dp)
+                                        .background(Brand.Red, CircleShape)
+                                        .semantics { contentDescription = newAnswer },
+                                )
+                            }
                         }
                     }
                 }

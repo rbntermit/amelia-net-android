@@ -59,12 +59,15 @@ class AmeliaActivity : HelperBaseComponentActivity() {
             AmeliaGeoUpdater.schedule(applicationContext)
             AmeliaUpdateWorker.schedule(applicationContext)
             AmeliaProbe.schedule(applicationContext)
+            // 1.8.0: the background check of "Поддержка" runs only while an answer is awaited
+            AmeliaSupport.syncSchedule(applicationContext)
         }
         checkAndRequestPermission(PermissionType.POST_NOTIFICATIONS) {}
         if (savedInstanceState == null) {
             handleDeepLink(intent)
             handleInstallRequest(intent)
             handleRenewRequest(intent)
+            handleSupportRequest(intent)
         }
     }
 
@@ -74,6 +77,14 @@ class AmeliaActivity : HelperBaseComponentActivity() {
         handleDeepLink(intent)
         handleInstallRequest(intent)
         handleRenewRequest(intent)
+        handleSupportRequest(intent)
+    }
+
+    /** 1.8.0: the notification "Ответ от поддержки" opens the chat. */
+    private fun handleSupportRequest(intent: Intent?) {
+        if (intent?.getBooleanExtra(AmeliaSupport.EXTRA_OPEN, false) != true) return
+        intent.removeExtra(AmeliaSupport.EXTRA_OPEN)
+        viewModel.openSupport()
     }
 
     /** 1.5.8: "Продлить" on the widget. */
@@ -193,6 +204,12 @@ class AmeliaActivity : HelperBaseComponentActivity() {
                 onPlayProtectLater = viewModel::playProtectClosed,
                 onReplaceKey = viewModel::replaceKeyFromLink,
                 onKeepKey = viewModel::keepKey,
+                onOpenSupport = viewModel::openSupport,
+                onCloseSupport = viewModel::closeSupport,
+                onSupportDraft = viewModel::setSupportDraft,
+                onSendSupport = viewModel::sendSupport,
+                onPollSupport = viewModel::pollSupport,
+                onNotWorking = ::notWorking,
             ),
         )
     }
@@ -265,6 +282,27 @@ class AmeliaActivity : HelperBaseComponentActivity() {
         if (token != null) return if (cabinet) token.cabinetUrl else token.buyUrl
         val base = AmeliaSite.base()
         return if (cabinet) AmeliaSite.cabinetUrl(base, key) else AmeliaSite.buyUrl(base, key)
+    }
+
+    /**
+     * 1.8.0 "🩺 Не работает?": with the VPN off and no Telegram (the bot cannot be reached) the
+     * service's state page on the site, the address chosen as in [openSite]; otherwise the check of
+     * every location and the report, as before.
+     */
+    private fun notWorking() {
+        val s = viewModel.state.value
+        val vpnOn = s.isRunning || s.phase != ConnPhase.OFF
+        if (vpnOn) {
+            viewModel.startReport()
+            return
+        }
+        lifecycleScope.launch {
+            val telegram = kotlinx.coroutines.withContext(Dispatchers.IO) { AmeliaPackages.telegram(packageManager) != null }
+            when (AmeliaSite.notWorking(vpnOn = false, telegramInstalled = telegram)) {
+                AmeliaSite.NotWorking.REPORT -> viewModel.startReport()
+                AmeliaSite.NotWorking.STATUS_PAGE -> Utils.openUri(this@AmeliaActivity, AmeliaSite.statusUrl(AmeliaSite.base()))
+            }
+        }
     }
 
     /** 1.5.8: the site's shop (no key yet), main address checked first as in [openSite]. */

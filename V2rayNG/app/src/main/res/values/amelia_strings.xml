@@ -173,7 +173,8 @@
     <string name="amelia_report_comment">Что случилось? (необязательно)</string>
     <string name="amelia_report_send">Отправить в поддержку</string>
     <string name="amelia_report_sending">Отправляю…</string>
-    <string name="amelia_report_sent">Отправлено (отчёт №%1$s). Если нужно, напишите в поддержку в боте</string>
+    <string name="amelia_report_sent">Отправлено (отчёт №%1$s). Ответ придёт в «Поддержка»</string>
+    <string name="amelia_report_open_support">Открыть «Поддержку»</string>
     <string name="amelia_report_bot">Открыть бота</string>
     <string name="amelia_report_failed">Не получилось отправить отчёт. Мы скопировали его — вставьте в чат с ботом.</string>
     <string name="amelia_report_open_bot">Открыть @amelianet_bot</string>
@@ -353,4 +354,22 @@
     <string name="amelia_journal_sub_from">Подписка скачана: %1$s, %2$s</string>
     <string name="amelia_journal_sub_tunnel">через VPN</string>
     <string name="amelia_journal_sub_direct">напрямую</string>
+    <!-- 1.8.0: "Поддержка" — chat with support in the app -->
+    <string name="amelia_support_title">Поддержка</string>
+    <string name="amelia_support_empty">Напишите, что случилось. Ответ придёт сюда, а если приложение будет закрыто — уведомлением</string>
+    <string name="amelia_support_you">Вы</string>
+    <string name="amelia_support_them">Поддержка</string>
+    <string name="amelia_support_field">Сообщение</string>
+    <string name="amelia_support_counter">%1$d из %2$d</string>
+    <string name="amelia_support_attach">К сообщению приложим версию, локацию и журнал — без личных данных</string>
+    <string name="amelia_support_send">Отправить</string>
+    <string name="amelia_support_telegram">Написать в Telegram</string>
+    <string name="amelia_support_stale">Нет связи с сервером — показываем то, что было. Попробуем ещё раз через полминуты</string>
+    <string name="amelia_support_err_empty">Напишите хотя бы пару слов</string>
+    <string name="amelia_support_err_key">Сервер не узнал ваш ключ. Напишите нам в Telegram</string>
+    <string name="amelia_support_err_often">Слишком много сообщений подряд. Подождите несколько минут и отправьте ещё раз</string>
+    <string name="amelia_support_err_failed">Не получилось отправить. Проверьте интернет и попробуйте ещё раз — или напишите в Telegram</string>
+    <string name="amelia_support_unread">Есть новый ответ</string>
+    <string name="amelia_support_channel">Ответы поддержки</string>
+    <string name="amelia_support_notification">Ответ от поддержки</string>
 </resources>
