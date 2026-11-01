@@ -49,12 +49,33 @@ object AmeliaVersions {
 
     val hevTunnel: String get() = BuildConfig.HEV_VERSION
 
+    /** 1.8.2: the server keeps only the first 200 characters of a User-Agent. */
+    const val MAX_USER_AGENT = 200
+
     /**
-     * `AmeliaNet/<versionName> v2rayNG/<upstream> Xray/<core>`. The bot counts installations
-     * by the leading `AmeliaNet/<version>`: never change that part.
+     * `AmeliaNet/<versionName> v2rayNG/<upstream> Xray/<core> Pick/<manual|auto>`. The bot counts
+     * installations by the leading `AmeliaNet/<version>` and reads the core from `Xray/<version>`:
+     * never change those parts. 1.8.2: `Pick/manual` when the current location was chosen by hand
+     * and the app does not change it (AmeliaManual.isManual), otherwise `Pick/auto`; the bot marks
+     * such people with ✋ in "Кто онлайн". Built on every request, never cached.
      */
-    fun userAgent(xray: String = xrayCachedOrBuild()): String =
-        "AmeliaNet/${BuildConfig.VERSION_NAME} v2rayNG/${BuildConfig.UPSTREAM_VERSION} Xray/$xray"
+    fun userAgent(xray: String = xrayCachedOrBuild(), manual: Boolean = manualPick()): String =
+        userAgentOf(BuildConfig.VERSION_NAME, BuildConfig.UPSTREAM_VERSION, xray, manual)
+
+    /**
+     * Pure, 1.8.2: the variable parts are cut so the whole line stays within [MAX_USER_AGENT] and
+     * the `Pick/` token at the end is never lost (at most 165 characters).
+     */
+    internal fun userAgentOf(version: String, upstream: String, xray: String, manual: Boolean): String =
+        "AmeliaNet/${version.take(32)} v2rayNG/${upstream.take(32)} Xray/${xray.take(64)} Pick/${if (manual) "manual" else "auto"}"
+
+    /** 1.8.2: the selected location was chosen by hand (MMKV, any process); false when unknown. */
+    private fun manualPick(): Boolean = try {
+        AmeliaManual.isManual(MmkvManager.getSelectServer())
+    } catch (e: Exception) {
+        LogUtil.w(AppConfig.TAG, "Amelia: cannot read the manual choice for the User-Agent", e)
+        false
+    }
 
     /** Never loads the native library: the User-Agent is needed in every process, often. */
     fun xrayCachedOrBuild(): String {

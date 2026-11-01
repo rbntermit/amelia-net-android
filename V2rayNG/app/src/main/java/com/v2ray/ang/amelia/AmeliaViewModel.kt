@@ -162,9 +162,16 @@ data class AmeliaUiState(
     val support: SupportUi? = null,
     /** The dot on "💬 Поддержка": support answered and the screen has not shown it yet. */
     val supportUnread: Boolean = false,
+    // ---- 1.8.2 ----
+    /** Name of the location the person chose by hand (AmeliaManual); null after an automatic choice. */
+    val manualName: String? = null,
 ) {
     val selectedName: String?
         get() = locations.firstOrNull { it.guid == selectedGuid }?.name
+
+    /** 1.8.2: "Вы на резервной локации — работает только Telegram" and "Вернуться на обычную". */
+    val onManualReserve: Boolean
+        get() = AmeliaReserve.showBackBanner(selectedName, manualName, AmeliaPolicy.subscriptionActive(info, System.currentTimeMillis()))
 
     /**
      * 1.7.3: the line under the main button while the internet is checked after connecting and
@@ -629,11 +636,13 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             val app = getApplication<Application>()
             val (ok, vpn) = withContext(Dispatchers.IO) { AmeliaBattery.isAllowed(app) to AmeliaBoot.hasVpnPermission(app) }
             // 1.8.0: the background check may have brought an answer while the app was away
-            val unread = withContext(Dispatchers.IO) { supportUnread() }
+            val (unread, manual) = withContext(Dispatchers.IO) { supportUnread() to AmeliaManual.load().name }
             _state.update {
                 it.copy(
                     batteryOk = ok, showBatteryCard = it.showBatteryCard && !ok, vpnPermission = vpn,
                     supportUnread = unread && it.support == null,
+                    // 1.8.2: the daemon may have left a location chosen by hand meanwhile
+                    manualName = manual,
                 )
             }
         }
@@ -711,18 +720,23 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** "⚡ Подключить лучший": the first location of the failover queue; [connect] starts the VPN. */
-    fun connectBest(connect: () -> Unit) {
+    /**
+     * "⚡ Подключить лучший": the first location of the failover queue; [connect] starts the VPN.
+     * 1.8.2: [why] goes to "Журнал" as a switch ("«from» why → «to»") when the location changes.
+     */
+    fun connectBest(why: String? = null, connect: () -> Unit) {
         viewModelScope.launch {
             val guid = withContext(Dispatchers.IO) { AmeliaQueue.current(getApplication()).firstOrNull() } ?: return@launch
             if (guid != _state.value.selectedGuid) {
+                val fromName = _state.value.selectedName.orEmpty()
                 withContext(Dispatchers.IO) {
                     AmeliaManager.select(guid)
                     AmeliaReserveState.setAuto(false)
                     // picked by the app, not by the person
                     AmeliaManual.markAutomatic()
+                    if (why != null) AmeliaJournal.add("$fromName $why → ${MmkvManager.decodeServerConfig(guid)?.remarks.orEmpty()}")
                 }
-                _state.update { it.copy(selectedGuid = guid, reserveFallback = false) }
+                _state.update { it.copy(selectedGuid = guid, reserveFallback = false, manualName = null) }
                 if (_state.value.isRunning) {
                     restartIfRunning()
                     return@launch
@@ -731,6 +745,14 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             if (!_state.value.isRunning) connect()
         }
     }
+
+    /**
+     * 1.8.2: "Вернуться на обычную" under "Вы на резервной локации": the manual choice is dropped and
+     * the first working regular location of the queue is picked, the same as "⚡ Подключить лучший"
+     * (with a valid subscription the queue has no reserve or Moscow). The VPN on: it moves there;
+     * off: only the location changes, the VPN is not started.
+     */
+    fun backFromReserve() = connectBest(AmeliaReserve.BACK_REASON) {}
 
     // ---------------------------------------------------------------------------------------
     // 1.3.0: crash reports, background work, speed test
@@ -1059,7 +1081,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 // 1.4.0: a choice made by hand is respected (AmeliaPolicy)
                 AmeliaManual.markChosen(guid)
             }
-            _state.update { it.copy(selectedGuid = guid, reserveFallback = false) }
+            _state.update { it.copy(selectedGuid = guid, reserveFallback = false, manualName = it.locations.firstOrNull { l -> l.guid == guid }?.name) }
             if (_state.value.isRunning) {
                 // The daemon checks the new location after the restart (a fresh round of failover).
                 expectRestart = true
@@ -1242,6 +1264,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 speeds = AmeliaSpeed.byGuid(),
                 announceDismissed = AmeliaAnnounce.dismissed(),
                 supportUnread = supportUnread(),
+                manualName = AmeliaManual.load().name,
             ).also { AmeliaExpiry.check(getApplication(), it.info) }
         }
         val checks = withContext(Dispatchers.IO) { checksSnapshot() }
@@ -1266,6 +1289,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 announceDismissed = snapshot.announceDismissed,
                 // the open screen shows the thread: nothing unread there
                 supportUnread = snapshot.supportUnread && it.support == null,
+                manualName = snapshot.manualName,
                 checkedAt = checks.checkedAt,
                 lastCheckMs = checks.lastCheckMs,
                 operatorMarks = checks.operatorMarks,

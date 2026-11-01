@@ -195,6 +195,8 @@
     <!-- 1.1.1: reserve locations (only Telegram) -->
     <string name="amelia_reserve_label">только Telegram</string>
     <string name="amelia_reserve_fallback">Подписка закончилась — работает только Telegram</string>
+    <string name="amelia_manual_reserve">Вы на резервной локации — работает только Telegram</string>
+    <string name="amelia_manual_reserve_back">Вернуться на обычную</string>
     <!-- 1.2.0: fast checks and switching -->
     <string name="amelia_checked_now">проверено только что</string>
     <plurals name="amelia_checked_min_ago">
