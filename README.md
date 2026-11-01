@@ -86,8 +86,9 @@ keytool -genkeypair -v -keystore amelia-release.jks -alias amelia -keyalg RSA -k
 `https://msk1.ameliajustamelia.com:9443`, `https://msk2.ameliajustamelia.com:9443`,
 `https://sub.ameliajustamelia.com:9443`. Тело — JSON, `Content-Type: application/json`, не больше 64 КБ.
 Сначала через обычную сеть телефона мимо VPN (`"path": "direct"`), если не вышло — через туннель
-(`"path": "tunnel"`). User-Agent: `AmeliaNet/<versionName> v2rayNG/<upstream> Xray/<версия ядра>`
-(начало `AmeliaNet/<версия>` не меняется: по нему бот считает установки).
+(`"path": "tunnel"`). User-Agent: `AmeliaNet/<versionName> v2rayNG/<upstream> Xray/<версия ядра> Pick/<manual|auto>`
+(начало `AmeliaNet/<версия>` и `Xray/<версия>` не меняются: по ним бот считает установки и версию ядра;
+с 1.8.2 `Pick/manual` — локацию выбрали вручную, иначе `Pick/auto`; вся строка не длиннее 200 знаков).
 
 **POST /app/report** — кнопка «Не работает — сообщить»:
 

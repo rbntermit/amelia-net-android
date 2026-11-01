@@ -105,6 +105,8 @@ class ExtraCallbacks(
     val onMeasureSpeed: (String) -> Unit,
     /** "⚡ Подключить лучший". */
     val onConnectBest: () -> Unit,
+    /** 1.8.2: "Вернуться на обычную" under "Вы на резервной локации". */
+    val onBackFromReserve: () -> Unit = {},
     /** 1.5.7: "💳 Продлить" (bot with Telegram, the site without), and the site's pages. */
     val onRenew: () -> Unit,
     val onPayOnSite: () -> Unit,
@@ -465,6 +467,25 @@ internal fun ReserveFallbackBanner(onRenew: () -> Unit) {
                 fontWeight = FontWeight.SemiBold,
             )
             GradientButton(text = stringResource(R.string.amelia_renew), enabled = true, onClick = onRenew)
+        }
+    }
+}
+
+/**
+ * 1.8.2: the person chose a reserve location by hand while the subscription is valid
+ * (AmeliaReserve.showBackBanner): only Telegram works there, and the app does not leave it by itself.
+ */
+@Composable
+internal fun ManualReserveBanner(onBack: () -> Unit) {
+    Glass(Modifier.fillMaxWidth(), tint = Color(0x40FFB547)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                stringResource(R.string.amelia_manual_reserve),
+                color = Brand.Text,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            GradientButton(text = stringResource(R.string.amelia_manual_reserve_back), enabled = true, onClick = onBack)
         }
     }
 }

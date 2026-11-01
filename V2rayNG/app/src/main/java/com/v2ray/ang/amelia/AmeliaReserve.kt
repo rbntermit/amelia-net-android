@@ -25,6 +25,19 @@ object AmeliaReserve {
     fun isRussianExit(name: String?): Boolean =
         name != null && (name.contains("🇷🇺") || name.contains("москва", ignoreCase = true))
 
+    /**
+     * 1.8.2: "Вы на резервной локации — работает только Telegram" with "Вернуться на обычную" on the
+     * main screen. The person picked a reserve location by hand ([manualName], AmeliaManual) while
+     * the subscription is valid: the app respects that choice and never leaves it by itself, so
+     * without a hint they may stay there for days. Moscow is picked on purpose from abroad: never.
+     * After the subscription ended the red "Подписка закончилась" with "Продлить" is shown instead.
+     */
+    fun showBackBanner(currentName: String?, manualName: String?, subActive: Boolean): Boolean =
+        subActive && isReserve(currentName) && !isRussianExit(currentName) && currentName == manualName
+
+    /** 1.8.2: the journal's reason for "Вернуться на обычную" ("«from» … → «to»", as the daemon's switches). */
+    const val BACK_REASON = "вернулись с резервной по кнопке"
+
     /** URL for the "does it work" request through a location named [name]. */
     fun testUrl(name: String?, default: String): String = if (isReserve(name)) TEST_URL else default
 

@@ -515,6 +515,10 @@ private fun HomeScreen(
         } else {
             SubscriptionLine(state.info, onRenew = extra.onRenew, onPayOnSite = extra.onPayOnSite)
         }
+        if (state.onManualReserve) {
+            Spacer(Modifier.height(10.dp))
+            ManualReserveBanner(onBack = extra.onBackFromReserve)
+        }
         BootPermissionLine(state)
         if (state.showBatteryCard) {
             Spacer(Modifier.height(10.dp))
