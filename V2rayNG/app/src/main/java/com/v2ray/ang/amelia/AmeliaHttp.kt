@@ -83,7 +83,25 @@ object AmeliaHttp {
 
     // ---- state ----------------------------------------------------------------------------
 
-    fun lastBase(): String? = MmkvManager.decodeSettingsString(PREF_LAST_BASE)?.takeIf { it.isNotBlank() }
+    /**
+     * 1.8.3, pure: a stored address only while it is still one of ours ([AmeliaConfig.SUB_BASE_URLS]).
+     * An address saved by an older version whose server was removed (msk3 until 1.8.2, off since
+     * 1.8.3) is passed over: the usual order, never the dead address first.
+     */
+    internal fun knownBase(stored: String?): String? = stored?.takeIf { it in AmeliaConfig.SUB_BASE_URLS }
+
+    /**
+     * 1.8.3, pure: "<base> <TUNNEL|DIRECT>" as AmeliaManager stores the last subscription source;
+     * null when it is unreadable or its address is no longer ours ([knownBase]).
+     */
+    internal fun sourceOf(stored: String?): Pair<String, Route>? {
+        val parts = stored?.split(' ') ?: return null
+        val base = knownBase(parts[0]) ?: return null
+        val route = parts.getOrNull(1)?.let { runCatching { Route.valueOf(it) }.getOrNull() } ?: return null
+        return base to route
+    }
+
+    fun lastBase(): String? = knownBase(MmkvManager.decodeSettingsString(PREF_LAST_BASE))
 
     fun rememberBase(base: String) {
         if (base in AmeliaConfig.SUB_BASE_URLS) MmkvManager.encodeSettings(PREF_LAST_BASE, base)

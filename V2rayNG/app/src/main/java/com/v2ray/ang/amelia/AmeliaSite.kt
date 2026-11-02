@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit
 object AmeliaSite {
 
     /**
-     * Main address, then the spare ones: msk2 → msk1 → msk3 (1.7.3), the Russian mirrors of the
+     * Main address, then the spare ones: msk2 → msk1 → spb1 (1.7.3), the Russian mirrors of the
      * subscription in the order of AmeliaConfig.SITE_BASE_URLS.
      */
     val BASES: List<String> get() = AmeliaConfig.SITE_BASE_URLS
@@ -77,7 +77,7 @@ object AmeliaSite {
 
     /**
      * 1.7.3, pure: the first of [BASES] that answered ([answered] in the same order); none
-     * answered — the spare one (msk1), as before msk3: a new mirror may not answer yet.
+     * answered — the spare one (msk1), as before spb1: a new mirror may not answer yet.
      */
     fun pickBase(answered: List<Boolean>): String =
         BASES.indices.firstOrNull { answered.getOrNull(it) == true }?.let { BASES[it] } ?: BASES[1]
@@ -133,7 +133,7 @@ object AmeliaSite {
     @Volatile private var cached: Pair<String, Token>? = null
 
     /**
-     * Blocking, any thread: a one-time link pair for [key] from msk2, then msk1, then msk3 (1.7.3;
+     * Blocking, any thread: a one-time link pair for [key] from msk2, then msk1, then spb1 (1.7.3;
      * [BASES]), over the phone's own network (not the tunnel), 5 s in all. Null: no answer or an
      * error → the caller opens the page with the key as before (better opened than not).
      */

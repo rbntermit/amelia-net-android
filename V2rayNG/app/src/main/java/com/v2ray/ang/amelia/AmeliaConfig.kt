@@ -20,12 +20,12 @@ object AmeliaConfig {
 
     const val MIRROR_PORT = 9443
 
-    /** In the order the mirrors are asked (msk1 → msk2 → msk3). A new entry is added here only. */
+    /** In the order the mirrors are asked (msk1 → msk2 → spb1). A new entry is added here only. */
     val ENTRIES = listOf(
         Entry("msk1", "msk1.ameliajustamelia.com", "79.137.192.178"),
         Entry("msk2", "msk2.ameliajustamelia.com", "188.120.243.206"),
-        // 1.7.3: Kemerovo, a mirror of msk2 (same site and /app/ paths, certificate on .com and .net)
-        Entry("msk3", "msk3.ameliajustamelia.com", "138.124.77.193", "2a05:541:142:1aa::1"),
+        // 1.8.3: St Petersburg, a mirror of msk2 (same site and /app/ paths, certificate on .com and .net)
+        Entry("spb1", "spb1.ameliajustamelia.com", "170.168.151.63", "2a0a:2b41:7:8f88::"),
     )
 
     fun entry(name: String): Entry = ENTRIES.first { it.name == name }
@@ -46,12 +46,12 @@ object AmeliaConfig {
         ENTRIES.map { it.baseUrl } + BACKUP_BASE_URLS
 
     /**
-     * The subscription base (msk2) first, then its backup (msk1), then msk3 (1.7.3). Used by
+     * The subscription base (msk2) first, then its backup (msk1), then spb1 (1.7.3). Used by
      * the site, its one-time links (/app/site-token) and, since 1.6.1, the download of the
      * subscription when nothing works (AmeliaResubscribe: the server may have moved a location
      * to another port). Russian mirrors only, never the tunnel.
      */
-    val SITE_BASE_URLS: List<String> = listOf("msk2", "msk1", "msk3").map { entry(it).baseUrl }
+    val SITE_BASE_URLS: List<String> = listOf("msk2", "msk1", "spb1").map { entry(it).baseUrl }
 
     val RESUBSCRIBE_BASE_URLS: List<String> = SITE_BASE_URLS
 
@@ -68,7 +68,7 @@ object AmeliaConfig {
     val OUR_SERVER_IPS: Set<String> =
         (ENTRIES.flatMap { listOfNotNull(it.ipv4, it.ipv6) } + FOREIGN_SERVER_IPS).toSet()
 
-    /** Short name of the entry whose mirror is [baseUrl] ("msk3"), null for any other address. */
+    /** Short name of the entry whose mirror is [baseUrl] ("spb1"), null for any other address. */
     fun entryNameOf(baseUrl: String?): String? = ENTRIES.firstOrNull { it.baseUrl == baseUrl?.trimEnd('/') }?.name
 
     /** Our domains: URLs on them may be redirected to whichever mirror answered. */

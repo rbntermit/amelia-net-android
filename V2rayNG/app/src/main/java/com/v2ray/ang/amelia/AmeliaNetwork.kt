@@ -32,7 +32,7 @@ object AmeliaNetwork {
 
     /**
      * /app/report, /app/probe, /app/crash, /app/hints and (1.8.0) /app/support go to these servers, in this order
-     * (contract with the server): every Russian mirror (msk1 → msk2 → msk3, AmeliaConfig.ENTRIES),
+     * (contract with the server): every Russian mirror (msk1 → msk2 → spb1, AmeliaConfig.ENTRIES),
      * then the main domain. Not .net: it is the same server as the main domain.
      */
     val POST_BASE_URLS: List<String> = AmeliaConfig.ENTRIES.map { it.baseUrl } + AmeliaConfig.BACKUP_BASE_URLS.first()

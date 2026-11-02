@@ -61,7 +61,7 @@ object AmeliaAbout {
     }
 
     /**
-     * Short name of one of our addresses: the entry's name ("msk1", "msk2", "msk3"; 1.7.3: from
+     * Short name of one of our addresses: the entry's name ("msk1", "msk2", "spb1"; 1.7.3: from
      * AmeliaConfig.ENTRIES), or "запасной (<host>)" for the main and backup domains and anything else.
      */
     fun baseLabel(base: String?, backupWord: String): String? {
@@ -70,7 +70,7 @@ object AmeliaAbout {
     }
 
     /**
-     * 1.7.3, for the journal: "Подписка скачана: msk3, через VPN" / "…: запасной (sub.ameliajustamelia.com), напрямую".
+     * 1.7.3, for the journal: "Подписка скачана: spb1, через VPN" / "…: запасной (sub.ameliajustamelia.com), напрямую".
      */
     fun subSourceLine(base: String, viaTunnel: Boolean, str: AmeliaJournal.Strings): String = str.get(
         R.string.amelia_journal_sub_from,

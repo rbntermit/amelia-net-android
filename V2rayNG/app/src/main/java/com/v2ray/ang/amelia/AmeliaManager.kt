@@ -77,7 +77,7 @@ object AmeliaManager {
     }
 
     /**
-     * 1.6.1, blocking: re-downloads the subscription only from msk2, msk1, msk3, over [direct] (the
+     * 1.6.1, blocking: re-downloads the subscription only from msk2, msk1, spb1, over [direct] (the
      * phone's own network), within [timeoutMs] in all (AmeliaResubscribe). Imported as usual.
      */
     fun refreshDirect(direct: OkHttpClient, timeoutMs: Long): Outcome {
@@ -87,12 +87,13 @@ object AmeliaManager {
 
     private const val PREF_SUB_SOURCE = "amelia_sub_source"
 
-    /** Address and route (TUNNEL / DIRECT) of the last successful subscription update. */
-    fun lastSubscriptionSource(): Pair<String, AmeliaHttp.Route>? {
-        val parts = MmkvManager.decodeSettingsString(PREF_SUB_SOURCE)?.split(' ') ?: return null
-        val route = parts.getOrNull(1)?.let { runCatching { AmeliaHttp.Route.valueOf(it) }.getOrNull() } ?: return null
-        return parts[0] to route
-    }
+    /**
+     * Address and route (TUNNEL / DIRECT) of the last successful subscription update. 1.8.3: null
+     * when that address is no longer ours (AmeliaHttp.sourceOf): "О программе" then shows no source
+     * and the white list check asks the first mirror until the next update.
+     */
+    fun lastSubscriptionSource(): Pair<String, AmeliaHttp.Route>? =
+        AmeliaHttp.sourceOf(MmkvManager.decodeSettingsString(PREF_SUB_SOURCE))
 
     /** Epoch millis of the last successful subscription update, 0 if never. */
     fun lastSubscriptionUpdate(): Long =
@@ -151,7 +152,7 @@ object AmeliaManager {
         MmkvManager.encodeSubscription(AmeliaConfig.SUBSCRIPTION_ID, sub)
         MmkvManager.encodeSettings(AmeliaConfig.PREF_SUB_INFO, JsonUtil.toJson(info))
         MmkvManager.encodeSettings(PREF_SUB_SOURCE, "${result.baseUrl} ${result.route.name}")
-        // 1.7.3: which address it came from (msk1, msk2, msk3 or the spare one); a mirror that did not
+        // 1.7.3: which address it came from (msk1, msk2, spb1 or the spare one); a mirror that did not
         // answer or answered 404 was passed over quietly (AmeliaSubscriptionClient.fetchWith)
         val app = AngApplication.application
         AmeliaJournal.add(
