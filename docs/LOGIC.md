@@ -2,6 +2,7 @@
 
 Коротко: кто что проверяет, когда, с какими таймаутами и почему переключает.
 Код: `amelia/AmeliaDaemon.kt` (процесс VPN), правила — `amelia/AmeliaPolicy.kt`, очередь — `AmeliaQueue` в `amelia/AmeliaKnown.kt`.
+Запросы к серверу подписки и их поля — [SERVER-CONTRACT.md](SERVER-CONTRACT.md).
 
 ## Процессы
 

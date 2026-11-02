@@ -14,7 +14,7 @@ import com.v2ray.ang.handler.MmkvManager
  * "Не работает — сообщить": every location is checked with a real request through it
  * (the same test as "ping all"), the person sees which ones work, and can send the result to
  * POST /app/report. The answer comes from the bot @amelianet_bot.
- * The body follows the contract with the server (see README, "Контракт report/probe").
+ * The body follows the contract with the server (see docs/SERVER-CONTRACT.md).
  */
 object AmeliaReport {
 

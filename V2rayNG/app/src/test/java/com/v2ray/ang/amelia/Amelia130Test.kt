@@ -133,10 +133,10 @@ class Amelia131Test {
     @Test
     fun filesOfAnOlderVersionAreDropped() {
         assertTrue(AmeliaUpdater.belongsTo("AmeliaNet-12.apk", 12))
-        assertTrue(AmeliaUpdater.belongsTo("AmeliaNet-12-b04f29336bca336c.part", 12))
+        assertTrue(AmeliaUpdater.belongsTo("AmeliaNet-12-0011223344556677.part", 12))
         assertTrue(AmeliaUpdater.belongsTo(".lock", 12))
         assertFalse(AmeliaUpdater.belongsTo("AmeliaNet-11.apk", 12))
-        assertFalse(AmeliaUpdater.belongsTo("AmeliaNet-11-b04f29336bca336c.part", 12))
+        assertFalse(AmeliaUpdater.belongsTo("AmeliaNet-11-0011223344556677.part", 12))
         // 1 and 12 are different versions
         assertFalse(AmeliaUpdater.belongsTo("AmeliaNet-1.apk", 12))
         assertFalse(AmeliaUpdater.belongsTo("AmeliaNet-120.apk", 12))
