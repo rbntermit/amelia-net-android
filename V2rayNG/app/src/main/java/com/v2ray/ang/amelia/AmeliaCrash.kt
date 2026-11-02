@@ -32,7 +32,7 @@ object AmeliaCrash {
     /** Our servers: their addresses are not personal and help to read a report (list: AmeliaConfig). */
     val OUR_IPS: Set<String> get() = AmeliaConfig.OUR_SERVER_IPS
 
-    /** 1.7.3: our IPv6 addresses in one spelling ([ipv6Key]), so "2a05:0541:…" is found too. */
+    /** 1.7.3: our IPv6 addresses in one spelling ([ipv6Key]), so "2a0a:2b41:0007:…" is found too. */
     private val OUR_IPV6: Set<String> by lazy { OUR_IPS.filter { it.contains(':') }.mapNotNull(::ipv6Key).toSet() }
 
     data class Crash(
@@ -73,8 +73,8 @@ object AmeliaCrash {
     }
 
     /**
-     * 1.7.3, pure: [s] as eight lowercase groups without leading zeros ("2a05:541:142:1aa::1" and
-     * "2A05:0541:0142:01AA:0:0:0:1" give the same), or null when it is not an IPv6 address.
+     * 1.7.3, pure: [s] as eight lowercase groups without leading zeros ("2a0a:2b41:7:8f88::" and
+     * "2A0A:2B41:0007:8F88:0:0:0:0" give the same), or null when it is not an IPv6 address.
      * A zone ("%wlan0") is dropped.
      */
     internal fun ipv6Key(s: String): String? {

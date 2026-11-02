@@ -661,7 +661,7 @@ object AmeliaDaemon {
 
     /**
      * 1.6.1: before "nothing works" (and before the white list check). The subscription is older
-     * than 10 minutes and this network had no try in 10 minutes: download it again (msk2, msk1, msk3,
+     * than 10 minutes and this network had no try in 10 minutes: download it again (msk2, msk1, spb1,
      * around the tunnel, 10 s). Locations whose address or port changed lose their quarantine and
      * old results and are checked at once. Null: not due, not downloaded or nothing changed, so
      * everything goes on as before. Import gives every location a new guid: callers look theirs up

@@ -21,14 +21,14 @@ import org.junit.jupiter.api.Test
 import java.io.File
 
 /**
- * 1.7.3: the third Russian entry (msk3, Kemerovo) and its mirror; all entries in one list;
+ * 1.7.3: the third Russian entry (spb1, St Petersburg) and its mirror; all entries in one list;
  * failover goes to the next location of the list; the main screen says what is checked.
  */
 class Amelia173Test {
 
     private val msk1 = "https://msk1.ameliajustamelia.com:9443"
     private val msk2 = "https://msk2.ameliajustamelia.com:9443"
-    private val msk3 = "https://msk3.ameliajustamelia.com:9443"
+    private val spb1 = "https://spb1.ameliajustamelia.com:9443"
     private val com = "https://sub.ameliajustamelia.com:9443"
     private val net = "https://sub.ameliajustamelia.net:9443"
     private val ok = Attempt.Ok("dmxlc3M6Ly8=", AmeliaSubInfo(title = "Amelia.Net"))
@@ -37,41 +37,41 @@ class Amelia173Test {
 
     @Test
     fun entriesAreListedOnceWithNameDomainAndAddresses() {
-        assertEquals(listOf("msk1", "msk2", "msk3"), AmeliaConfig.ENTRIES.map { it.name })
-        val e3 = AmeliaConfig.entry("msk3")
-        assertEquals("msk3.ameliajustamelia.com", e3.domain)
-        assertEquals("138.124.77.193", e3.ipv4)
-        assertEquals("2a05:541:142:1aa::1", e3.ipv6)
-        assertEquals(msk3, e3.baseUrl)
+        assertEquals(listOf("msk1", "msk2", "spb1"), AmeliaConfig.ENTRIES.map { it.name })
+        val e3 = AmeliaConfig.entry("spb1")
+        assertEquals("spb1.ameliajustamelia.com", e3.domain)
+        assertEquals("170.168.151.63", e3.ipv4)
+        assertEquals("2a0a:2b41:7:8f88::", e3.ipv6)
+        assertEquals(spb1, e3.baseUrl)
         assertEquals("79.137.192.178", AmeliaConfig.entry("msk1").ipv4)
         assertEquals("188.120.243.206", AmeliaConfig.entry("msk2").ipv4)
-        assertEquals("msk3", AmeliaConfig.entryNameOf(msk3))
-        assertEquals("msk3", AmeliaConfig.entryNameOf("$msk3/"))
+        assertEquals("spb1", AmeliaConfig.entryNameOf(spb1))
+        assertEquals("spb1", AmeliaConfig.entryNameOf("$spb1/"))
         assertNull(AmeliaConfig.entryNameOf(com))
         assertNull(AmeliaConfig.entryNameOf(null))
     }
 
     @Test
-    fun mirrorOrderMsk3AfterMsk2BeforeForeign() {
-        assertEquals(listOf(msk1, msk2, msk3, com, net), AmeliaConfig.SUB_BASE_URLS)
+    fun mirrorOrderSpb1AfterMsk2BeforeForeign() {
+        assertEquals(listOf(msk1, msk2, spb1, com, net), AmeliaConfig.SUB_BASE_URLS)
         // report, probe, crash, hints: the same Russian order, then the main domain (contract)
-        assertEquals(listOf(msk1, msk2, msk3, com), AmeliaNetwork.POST_BASE_URLS)
+        assertEquals(listOf(msk1, msk2, spb1, com), AmeliaNetwork.POST_BASE_URLS)
         // site and its one-time links; the download when nothing works
-        assertEquals(listOf(msk2, msk1, msk3), AmeliaConfig.SITE_BASE_URLS)
-        assertEquals(listOf(msk2, msk1, msk3), AmeliaSite.BASES)
+        assertEquals(listOf(msk2, msk1, spb1), AmeliaConfig.SITE_BASE_URLS)
+        assertEquals(listOf(msk2, msk1, spb1), AmeliaSite.BASES)
         assertEquals(AmeliaConfig.SITE_BASE_URLS, AmeliaConfig.RESUBSCRIBE_BASE_URLS)
         // last answering address first, then the list order
-        assertEquals(listOf(msk3, msk1, msk2, com, net), AmeliaHttp.orderBases(msk3))
-        // msk3 is ours: version.json may point there, and an APK URL is moved to it
-        assertTrue(AmeliaHttp.isOwnUrl("$msk3/app/a.apk"))
-        assertTrue(AmeliaUpdater.isAllowedUrl("https://msk3.ameliajustamelia.net:9443/app/a.apk"))
-        assertEquals("$msk3/app/a.apk", AmeliaHttp.rewriteOrigin("$com/app/a.apk", msk3))
+        assertEquals(listOf(spb1, msk1, msk2, com, net), AmeliaHttp.orderBases(spb1))
+        // spb1 is ours: version.json may point there, and an APK URL is moved to it
+        assertTrue(AmeliaHttp.isOwnUrl("$spb1/app/a.apk"))
+        assertTrue(AmeliaUpdater.isAllowedUrl("https://spb1.ameliajustamelia.net:9443/app/a.apk"))
+        assertEquals("$spb1/app/a.apk", AmeliaHttp.rewriteOrigin("$com/app/a.apk", spb1))
     }
 
     @Test
     fun noOtherSourceFileWritesAnEntryAddress() {
         val written = listOf(
-            "msk1.", "msk2.", "msk3.", "79.137.192.178", "188.120.243.206", "138.124.77.193", "2a05:541:142:1aa",
+            "msk1.", "msk2.", "spb1.", "79.137.192.178", "188.120.243.206", "170.168.151.63", "2a0a:2b41:7:8f88",
             "sub.ameliajustamelia.com:", "sub.ameliajustamelia.net:", "91.184.241.246",
         )
         val offenders = mainSources().filter { it.name != "AmeliaConfig.kt" }.flatMap { f ->
@@ -86,27 +86,27 @@ class Amelia173Test {
     // ---- 6: a mirror that does not answer, or answers 404, is passed over quietly -----------------
 
     @Test
-    fun deadOr404Msk3MovesOnToTheNextAddress() {
+    fun deadOr404Spb1MovesOnToTheNextAddress() {
         val all = AmeliaConfig.SUB_BASE_URLS
         val tried = mutableListOf<String>()
         val r = AmeliaSubscriptionClient.fetchWith(AmeliaHttp.plan(all, tunnel = false)) { a ->
             tried += a.base
             when (a.base) {
-                msk3 -> Attempt.NotFound
+                spb1 -> Attempt.NotFound
                 com -> ok
                 else -> Attempt.Failed
             }
         }
         assertEquals(com, (r as Result.Ok).baseUrl)
-        assertEquals(listOf(msk1, msk2, msk3, com), tried)
-        // msk3 answers when msk1 and msk2 do not
+        assertEquals(listOf(msk1, msk2, spb1, com), tried)
+        // spb1 answers when msk1 and msk2 do not
         val r3 = AmeliaSubscriptionClient.fetchWith(AmeliaHttp.plan(all, tunnel = true)) { a ->
-            if (a.base == msk3 && a.route == Route.TUNNEL) ok else Attempt.Failed
+            if (a.base == spb1 && a.route == Route.TUNNEL) ok else Attempt.Failed
         }
-        assertEquals(msk3, (r3 as Result.Ok).baseUrl)
-        // the resubscribe and site lists pass msk3 over the same way
+        assertEquals(spb1, (r3 as Result.Ok).baseUrl)
+        // the resubscribe and site lists pass spb1 over the same way
         val rr = AmeliaSubscriptionClient.fetchWith(AmeliaHttp.plan(AmeliaConfig.RESUBSCRIBE_BASE_URLS, tunnel = false)) { a ->
-            if (a.base == msk3) Attempt.NotFound else Attempt.Failed
+            if (a.base == spb1) Attempt.NotFound else Attempt.Failed
         }
         assertEquals(Result.UnknownKey, rr)
     }
@@ -114,19 +114,19 @@ class Amelia173Test {
     @Test
     fun journalSaysWhichAddressServedTheSubscription() {
         val str = strings()
-        assertEquals("Подписка скачана: msk3, через VPN", AmeliaAbout.subSourceLine(msk3, true, str))
+        assertEquals("Подписка скачана: spb1, через VPN", AmeliaAbout.subSourceLine(spb1, true, str))
         assertEquals("Подписка скачана: msk1, напрямую", AmeliaAbout.subSourceLine(msk1, false, str))
         assertEquals("Подписка скачана: msk2, напрямую", AmeliaAbout.subSourceLine(msk2, false, str))
         assertEquals("Подписка скачана: запасной (sub.ameliajustamelia.com), напрямую", AmeliaAbout.subSourceLine(com, false, str))
-        assertEquals("msk3", AmeliaAbout.baseLabel(msk3, "запасной"))
+        assertEquals("spb1", AmeliaAbout.baseLabel(spb1, "запасной"))
     }
 
     @Test
     fun siteOpensTheFirstAnsweringMirrorInItsOrder() {
         assertEquals(msk2, AmeliaSite.pickBase(listOf(true, true, true)))
         assertEquals(msk1, AmeliaSite.pickBase(listOf(false, true, true)))
-        assertEquals(msk3, AmeliaSite.pickBase(listOf(false, false, true)))
-        // nobody answered: the spare one, as before msk3
+        assertEquals(spb1, AmeliaSite.pickBase(listOf(false, false, true)))
+        // nobody answered: the spare one, as before spb1
         assertEquals(msk1, AmeliaSite.pickBase(listOf(false, false, false)))
         assertEquals(msk1, AmeliaSite.pickBase(emptyList()))
         assertEquals(5_000L, AmeliaSite.CHECK_TIMEOUT_MS)
@@ -136,35 +136,35 @@ class Amelia173Test {
     // ---- 3: our servers stay in a crash report, other addresses go ------------------------------
 
     @Test
-    fun crashKeepsOurMsk3AndRemovesOtherAddresses() {
-        assertTrue("138.124.77.193" in AmeliaConfig.OUR_SERVER_IPS)
-        assertTrue("2a05:541:142:1aa::1" in AmeliaConfig.OUR_SERVER_IPS)
+    fun crashKeepsOurSpb1AndRemovesOtherAddresses() {
+        assertTrue("170.168.151.63" in AmeliaConfig.OUR_SERVER_IPS)
+        assertTrue("2a0a:2b41:7:8f88::" in AmeliaConfig.OUR_SERVER_IPS)
         val text = """
-            dial tcp 138.124.77.193:8471 failed; dial udp [2a05:541:142:1aa::1]:8444 failed
-            also 2A05:0541:0142:01AA:0:0:0:1 and 79.137.192.178, 188.120.243.206
-            from 95.24.11.7 via [2a02:6b8::feed:1]:443 and 2a05:541:142:1aa::2
+            dial tcp 170.168.151.63:8471 failed; dial udp [2a0a:2b41:7:8f88::]:8444 failed
+            also 2A0A:2B41:0007:8F88:0:0:0:0 and 79.137.192.178, 188.120.243.206
+            from 95.24.11.7 via [2a02:6b8::feed:1]:443 and 2a0a:2b41:7:8f88::2
         """.trimIndent()
         val s = AmeliaCrash.scrub(text)
-        listOf("138.124.77.193", "2a05:541:142:1aa::1", "2A05:0541:0142:01AA:0:0:0:1", "79.137.192.178", "188.120.243.206").forEach {
+        listOf("170.168.151.63", "2a0a:2b41:7:8f88::", "2A0A:2B41:0007:8F88:0:0:0:0", "79.137.192.178", "188.120.243.206").forEach {
             assertTrue(it in s, "$it must stay")
         }
-        listOf("95.24.11.7", "2a02:6b8::feed:1", "2a05:541:142:1aa::2").forEach { assertFalse(it in s, "$it must go") }
+        listOf("95.24.11.7", "2a02:6b8::feed:1", "2a0a:2b41:7:8f88::2").forEach { assertFalse(it in s, "$it must go") }
         assertTrue(s.contains("<ip>"))
         assertTrue(s.contains("<ip6>"))
     }
 
     @Test
     fun ipv6KeyIsOneSpellingOfAnAddress() {
-        val k = "2a05:541:142:1aa:0:0:0:1"
-        assertEquals(k, AmeliaCrash.ipv6Key("2a05:541:142:1aa::1"))
-        assertEquals(k, AmeliaCrash.ipv6Key("2A05:0541:0142:01AA:0000:0000:0000:0001"))
-        assertEquals(k, AmeliaCrash.ipv6Key("2a05:541:142:1aa::1%wlan0"))
+        val k = "2a0a:2b41:7:8f88:0:0:0:0"
+        assertEquals(k, AmeliaCrash.ipv6Key("2a0a:2b41:7:8f88::"))
+        assertEquals(k, AmeliaCrash.ipv6Key("2A0A:2B41:0007:8F88:0000:0000:0000:0000"))
+        assertEquals(k, AmeliaCrash.ipv6Key("2a0a:2b41:7:8f88::%wlan0"))
         assertNull(AmeliaCrash.ipv6Key("12:34:56"))
         assertNull(AmeliaCrash.ipv6Key("1::2::3"))
         assertNull(AmeliaCrash.ipv6Key("1:2:3:4:5:6:7:8:9"))
         assertNull(AmeliaCrash.ipv6Key("zz::1:2"))
-        assertTrue(AmeliaCrash.isOurIpv6("2a05:541:142:1aa::1"))
-        assertFalse(AmeliaCrash.isOurIpv6("2a05:541:142:1aa::2"))
+        assertTrue(AmeliaCrash.isOurIpv6("2a0a:2b41:7:8f88::"))
+        assertFalse(AmeliaCrash.isOurIpv6("2a0a:2b41:7:8f88::2"))
     }
 
     // ---- 4: names "… 3" behave like "… 1" and "… 2" ------------------------------------------
@@ -195,23 +195,23 @@ class Amelia173Test {
         // checks and hints are by full name and host:port: "Финляндия 3" is not "Финляндия 1"
         val known = mapOf("Финляндия 1" to AmeliaChecks.Entry("Финляндия 1", ms = -1, ts = now, net = "n"))
         val plan = AmeliaQueue.failoverPlan(
-            listOf(loc("f1", "Финляндия 1", "79.137.192.178:8444"), loc("f3", "Финляндия 3", "138.124.77.193:8444")),
+            listOf(loc("f1", "Финляндия 1", "79.137.192.178:8444"), loc("f3", "Финляндия 3", "170.168.151.63:8444")),
             null, emptySet(), emptySet(), known, emptySet(), allowLastResort = false,
         )
         assertEquals(listOf("f3" to Why.LIST, "f1" to Why.PAST_FAIL), plan.steps.map { it.guid to it.why })
     }
 
-    // ---- 5: hysteria2 and VLESS links from the msk3 address ------------------------------------
+    // ---- 5: hysteria2 and VLESS links from the spb1 address ------------------------------------
 
     @Test
-    fun hysteria2LinkFromMsk3() {
-        val link = "hy2://p4ssw0rd@138.124.77.193:8454/?sni=msk3.ameliajustamelia.com" +
+    fun hysteria2LinkFromSpb1() {
+        val link = "hy2://p4ssw0rd@170.168.151.63:8454/?sni=spb1.ameliajustamelia.com" +
             "&obfs=salamander&obfs-password=obfsSecret#%F0%9F%87%B0%F0%9F%87%BF%20%D0%9A%D0%B0%D0%B7%D0%B0%D1%85%D1%81%D1%82%D0%B0%D0%BD%203"
         val p = Hysteria2Fmt.parse(link)
         assertEquals(EConfigType.HYSTERIA2, p.configType)
-        assertEquals("138.124.77.193", p.server)
+        assertEquals("170.168.151.63", p.server)
         assertEquals("8454", p.serverPort)
-        assertEquals("msk3.ameliajustamelia.com", p.sni)
+        assertEquals("spb1.ameliajustamelia.com", p.sni)
         assertEquals("obfsSecret", p.obfsPassword)
         assertEquals(AppConfig.TLS, p.security)
         assertEquals("🇰🇿 Казахстан 3", p.remarks)
@@ -223,21 +223,21 @@ class Amelia173Test {
         val mask = stream.finalmask as OutboundBean.StreamSettingsBean.FinalMaskBean
         assertEquals("salamander", mask.udp?.firstOrNull()?.type)
         assertEquals("obfsSecret", mask.udp?.firstOrNull()?.settings?.password)
-        assertEquals("msk3.ameliajustamelia.com", stream.tlsSettings?.serverName ?: p.sni)
+        assertEquals("spb1.ameliajustamelia.com", stream.tlsSettings?.serverName ?: p.sni)
         assertFalse(AmeliaReserve.isReserve(p.remarks))
         // the same parser takes any SNI: nothing expects msk1 or msk2
-        val p1 = Hysteria2Fmt.parse(link.replace("msk3.", "msk1."))
+        val p1 = Hysteria2Fmt.parse(link.replace("spb1.", "msk1."))
         assertEquals("msk1.ameliajustamelia.com", p1.sni)
     }
 
     @Test
-    fun vlessXhttpRealityFromMsk3() {
-        val link = "vless://11111111-2222-3333-4444-555555555555@138.124.77.193:8471" +
+    fun vlessXhttpRealityFromSpb1() {
+        val link = "vless://11111111-2222-3333-4444-555555555555@170.168.151.63:8471" +
             "?security=reality&sni=www.example.com&fp=chrome&pbk=PUBLICKEY&sid=ab12&type=xhttp&mode=auto&path=%2Fx" +
             "#%F0%9F%87%B8%F0%9F%87%AA%20%D0%A8%D0%B2%D0%B5%D1%86%D0%B8%D1%8F%203"
         val p = VlessFmt.parse(link)
         assertNotNull(p)
-        assertEquals("138.124.77.193", p!!.server)
+        assertEquals("170.168.151.63", p!!.server)
         assertEquals("8471", p.serverPort)
         assertEquals(AppConfig.REALITY, p.security)
         assertEquals(NetworkType.XHTTP.type, p.network)
