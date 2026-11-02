@@ -142,13 +142,13 @@ class Amelia173Test {
         val text = """
             dial tcp 170.168.151.63:8471 failed; dial udp [2a0a:2b41:7:8f88::]:8444 failed
             also 2A0A:2B41:0007:8F88:0:0:0:0 and 79.137.192.178, 188.120.243.206
-            from 95.24.11.7 via [2a02:6b8::feed:1]:443 and 2a0a:2b41:7:8f88::2
+            from 203.0.113.24 via [2001:db8::feed:1]:443 and 2a0a:2b41:7:8f88::2
         """.trimIndent()
         val s = AmeliaCrash.scrub(text)
         listOf("170.168.151.63", "2a0a:2b41:7:8f88::", "2A0A:2B41:0007:8F88:0:0:0:0", "79.137.192.178", "188.120.243.206").forEach {
             assertTrue(it in s, "$it must stay")
         }
-        listOf("95.24.11.7", "2a02:6b8::feed:1", "2a0a:2b41:7:8f88::2").forEach { assertFalse(it in s, "$it must go") }
+        listOf("203.0.113.24", "2001:db8::feed:1", "2a0a:2b41:7:8f88::2").forEach { assertFalse(it in s, "$it must go") }
         assertTrue(s.contains("<ip>"))
         assertTrue(s.contains("<ip6>"))
     }

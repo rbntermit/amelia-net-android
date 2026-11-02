@@ -20,7 +20,7 @@ class Amelia180Test {
 
     @Test
     fun hashMatchesTheServer() {
-        assertEquals("d6f44099238550fcf27732bc", AmeliaSupport.hash("9d985e1fddce376a"))
+        assertEquals("44ee8fa78a1c317551f4ab5a", AmeliaSupport.hash("0123456789abcdef"))
     }
 
     @Test
@@ -28,7 +28,7 @@ class Amelia180Test {
         val h = AmeliaSupport.hash("another-key")
         assertEquals(24, h.length)
         assertTrue(h.all { it in '0'..'9' || it in 'a'..'f' })
-        assertFalse(h == AmeliaSupport.hash("9d985e1fddce376a"))
+        assertFalse(h == AmeliaSupport.hash("0123456789abcdef"))
     }
 
     // ---- requests -------------------------------------------------------------------------
@@ -55,9 +55,9 @@ class Amelia180Test {
 
     @Test
     fun threadRequestHasOnlyTheHash() {
-        val json = JsonParser.parseString(AmeliaSupport.threadRequest("d6f44099238550fcf27732bc")).asJsonObject
+        val json = JsonParser.parseString(AmeliaSupport.threadRequest("44ee8fa78a1c317551f4ab5a")).asJsonObject
         assertEquals(setOf("h"), json.keySet())
-        assertEquals("d6f44099238550fcf27732bc", json["h"].asString)
+        assertEquals("44ee8fa78a1c317551f4ab5a", json["h"].asString)
     }
 
     @Test
@@ -82,7 +82,7 @@ class Amelia180Test {
     fun sendAnswers() {
         assertEquals(
             AmeliaSupport.SendResult.Sent("W-1A2B3C"),
-            AmeliaSupport.parseSend(200, """{"ok":true,"id":"W-1A2B3C","h":"d6f44099238550fcf27732bc"}"""),
+            AmeliaSupport.parseSend(200, """{"ok":true,"id":"W-1A2B3C","h":"44ee8fa78a1c317551f4ab5a"}"""),
         )
         assertEquals(AmeliaSupport.SendResult.Empty, AmeliaSupport.parseSend(400, """{"err":"empty"}"""))
         assertEquals(AmeliaSupport.SendResult.BadKey, AmeliaSupport.parseSend(400, """{"err":"bad key"}"""))

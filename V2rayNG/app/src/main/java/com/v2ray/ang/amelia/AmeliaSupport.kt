@@ -32,7 +32,7 @@ import java.util.concurrent.TimeUnit
 
 /**
  * 1.8.0 "Поддержка": a chat with support inside the app, for when Telegram does not work.
- * Contract with the server (README, "Контракт report/probe"):
+ * Contract with the server (docs/SERVER-CONTRACT.md):
  * - POST /app/support {"key", "text", "about", "app"} → {"ok": true, "id": "W-…", "h": "<24 hex>"};
  *   400 {"err": "empty" | "bad key"}, 429 (more than 6 in 10 min), 500;
  * - POST /app/support/thread {"h"} → {"ok": true, "items": [{"id", "ts", "d": "in" | "out", "x"}]},
