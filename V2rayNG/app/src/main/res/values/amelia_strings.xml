@@ -390,17 +390,6 @@
     <string name="amelia_outside_dns_tunnel">Запросы адресов сайтов (DNS) по настройкам VPN идут через VPN.</string>
     <string name="amelia_outside_dns_direct">Запросы адресов сайтов (DNS) по настройкам VPN идут мимо VPN.</string>
     <string name="amelia_outside_dns_note">Это по настройкам VPN на телефоне: проверить DNS снаружи нам нечем.</string>
-    <!-- 1.9.0: пауза за роутером Amelia -->
-    <string name="amelia_router_offer_text">Эта сеть уже защищена роутером Amelia: заблокированные сайты откроются и без VPN на телефоне. Поставить VPN на паузу в таких сетях?</string>
-    <string name="amelia_router_offer_yes">Да, ставить на паузу</string>
-    <string name="amelia_router_offer_no">Нет</string>
-    <string name="amelia_router_paused_title">VPN на паузе: эта сеть защищена роутером Amelia</string>
-    <string name="amelia_router_paused_text">Заблокированные сайты открываются и без VPN. Когда вы перейдёте в другую сеть, VPN включится сам. Нужен VPN и здесь — нажмите кнопку.</string>
-    <string name="amelia_router_setting_title">Пауза за роутером Amelia</string>
-    <string name="amelia_router_setting_text">В сети, которая уже идёт через роутер Amelia, VPN на телефоне встаёт на паузу и сам включается, когда сеть сменится.</string>
-    <string name="amelia_router_journal_pause">Сеть защищена роутером Amelia — VPN на паузе</string>
-    <string name="amelia_router_journal_resume">Сеть сменилась — пауза снята, включаю VPN</string>
-    <string name="amelia_router_resume_notice">Сеть сменилась, VPN снова нужен. Откройте Amelia.Net и нажмите кнопку.</string>
     <!-- 1.9.0: российские приложения мимо VPN -->
     <string name="amelia_ruapps_title">Российские приложения — мимо VPN</string>
     <string name="amelia_ruapps_note">Такие приложения всё равно видят, что VPN включён; мимо VPN идёт только их трафик.</string>

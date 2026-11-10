@@ -8,6 +8,7 @@ import androidx.work.WorkManager
 import com.v2ray.ang.AppConfig.ANG_PACKAGE
 import com.v2ray.ang.handler.AppLocaleManager
 import com.v2ray.ang.amelia.AmeliaCrash
+import com.v2ray.ang.amelia.AmeliaLegacy
 import com.v2ray.ang.amelia.AmeliaLocalProxy
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsManager
@@ -52,6 +53,9 @@ class AngApplication : Application() {
 
         // Amelia.Net 1.7.0: the local proxy gets a random login, password and port once
         AmeliaLocalProxy.ensure()
+
+        // Amelia.Net 1.9.1: settings of the removed router pause (1.9.0) are cleared once
+        AmeliaLegacy.cleanUp(this)
 
         // Initialize theme state from MMKV
         ThemeManager.refresh()

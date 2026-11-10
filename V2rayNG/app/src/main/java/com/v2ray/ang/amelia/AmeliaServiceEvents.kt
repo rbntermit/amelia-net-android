@@ -45,8 +45,6 @@ class AmeliaServiceEvents(private val context: Context) : Closeable {
         data class PingDone(val requestId: String) : Event()
         /** The daemon stored new check results (AmeliaChecks). */
         data object ChecksUpdated : Event()
-        /** 1.9.0: AmeliaRouterPause offered a pause, paused or ended one. */
-        data object Router : Event()
     }
 
     /**
@@ -90,7 +88,6 @@ class AmeliaServiceEvents(private val context: Context) : Closeable {
                     )
                 }
                 AmeliaConfig.MSG_CHECKS -> Event.ChecksUpdated
-                AmeliaConfig.MSG_ROUTER -> Event.Router
                 AppConfig.MSG_MEASURE_CONFIG_FINISH, AppConfig.MSG_MEASURE_CONFIG_CANCEL ->
                     Event.PingDone(intent.getStringExtra(MessageHelper.EXTRA_REQUEST_ID).orEmpty())
                 else -> null

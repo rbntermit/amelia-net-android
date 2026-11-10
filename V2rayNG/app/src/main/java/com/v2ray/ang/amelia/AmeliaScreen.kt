@@ -274,10 +274,6 @@ fun AmeliaApp(
                 onCheckOutside = extra.onCheckOutside,
             )
         }
-        // 1.9.0: first time in a network behind an Amelia router
-        if (state.routerOffer && state.hasKey && state.report == null) {
-            RouterOfferDialog(onAnswer = extra.onRouterOffer, onClose = extra.onRouterOfferClosed)
-        }
     }
 }
 
@@ -541,11 +537,6 @@ private fun HomeScreen(
         PowerButton(state.phase, enabled = state.locations.isNotEmpty(), onClick = onToggle)
         Spacer(Modifier.height(16.dp))
         PhaseText(state)
-        if (state.routerPaused && state.phase == ConnPhase.OFF) {
-            // 1.9.0: why the VPN is off, and that it comes back by itself
-            Spacer(Modifier.height(12.dp))
-            RouterPauseNote()
-        }
         if (state.phase == ConnPhase.WHITELIST) {
             // 1.5.9: instead of error texts: what is going on and what helps
             Spacer(Modifier.height(12.dp))
@@ -1289,7 +1280,6 @@ private fun SettingsScreen(
         SettingsSubscriptionSection(state, settings, extra)
         SettingsAppsSection(state, onOpenApps)
         SettingsBootSection(state, extra)
-        SettingsRouterSection(state, extra)
         SettingsBatterySection(state, extra)
         SettingsAutoSwitchSection(state, extra, onOpenJournal)
         SettingsUpdateSection(state, updates, onAbout)

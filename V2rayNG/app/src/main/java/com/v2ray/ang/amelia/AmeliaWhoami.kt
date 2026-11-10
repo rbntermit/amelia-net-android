@@ -12,8 +12,7 @@ import java.util.concurrent.TimeUnit
 
 /**
  * 1.9.0: GET /app/whoami — from which address the server sees the request. No key, no install id,
- * no body; the server stores nothing. Used by "Что видно снаружи" (the "🩺 Не работает?" window) and
- * by the pause behind an Amelia router (AmeliaRouterPause).
+ * no body; the server stores nothing. Used by "Что видно снаружи" (the "🩺 Не работает?" window).
  */
 object AmeliaWhoami {
 
@@ -29,12 +28,6 @@ object AmeliaWhoami {
 
     /** The VPN off: the same addresses directly, then the Russian mirrors (each sees the operator's address). */
     val DIRECT_BASES: List<String> = AmeliaConfig.BACKUP_BASE_URLS + AmeliaConfig.ENTRIES.map { it.baseUrl }
-
-    /** The router check: .net only, around the tunnel. */
-    val ROUTER_BASES: List<String> = listOf(AmeliaConfig.BACKUP_BASE_URLS.last())
-
-    /** The router check: the whole request, 3 s. */
-    const val ROUTER_TIMEOUT_MS = 3_000L
 
     /** "Что видно снаружи": every address together. */
     const val CHECK_TIMEOUT_MS = 12_000L
