@@ -197,6 +197,10 @@ internal fun AppsScreen(
     onToggle: (String, Boolean) -> Unit,
     onPreset: (AmeliaApps.Preset) -> Unit,
     onBack: () -> Unit,
+    /** 1.9.0: "Российские приложения — мимо VPN" and what it added. */
+    ruOn: Boolean = false,
+    ruAdded: Set<String> = emptySet(),
+    onRuApps: (Boolean) -> Unit = {},
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     Column(
@@ -219,6 +223,7 @@ internal fun AppsScreen(
         }
         val installed = remember(apps) { apps.mapTo(HashSet()) { it.pkg } }
         val selected = apps.filter { it.bypass }.mapTo(HashSet()) { it.pkg }
+        RuAppsBlock(ruOn, apps.filter { it.bypass && it.pkg in ruAdded }.map { it.label }, onRuApps)
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),

@@ -100,15 +100,16 @@ object AmeliaNetwork {
     private fun allNetworksCompat(cm: ConnectivityManager): List<Network> = cm.allNetworks.toList()
 
     /**
-     * Blocking. GET [path] from [POST_BASE_URLS] in order, only over the phone's own network
-     * (never the tunnel: the server must see the provider). Null when nobody answered.
+     * Blocking. GET [path] from [bases] in order ([POST_BASE_URLS] unless the caller has its own:
+     * 1.9.0 /app/whoami), only over the phone's own network (never the tunnel: the server must see
+     * the provider). Null when nobody answered.
      */
-    fun getDirect(context: Context, path: String, timeoutMs: Long? = null): String? {
+    fun getDirect(context: Context, path: String, timeoutMs: Long? = null, bases: List<String> = POST_BASE_URLS): String? {
         val network = physicalNetwork(context) ?: return null
         val client = clientOn(network)
         // 1.5.9: [timeoutMs] is the whole budget (/app/hints: 3 s), shared by the addresses in turn
         val deadline = timeoutMs?.let { System.currentTimeMillis() + it }
-        for (base in POST_BASE_URLS) {
+        for (base in bases) {
             val call = if (deadline == null) {
                 client
             } else {

@@ -66,7 +66,8 @@ object AmeliaManager {
 
     /**
      * 1.5.2: the last subscription load changed the routing rules (once). The caller rebuilds
-     * a running tunnel: the rules are part of the core config written at VPN start.
+     * a running tunnel: the rules are part of the core config written at VPN start. 1.9.0: also
+     * when it changed the apps around the VPN (AmeliaApps.syncRu).
      */
     fun takeRoutingChanged(): Boolean = routingChanged.also { routingChanged = false }
 
@@ -162,6 +163,11 @@ object AmeliaManager {
         if (AmeliaRouteProfile.update(info.routing) { Utils.decode(it).ifEmpty { null } }) {
             LogUtil.i(AppConfig.TAG, "Amelia: routing profile from the subscription changed, rules rewritten")
             AmeliaRouting.apply(AngApplication.application)
+            routingChanged = true
+        }
+        // 1.9.0: "Российские приложения — мимо VPN" on: newly installed apps of the list join it. The
+        // per-app list is part of the tunnel, so the caller rebuilds a running one, as for the rules
+        if (runCatching { AmeliaApps.syncRu(app) }.onFailure { LogUtil.w(AppConfig.TAG, "Amelia: Russian apps check failed", it) }.getOrDefault(false)) {
             routingChanged = true
         }
         if (saveKeyOnSuccess) {

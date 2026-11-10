@@ -98,6 +98,8 @@ object AmeliaBoot {
     /** BOOT_COMPLETED (and QUICKBOOT): start the VPN when the person asked for it. Blocking. */
     fun onBoot(context: Context, action: String) {
         if (action !in BOOT_ACTIONS) return
+        // 1.9.0: a pause of the last boot ends with it (its network and watch are gone)
+        AmeliaRouterPause.forgetAtBoot()
         val count = bootCount(context)
         val handled = count > 0 && MmkvManager.decodeSettingsString(PREF_LAST_BOOT) == count.toString()
         val decision = decide(

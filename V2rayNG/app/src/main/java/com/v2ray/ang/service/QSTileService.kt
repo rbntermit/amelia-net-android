@@ -17,6 +17,7 @@ import com.v2ray.ang.amelia.AmeliaActivity
 import com.v2ray.ang.amelia.AmeliaBoot
 import com.v2ray.ang.amelia.AmeliaConfig
 import com.v2ray.ang.amelia.AmeliaDaemon
+import com.v2ray.ang.amelia.AmeliaRouterPause
 import com.v2ray.ang.amelia.AmeliaTile
 import com.v2ray.ang.amelia.AmeliaUpdater
 import com.v2ray.ang.core.CoreServiceManager
@@ -108,6 +109,8 @@ class QSTileService : TileService() {
         when (action) {
             AmeliaTile.Action.STOP -> LauncherManager.stopService(this)
             AmeliaTile.Action.START -> {
+                // Amelia.Net 1.9.0: a start by hand ends a pause behind an Amelia router for this network
+                AmeliaRouterPause.onManualStart(this)
                 setConnecting()
                 if (!LauncherManager.startServiceFromToggle(this)) setState(Tile.STATE_INACTIVE)
             }

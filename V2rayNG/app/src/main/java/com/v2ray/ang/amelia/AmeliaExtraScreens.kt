@@ -125,6 +125,15 @@ class ExtraCallbacks(
     val onPollSupport: () -> Unit,
     /** 1.8.0 "🩺 Не работает?": the report, or the state page on the site without VPN and Telegram. */
     val onNotWorking: () -> Unit,
+    /** 1.9.0: "Что видно снаружи" in that window. */
+    val onCheckOutside: () -> Unit = {},
+    /** 1.9.0: the answer to "Поставить VPN на паузу в таких сетях?", or the window closed without one. */
+    val onRouterOffer: (Boolean) -> Unit = {},
+    val onRouterOfferClosed: () -> Unit = {},
+    /** 1.9.0: Settings → "Пауза за роутером Amelia". */
+    val onRouterPause: (Boolean) -> Unit = {},
+    /** 1.9.0: "Российские приложения — мимо VPN". */
+    val onRuApps: (Boolean) -> Unit = {},
 )
 
 /** 1.7.0: a link brought another key than the one entered; nothing changes unless "Заменить" is tapped. */
@@ -246,6 +255,9 @@ internal fun ReportDialog(
     onOpenBotHome: () -> Unit = onOpenBot,
     /** 1.8.0: after sending, the "Поддержка" screen, where the answer comes. */
     onOpenSupport: () -> Unit = onOpenBotHome,
+    /** 1.9.0: "Что видно снаружи" and its answer. */
+    outside: OutsideUi? = null,
+    onCheckOutside: () -> Unit = {},
 ) {
     var comment by rememberSaveable { mutableStateOf("") }
     // Server unreachable: the report goes to the clipboard right away, for the bot chat
@@ -296,6 +308,8 @@ internal fun ReportDialog(
                         )
                     }
                 }
+                // 1.9.0: which address sites see, while the locations are checked and after
+                if (report.phase != ReportPhase.SENDING) OutsideSection(outside, onCheckOutside)
             }
         },
         confirmButton = {
