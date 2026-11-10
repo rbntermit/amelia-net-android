@@ -1,8 +1,6 @@
 package com.v2ray.ang.amelia
 
 import com.v2ray.ang.AppConfig
-import com.v2ray.ang.amelia.AmeliaRouterPause.Action
-import com.v2ray.ang.amelia.AmeliaRouterPause.Setting
 import com.v2ray.ang.amelia.AmeliaWhoami.Kind
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -12,8 +10,8 @@ import org.junit.jupiter.api.Test
 import java.io.File
 
 /**
- * 1.9.0: "Что видно снаружи" (/app/whoami), the pause behind an Amelia router, and
- * "Российские приложения — мимо VPN" (/app/ruapps).
+ * 1.9.0: "Что видно снаружи" (/app/whoami) and "Российские приложения — мимо VPN" (/app/ruapps).
+ * The pause behind an Amelia router of 1.9.0 is gone since 1.9.1 (Amelia191Test).
  */
 class Amelia190Test {
 
@@ -76,9 +74,6 @@ class Amelia190Test {
         // never a Russian mirror: the entry is reached directly and would see the entry, not the exit
         assertEquals(listOf("https://sub.ameliajustamelia.com:9443", "https://sub.ameliajustamelia.net:9443"), AmeliaWhoami.TUNNEL_BASES)
         assertTrue(AmeliaWhoami.TUNNEL_BASES.none { b -> AmeliaConfig.ENTRIES.any { it.baseUrl == b } })
-        // the router check: .net only
-        assertEquals(listOf("https://sub.ameliajustamelia.net:9443"), AmeliaWhoami.ROUTER_BASES)
-        assertEquals(3_000L, AmeliaWhoami.ROUTER_TIMEOUT_MS)
         // VPN off: the same addresses first, then the mirrors
         assertEquals(AmeliaWhoami.TUNNEL_BASES, AmeliaWhoami.DIRECT_BASES.take(2))
     }
@@ -119,67 +114,6 @@ class Amelia190Test {
         assertFalse(AmeliaWhoami.ipv4InCidr("2001:db8::1", "10.0.0.0/8"))
         assertFalse(AmeliaWhoami.ipv4InCidr("10.0.0.1", "10.0.0.0/33"))
         assertFalse(AmeliaWhoami.ipv4InCidr("10.0.0.256", "10.0.0.0/8"))
-    }
-
-    // ---- pause behind an Amelia router ------------------------------------------------------------
-
-    @Test
-    fun pauseDecisions() {
-        fun d(ours: Boolean, s: Setting, running: Boolean = true, paused: Boolean = false, held: Boolean = false) =
-            AmeliaRouterPause.decide(ours, s, running, paused, held)
-        // not ours, no answer, an error: nothing, nothing shown
-        assertEquals(Action.NOTHING, d(false, Setting.ASK))
-        assertEquals(Action.NOTHING, d(false, Setting.ON))
-        // first time: the offer (also with the VPN off or held by hand)
-        assertEquals(Action.OFFER, d(true, Setting.ASK))
-        assertEquals(Action.OFFER, d(true, Setting.ASK, running = false))
-        assertEquals(Action.OFFER, d(true, Setting.ASK, held = true))
-        // "Нет": nothing
-        assertEquals(Action.NOTHING, d(true, Setting.OFF))
-        // "Да": pause a running VPN, unless the person started it by hand in this network
-        assertEquals(Action.PAUSE, d(true, Setting.ON))
-        assertEquals(Action.NOTHING, d(true, Setting.ON, held = true))
-        assertEquals(Action.NOTHING, d(true, Setting.ON, running = false))
-    }
-
-    @Test
-    fun pauseEndsByItself() {
-        fun d(ours: Boolean, s: Setting = Setting.ON, running: Boolean = false) =
-            AmeliaRouterPause.decide(ours, s, running, paused = true, held = false)
-        // still behind the router: stay paused
-        assertEquals(Action.STAY, d(true))
-        // another network, mobile data, no answer or "not ours": the VPN comes back
-        assertEquals(Action.RESUME, d(false))
-        // switched off in the settings during the pause: back too
-        assertEquals(Action.RESUME, d(true, Setting.OFF))
-        // something started the VPN during the pause (Always-on): it stays, no stop loop
-        assertEquals(Action.HOLD, d(true, running = true))
-        assertEquals(Action.HOLD, d(false, running = true))
-    }
-
-    @Test
-    fun onlyWifiAndEthernetAreAsked() {
-        assertTrue(AmeliaRouterPause.isHomeKind(wifi = true, ethernet = false))
-        assertTrue(AmeliaRouterPause.isHomeKind(wifi = false, ethernet = true))
-        assertFalse(AmeliaRouterPause.isHomeKind(wifi = false, ethernet = false))
-    }
-
-    @Test
-    fun pauseAndResumeUseTheSharedStartAndStop() {
-        val pause = File(javaDir(), "com/v2ray/ang/amelia/AmeliaRouterPause.kt").readText()
-        assertTrue("LauncherManager.stopService(context)" in pause)
-        assertTrue("AmeliaBoot.ensureLocation(context)" in pause)
-        assertTrue("LauncherManager.startServiceFromToggle(context)" in pause)
-        // every start by hand ends a pause for this network: the button, the tile, the widget
-        assertTrue("AmeliaRouterPause.onManualStart" in File(javaDir(), "com/v2ray/ang/amelia/AmeliaViewModel.kt").readText())
-        assertTrue("AmeliaRouterPause.onManualStart" in File(javaDir(), "com/v2ray/ang/service/QSTileService.kt").readText())
-        assertTrue("AmeliaRouterPause.onManualStart" in File(javaDir(), "com/v2ray/ang/amelia/AmeliaWidgetTapActivity.kt").readText())
-        // the start by Android itself (boot, Always-on) and a network change ask in the daemon
-        val daemon = File(javaDir(), "com/v2ray/ang/amelia/AmeliaDaemon.kt").readText()
-        assertTrue("private fun routerCheck(service: Service)" in daemon)
-        assertEquals(2, Regex("routerCheck\\(service\\)").findAll(daemon).count())
-        // a new boot forgets a pause of the last one
-        assertTrue("AmeliaRouterPause.forgetAtBoot()" in File(javaDir(), "com/v2ray/ang/amelia/AmeliaBoot.kt").readText())
     }
 
     // ---- Russian apps around the VPN ------------------------------------------------------------
@@ -238,9 +172,8 @@ class Amelia190Test {
     @Test
     fun whoamiAndRuappsCarryNoKeyAndNothingAboutTheApps() {
         val whoami = File(javaDir(), "com/v2ray/ang/amelia/AmeliaWhoami.kt").readText()
-        val router = File(javaDir(), "com/v2ray/ang/amelia/AmeliaRouterPause.kt").readText()
         val apps = File(javaDir(), "com/v2ray/ang/amelia/AmeliaApps.kt").readText()
-        listOf(whoami, router, apps).forEach { src ->
+        listOf(whoami, apps).forEach { src ->
             assertFalse("getKey" in src)
             assertFalse(".post(" in src)
             assertFalse("installId" in src || "AmeliaProbe.iid" in src)

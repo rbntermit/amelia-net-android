@@ -974,6 +974,14 @@ object MmkvManager {
         return settingsStorage.decodeStringSet(key)
     }
 
+    /** Amelia.Net 1.9.1: whether [key] is stored at all (settings of a removed feature, AmeliaLegacy). */
+    fun containsSettings(key: String): Boolean = settingsStorage.containsKey(key)
+
+    /** Amelia.Net 1.9.1: removes [keys] from the settings (settings of a removed feature, AmeliaLegacy). */
+    fun removeSettings(keys: Collection<String>) {
+        if (keys.isNotEmpty()) settingsStorage.removeValuesForKeys(keys.toTypedArray())
+    }
+
 
     /**
      * Encodes the start on boot setting.

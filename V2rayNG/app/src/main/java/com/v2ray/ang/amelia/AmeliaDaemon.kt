@@ -194,20 +194,8 @@ object AmeliaDaemon {
             AmeliaVersions.xray()
             refreshHints(service, AmeliaHints.MAX_AGE_MS)
         }
-        // 1.9.0: also a start by Android itself (boot, Always-on): a network behind our router pauses it
-        routerCheck(service)
         if (System.currentTimeMillis() - AmeliaChecks.load().lastFullAt > AmeliaChecks.FRESH_MS) startFullCheck(service)
         refreshTile(service)
-    }
-
-    /** 1.9.0: AmeliaRouterPause, around the tunnel (3 s); the screen hears about an offer or a pause. */
-    private fun routerCheck(service: Service) {
-        bgScope.launch {
-            val action = runCatching { AmeliaRouterPause.check(service, vpnRunning = true) }
-                .onFailure { LogUtil.w(AppConfig.TAG, "Amelia router: check failed", it) }
-                .getOrNull()
-            if (action != null && action != AmeliaRouterPause.Action.NOTHING) MessageHelper.sendMsg2UI(service, AmeliaConfig.MSG_ROUTER, "")
-        }
     }
 
     fun onCoreStopped() {
@@ -259,7 +247,6 @@ object AmeliaDaemon {
             // the hints tell this provider's AS: the network key and what is cut here
             refreshHints(service, AmeliaHints.MAX_AGE_MS, force = true)
         }
-        routerCheck(service)
         startWatch(service, 0L)
         startFullCheck(service)
     }
@@ -1024,8 +1011,8 @@ object AmeliaDaemon {
         AmeliaWidget.requestUpdate(context)
     }
 
-    /** 1.5.9: a quiet notice on the switch channel that opens the app ([id]: one per kind; 1.9.0: also AmeliaRouterPause). */
-    internal fun notifyQuiet(context: Context, id: Int, text: String) {
+    /** 1.5.9: a quiet notice on the switch channel that opens the app ([id]: one per kind). */
+    private fun notifyQuiet(context: Context, id: Int, text: String) {
         val nm = NotificationManagerCompat.from(context)
         if (!nm.areNotificationsEnabled()) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

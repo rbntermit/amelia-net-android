@@ -4,12 +4,10 @@ import android.app.Application
 import androidx.annotation.StringRes
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.v2ray.ang.AppConfig
 import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.core.LauncherManager
 import com.v2ray.ang.handler.MmkvManager
-import com.v2ray.ang.util.LogUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -170,11 +168,6 @@ data class AmeliaUiState(
     // ---- 1.9.0 ----
     /** "Что видно снаружи" in the "🩺 Не работает?" window; null until asked. */
     val outside: OutsideUi? = null,
-    /** The VPN is paused because this network goes through an Amelia router (AmeliaRouterPause). */
-    val routerPaused: Boolean = false,
-    /** "Эта сеть уже защищена роутером Amelia… Поставить VPN на паузу в таких сетях?" is on screen. */
-    val routerOffer: Boolean = false,
-    val routerSetting: AmeliaRouterPause.Setting = AmeliaRouterPause.Setting.ASK,
     /** "Российские приложения — мимо VPN" and what it put on the list. */
     val ruAppsOn: Boolean = false,
     val ruAdded: Set<String> = emptySet(),
@@ -478,7 +471,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---------------------------------------------------------------------------------------
-    // 1.9.0: "Что видно снаружи", pause behind an Amelia router, Russian apps around the VPN
+    // 1.9.0: "Что видно снаружи", Russian apps around the VPN
     // ---------------------------------------------------------------------------------------
 
     private var outsideJob: Job? = null
@@ -498,47 +491,6 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 a to (if (vpnOn) AmeliaWhoami.localNow() else null)
             }
             _state.update { it.copy(outside = OutsideUi(loading = false, verdict = AmeliaWhoami.verdict(answer, vpnOn), local = local)) }
-        }
-    }
-
-    /** What AmeliaRouterPause keeps: the pause, the offer and the setting (any process may change them). */
-    private fun refreshRouter() {
-        viewModelScope.launch {
-            val (paused, offer, setting) = withContext(Dispatchers.IO) {
-                Triple(AmeliaRouterPause.paused() != null, AmeliaRouterPause.offerPending(), AmeliaRouterPause.setting())
-            }
-            _state.update { it.copy(routerPaused = paused, routerOffer = offer, routerSetting = setting) }
-        }
-    }
-
-    /** App start: the check (around the tunnel, 3 s) on Wi-Fi or Ethernet, or while paused. */
-    private suspend fun checkRouter() {
-        val app = getApplication<Application>()
-        withContext(Dispatchers.IO) {
-            runCatching { AmeliaRouterPause.check(app, vpnRunning = AmeliaHttp.tunnelAvailable()) }
-                .onFailure { LogUtil.w(AppConfig.TAG, "Amelia router: check at start failed", it) }
-        }
-        refreshRouter()
-    }
-
-    /** "Да, ставить на паузу" / "Нет": kept as a setting; "Да" pauses right away when this network is ours. */
-    fun answerRouterOffer(pause: Boolean) {
-        _state.update { it.copy(routerOffer = false) }
-        setRouterPause(pause)
-    }
-
-    /** The offer closed without an answer: it comes again in the next router network. */
-    fun routerOfferClosed() {
-        _state.update { it.copy(routerOffer = false) }
-        viewModelScope.launch(Dispatchers.IO) { AmeliaRouterPause.offerClosed() }
-    }
-
-    /** Settings → "Пауза за роутером Amelia"; switched off during a pause, the VPN comes back. */
-    fun setRouterPause(on: Boolean) {
-        _state.update { it.copy(routerSetting = if (on) AmeliaRouterPause.Setting.ON else AmeliaRouterPause.Setting.OFF) }
-        viewModelScope.launch {
-            withContext(Dispatchers.IO) { AmeliaRouterPause.setSetting(on) }
-            checkRouter()
         }
     }
 
@@ -819,8 +771,6 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) { AmeliaHints.refreshIfStale(getApplication()) }
             reloadChecks()
-            // 1.9.0: a network behind an Amelia router (app start is one of the moments it is asked)
-            checkRouter()
             val s = _state.value
             val stale = withContext(Dispatchers.IO) {
                 System.currentTimeMillis() - AmeliaChecks.load().lastFullAt > BACKGROUND_CHECK_AFTER_MS
@@ -1259,11 +1209,8 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Called by the activity right before it starts the VPN. */
     fun onUserConnect() {
-        // 1.9.0: a start by hand ends a pause behind an Amelia router and holds the VPN in this network;
-        // written before the start, so the daemon's check after it already sees it (MMKV, short)
-        AmeliaRouterPause.onManualStart(getApplication())
         // the person passed Android's VPN question (the activity calls this after prepare)
-        _state.update { it.copy(phase = ConnPhase.STARTING, pingMs = null, startFailed = false, vpnPermission = true, routerPaused = false) }
+        _state.update { it.copy(phase = ConnPhase.STARTING, pingMs = null, startFailed = false, vpnPermission = true) }
     }
 
     /** Called by the activity right before it stops the VPN. */
@@ -1378,9 +1325,6 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 announceDismissed = AmeliaAnnounce.dismissed(),
                 supportUnread = supportUnread(),
                 manualName = AmeliaManual.load().name,
-                routerPaused = AmeliaRouterPause.paused() != null,
-                routerOffer = AmeliaRouterPause.offerPending(),
-                routerSetting = AmeliaRouterPause.setting(),
                 ruAppsOn = AmeliaApps.ruEnabled(),
             ).also { AmeliaExpiry.check(getApplication(), it.info) }
         }
@@ -1407,9 +1351,6 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 // the open screen shows the thread: nothing unread there
                 supportUnread = snapshot.supportUnread && it.support == null,
                 manualName = snapshot.manualName,
-                routerPaused = snapshot.routerPaused,
-                routerOffer = snapshot.routerOffer,
-                routerSetting = snapshot.routerSetting,
                 ruAppsOn = snapshot.ruAppsOn,
                 checkedAt = checks.checkedAt,
                 lastCheckMs = checks.lastCheckMs,
@@ -1430,8 +1371,6 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             }
 
             AmeliaServiceEvents.Event.Stopped -> {
-                // 1.9.0: the daemon may have stopped for a pause behind an Amelia router
-                refreshRouter()
                 _state.update { it.copy(isRunning = false) }
                 if (!expectRestart) {
                     _state.update { it.copy(phase = ConnPhase.OFF, pingMs = null, traffic = null) }
@@ -1456,7 +1395,6 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
 
             AmeliaServiceEvents.Event.ChecksUpdated -> reloadChecks()
 
-            AmeliaServiceEvents.Event.Router -> refreshRouter()
 
             is AmeliaServiceEvents.Event.PingDone -> when (event.requestId) {
                 pingRequestId -> finishPing(completed = true)

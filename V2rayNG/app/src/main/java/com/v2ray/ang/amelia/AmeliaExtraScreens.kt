@@ -127,11 +127,6 @@ class ExtraCallbacks(
     val onNotWorking: () -> Unit,
     /** 1.9.0: "Что видно снаружи" in that window. */
     val onCheckOutside: () -> Unit = {},
-    /** 1.9.0: the answer to "Поставить VPN на паузу в таких сетях?", or the window closed without one. */
-    val onRouterOffer: (Boolean) -> Unit = {},
-    val onRouterOfferClosed: () -> Unit = {},
-    /** 1.9.0: Settings → "Пауза за роутером Amelia". */
-    val onRouterPause: (Boolean) -> Unit = {},
     /** 1.9.0: "Российские приложения — мимо VPN". */
     val onRuApps: (Boolean) -> Unit = {},
 )

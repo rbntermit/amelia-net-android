@@ -4,16 +4,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.v2ray.ang.R
 
@@ -69,48 +66,6 @@ private fun OutsideLocal(l: AmeliaWhoami.Local) {
         color = if (l.dnsInTunnel) Brand.Text else Brand.Amber, style = small,
     )
     Text(stringResource(R.string.amelia_outside_dns_note), color = Brand.Muted, style = small)
-}
-
-// ---- pause behind an Amelia router ----------------------------------------------------------------
-
-/** Under the main button while the VPN is paused: why, and that it comes back by itself. */
-@Composable
-internal fun RouterPauseNote() {
-    Glass(Modifier.fillMaxWidth(), tint = Color(0x3345D483)) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(
-                stringResource(R.string.amelia_router_paused_title),
-                color = Brand.Text, style = MaterialTheme.typography.titleSmall, textAlign = TextAlign.Start,
-            )
-            Text(stringResource(R.string.amelia_router_paused_text), color = Brand.Muted, style = MaterialTheme.typography.bodySmall)
-        }
-    }
-}
-
-/** First time in a network behind our router: pause the VPN in such networks? Kept as a setting. */
-@Composable
-internal fun RouterOfferDialog(onAnswer: (Boolean) -> Unit, onClose: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onClose,
-        text = { Text(stringResource(R.string.amelia_router_offer_text)) },
-        confirmButton = { TextButton(onClick = { onAnswer(true) }) { Text(stringResource(R.string.amelia_router_offer_yes)) } },
-        dismissButton = { TextButton(onClick = { onAnswer(false) }) { Text(stringResource(R.string.amelia_router_offer_no)) } },
-    )
-}
-
-/** Settings → "Пауза за роутером Amelia" (the answer to the offer, changeable here). */
-@Composable
-internal fun SettingsRouterSection(state: AmeliaUiState, extra: ExtraCallbacks) {
-    Glass(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            SwitchRow(
-                stringResource(R.string.amelia_router_setting_title),
-                state.routerSetting == AmeliaRouterPause.Setting.ON,
-                extra.onRouterPause,
-            )
-            Text(stringResource(R.string.amelia_router_setting_text), color = Brand.Muted, style = MaterialTheme.typography.bodySmall)
-        }
-    }
 }
 
 // ---- "Российские приложения — мимо VPN" ---------------------------------------------------------
