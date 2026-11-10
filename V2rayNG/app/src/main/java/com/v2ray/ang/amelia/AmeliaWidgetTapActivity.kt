@@ -57,7 +57,11 @@ class AmeliaWidgetTapActivity : ComponentActivity() {
                     openApp(renew = false)
                     return
                 }
-                withContext(Dispatchers.IO) { AmeliaWidget.markConnecting(app) }
+                withContext(Dispatchers.IO) {
+                    // 1.9.0: a start by hand ends a pause behind an Amelia router for this network
+                    AmeliaRouterPause.onManualStart(app)
+                    AmeliaWidget.markConnecting(app)
+                }
                 if (!LauncherManager.startServiceFromToggle(this)) {
                     AmeliaWidget.clearConnecting()
                     withContext(Dispatchers.IO) { AmeliaWidget.draw(app, running = false, force = true) }

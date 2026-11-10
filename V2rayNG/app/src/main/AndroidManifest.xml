@@ -220,6 +220,10 @@
         <receiver
             android:name=".amelia.AmeliaDaemon$ReturnReceiver"
             android:exported="false" />
+        <!-- Amelia.Net 1.9.0: a new network while the VPN is paused behind an Amelia router -->
+        <receiver
+            android:name=".amelia.AmeliaRouterPause$NetReceiver"
+            android:exported="false" />
         <!-- Amelia.Net: turn the VPN back on after an in-app update -->
         <receiver
             android:name=".amelia.AmeliaInstaller$PackageReplacedReceiver"

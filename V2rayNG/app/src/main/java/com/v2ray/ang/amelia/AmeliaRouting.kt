@@ -21,6 +21,9 @@ object AmeliaRouting {
     val PROXY_SITES = listOf(
         "googlevideo.com", "youtube.com", "youtu.be", "ytimg.com",
         "ggpht.com", "youtube-nocookie.com", "youtubei.googleapis.com",
+        // 1.9.0: our foreign main domain and its backup: "Что видно снаружи" asks /app/whoami there
+        // through the tunnel, and a direct list of the subscription must not send it around
+        "sub.ameliajustamelia.com", "sub.ameliajustamelia.net",
     )
 
     /** Kinopoisk and Max block datacenter IPs, so they must bypass the tunnel. */

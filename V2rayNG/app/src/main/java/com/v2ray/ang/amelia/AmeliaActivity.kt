@@ -211,6 +211,11 @@ class AmeliaActivity : HelperBaseComponentActivity() {
                 onSendSupport = viewModel::sendSupport,
                 onPollSupport = viewModel::pollSupport,
                 onNotWorking = ::notWorking,
+                onCheckOutside = viewModel::checkOutside,
+                onRouterOffer = viewModel::answerRouterOffer,
+                onRouterOfferClosed = viewModel::routerOfferClosed,
+                onRouterPause = viewModel::setRouterPause,
+                onRuApps = viewModel::setRuApps,
             ),
         )
     }
