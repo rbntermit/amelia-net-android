@@ -127,6 +127,9 @@ class ExtraCallbacks(
     val onNotWorking: () -> Unit,
     /** 1.9.0: "Что видно снаружи" in that window. */
     val onCheckOutside: () -> Unit = {},
+    /** 1.9.2: the update vanished twice: the manual download page, or the window closed. */
+    val onApkGoneOpen: () -> Unit = {},
+    val onApkGoneClosed: () -> Unit = {},
     /** 1.9.0: "Российские приложения — мимо VPN". */
     val onRuApps: (Boolean) -> Unit = {},
 )
@@ -705,6 +708,18 @@ internal fun PlayProtectDialog(extra: ExtraCallbacks) {
 }
 
 /** The phone refused the update: how to let it through, or other ways to get it (1.4.0). */
+/** 1.9.2: the phone deleted the downloaded update again: download it by hand, no more circling. */
+@Composable
+internal fun ApkGoneDialog(extra: ExtraCallbacks) {
+    AlertDialog(
+        onDismissRequest = extra.onApkGoneClosed,
+        title = { Text(stringResource(R.string.amelia_update_apk_gone_title)) },
+        text = { Text(stringResource(R.string.amelia_update_apk_gone_text)) },
+        confirmButton = { TextButton(onClick = extra.onApkGoneOpen) { Text(stringResource(R.string.amelia_update_apk_gone_open)) } },
+        dismissButton = { TextButton(onClick = extra.onApkGoneClosed) { Text(stringResource(R.string.amelia_close)) } },
+    )
+}
+
 @Composable
 internal fun InstallBlockedDialog(extra: ExtraCallbacks, canDownload: Boolean) {
     AlertDialog(

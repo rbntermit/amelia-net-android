@@ -171,6 +171,9 @@ data class AmeliaUiState(
     /** "Российские приложения — мимо VPN" and what it put on the list. */
     val ruAppsOn: Boolean = false,
     val ruAdded: Set<String> = emptySet(),
+    // ---- 1.9.2 ----
+    /** The downloaded update vanished twice in a row: the window with the manual download page. */
+    val apkGone: Boolean = false,
 ) {
     val selectedName: String?
         get() = locations.firstOrNull { it.guid == selectedGuid }?.name
@@ -1050,7 +1053,8 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             val (ready, size, unmetered) = withContext(Dispatchers.IO) {
                 Triple(AmeliaUpdater.readyApk(app, v), AmeliaUpdater.downloadSize(v), AmeliaUpdater.isUnmetered(app))
             }
-            _state.update { it.copy(updateSize = size, updateApkPath = ready?.absolutePath ?: it.updateApkPath) }
+            // 1.9.2: only the checked file of this version; a path kept from before may point to nothing now
+            _state.update { it.copy(updateSize = size, updateApkPath = ready?.absolutePath) }
             if (ready == null && unmetered) {
                 updateJob?.join() // the check that found it must finish first
                 if (_state.value.updateProgress == null && _state.value.updateApkPath == null) downloadUpdate()
@@ -1058,13 +1062,22 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Opened from "Обновление … готово — установить": [install] once the APK is known. */
+    /**
+     * Opened from "Обновление … готово — установить": [install] once the APK is known. 1.9.2: the APK of
+     * the newest known version; gone (the phone cleaned the cache, a newer version replaced it) — it is
+     * downloaded again ([apkMissing]) instead of the tap doing nothing.
+     */
     fun installWhenReady(install: (String) -> Unit) {
         viewModelScope.launch {
             val app = getApplication<Application>()
-            val v = _state.value.update ?: withContext(Dispatchers.IO) { AmeliaUpdater.cached() } ?: return@launch
-            val f = withContext(Dispatchers.IO) { AmeliaUpdater.readyApk(app, v) } ?: return@launch
-            _state.update { it.copy(update = it.update ?: v, updateApkPath = f.absolutePath) }
+            val v = withContext(Dispatchers.IO) { offeredVersion() } ?: return@launch
+            val f = withContext(Dispatchers.IO) { AmeliaUpdater.readyApk(app, v) }
+            if (f == null) {
+                _state.update { it.copy(update = v) }
+                apkMissing(apkAction(null), install)
+                return@launch
+            }
+            _state.update { it.copy(update = v, updateApkPath = f.absolutePath) }
             install(f.absolutePath)
         }
     }
@@ -1073,14 +1086,84 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         val v = _state.value.update ?: return
         if (updateJob?.isActive == true) return
         updateJob = viewModelScope.launch {
-            _state.update { it.copy(updateProgress = 0, updateApkPath = null) }
-            val file = withContext(Dispatchers.IO) {
-                AmeliaUpdater.download(getApplication(), v) { p -> _state.update { it.copy(updateProgress = p) } }
-            }
-            _state.update { it.copy(updateProgress = null, updateApkPath = file?.absolutePath) }
-            if (file == null) showMessage(R.string.amelia_update_failed)
+            if (fetchApk(v) == null) showMessage(R.string.amelia_update_failed)
         }
     }
+
+    /** The one way the screen downloads an APK (AmeliaUpdater.download), with the progress on the card. */
+    private suspend fun fetchApk(v: AmeliaUpdater.AppVersion): java.io.File? {
+        _state.update { it.copy(updateProgress = 0, updateApkPath = null) }
+        val file = withContext(Dispatchers.IO) {
+            AmeliaUpdater.download(getApplication(), v) { p -> _state.update { it.copy(updateProgress = p) } }
+        }
+        _state.update { it.copy(updateProgress = null, updateApkPath = file?.absolutePath) }
+        return file
+    }
+
+    // ---- 1.9.2: the downloaded APK went missing --------------------------------------------------
+
+    /**
+     * The newest version known now: this screen's offer, or a newer one the background check found
+     * meanwhile (its download pruned the older file). Blocking (settings).
+     */
+    private fun offeredVersion(): AmeliaUpdater.AppVersion? =
+        listOfNotNull(_state.value.update, AmeliaUpdater.cached()).maxByOrNull { it.versionCode }
+
+    /**
+     * What "Установить" does with [path] (the button, the update window, the notification, the return
+     * from the install permission, "Попробовать ещё раз"): install only an existing file of the version
+     * on offer now. Short (a file and settings).
+     */
+    fun apkAction(path: String?): AmeliaUpdater.ApkAction {
+        val f = path?.let { java.io.File(it) }
+        return AmeliaUpdater.apkAction(
+            exists = f?.isFile == true,
+            fileCode = f?.name?.let(AmeliaUpdater::apkCodeOf),
+            offeredCode = offeredVersion()?.versionCode,
+            missesInRow = AmeliaUpdater.apkMisses(),
+        )
+    }
+
+    /**
+     * The file is gone or of another version: no install, no system screen, no error report. version.json
+     * is asked again and the current APK downloaded ("Файл обновления пропал — скачиваю заново"), then
+     * [install] goes on as usual. Gone again: the manual download page instead ([AmeliaUiState.apkGone]).
+     */
+    fun apkMissing(action: AmeliaUpdater.ApkAction, install: (String) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) { AmeliaUpdater.noteApkMiss() }
+        _state.update { it.copy(updateApkPath = null, installing = false) }
+        if (action == AmeliaUpdater.ApkAction.MANUAL) {
+            _state.update { it.copy(apkGone = true) }
+            return
+        }
+        if (updateJob?.isActive == true) return
+        showMessage(R.string.amelia_update_apk_missing)
+        updateJob = viewModelScope.launch {
+            val app = getApplication<Application>()
+            _state.update { it.copy(updateChecking = true) }
+            val before = AmeliaUpdater.lastCheck()
+            val v = withContext(Dispatchers.IO) { AmeliaUpdater.check() ?: AmeliaUpdater.cached() }
+            val answered = AmeliaUpdater.lastCheck() != before
+            _state.update {
+                it.copy(update = v, updateChecking = false, lastUpdateCheck = AmeliaUpdater.lastCheck(), updateSize = null)
+            }
+            if (v == null) {
+                // installed meanwhile, or no server answers now
+                showMessage(if (answered) R.string.amelia_update_none else R.string.amelia_update_check_failed)
+                return@launch
+            }
+            withContext(Dispatchers.IO) { AmeliaUpdater.pruneDownloads(app, v) }
+            val file = fetchApk(v)
+            if (file == null) {
+                showMessage(R.string.amelia_update_failed)
+                return@launch
+            }
+            install(file.absolutePath)
+        }
+    }
+
+    /** The manual download window closed (the page opened, or "Закрыть"). */
+    fun apkGoneClosed() = _state.update { it.copy(apkGone = false) }
 
     /** First start and then once a day; the background worker covers days the app is not opened. */
     private fun updateGeoIfDue() {

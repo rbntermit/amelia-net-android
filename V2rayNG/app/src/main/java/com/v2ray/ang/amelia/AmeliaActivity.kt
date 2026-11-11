@@ -173,6 +173,12 @@ class AmeliaActivity : HelperBaseComponentActivity() {
                 onInstallPermissionDismiss = viewModel::installPermissionDismissed,
                 onInstallRetry = {
                     viewModel.state.value.updateApkPath?.let { path ->
+                        // 1.9.2: the system screen only with a file that is there and is the version on offer
+                        val action = viewModel.apkAction(path)
+                        if (action != AmeliaUpdater.ApkAction.INSTALL) {
+                            viewModel.apkMissing(action, ::installUpdate)
+                            return@let
+                        }
                         // 1.5.1: never a second install next to a running one
                         if (viewModel.beginInstall()) {
                             lifecycleScope.launch(Dispatchers.IO) {
@@ -211,6 +217,11 @@ class AmeliaActivity : HelperBaseComponentActivity() {
                 onSendSupport = viewModel::sendSupport,
                 onPollSupport = viewModel::pollSupport,
                 onNotWorking = ::notWorking,
+                onApkGoneOpen = {
+                    viewModel.apkGoneClosed()
+                    Utils.openUri(this, AmeliaUpdater.MANUAL_DOWNLOAD_URL)
+                },
+                onApkGoneClosed = viewModel::apkGoneClosed,
                 onCheckOutside = viewModel::checkOutside,
                 onRuApps = viewModel::setRuApps,
             ),
@@ -361,6 +372,14 @@ class AmeliaActivity : HelperBaseComponentActivity() {
     }
 
     private fun installUpdate(apkPath: String) {
+        // 1.9.2: a file the phone deleted, or one of an older version, is never handed to the installer
+        // (that ended in FileNotFoundException, a report and the system screen with the same missing file):
+        // the current APK is downloaded again and installed then
+        val action = viewModel.apkAction(apkPath)
+        if (action != AmeliaUpdater.ApkAction.INSTALL) {
+            viewModel.apkMissing(action, ::installUpdate)
+            return
+        }
         // 1.4.0: the permission first, with an explanation; installing continues on return (onResume)
         if (!AmeliaUpdater.canInstall(this)) {
             viewModel.askInstallPermission(apkPath)
@@ -393,6 +412,8 @@ class AmeliaActivity : HelperBaseComponentActivity() {
             try {
                 // Android 12+: installs without the confirmation screen; the app restarts updated
                 val start = AmeliaInstaller.install(applicationContext, apk, vpnRunning, expected)
+                // 1.9.2: the file was there: missing ones count from zero again
+                AmeliaUpdater.clearApkMisses()
                 kotlinx.coroutines.withContext(Dispatchers.Main) {
                     when (start) {
                         AmeliaInstaller.Start.Started -> viewModel.installRunning(alreadyRunning = false)
@@ -402,6 +423,16 @@ class AmeliaActivity : HelperBaseComponentActivity() {
                     }
                 }
             } catch (e: Exception) {
+                // 1.9.2: deleted between the check and the install (the phone cleans the cache): no report,
+                // no system screen with a missing file, the current APK is downloaded again
+                if (!apk.isFile) {
+                    LogUtil.w(AppConfig.TAG, "Amelia: the update file vanished before the install")
+                    kotlinx.coroutines.withContext(Dispatchers.Main) {
+                        viewModel.installNotStarted()
+                        viewModel.apkMissing(viewModel.apkAction(apkPath), ::installUpdate)
+                    }
+                    return@launch
+                }
                 val busy = AmeliaInstaller.isBusy(applicationContext)
                 kotlinx.coroutines.withContext(Dispatchers.Main) {
                     if (busy) {

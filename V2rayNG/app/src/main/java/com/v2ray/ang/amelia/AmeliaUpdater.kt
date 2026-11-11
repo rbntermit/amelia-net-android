@@ -260,6 +260,53 @@ object AmeliaUpdater {
     internal fun belongsTo(fileName: String, versionCode: Int): Boolean =
         fileName == ".lock" || fileName.startsWith("AmeliaNet-$versionCode.") || fileName.startsWith("AmeliaNet-$versionCode-")
 
+    // ---- 1.9.2: the downloaded APK went missing (pure, unit-tested) --------------------------
+
+    /**
+     * What "Установить" does with the file it holds. Up to 1.9.1 a file deleted meanwhile (an older
+     * version's file pruned after a newer one came out, or the phone cleaning the cache) went to the
+     * installer anyway: FileNotFoundException, a crash report, then the system screen with the same
+     * missing file, and the person stuck on the old version.
+     */
+    enum class ApkAction {
+        /** The file is there and is the version on offer: the usual install. */
+        INSTALL,
+        /** Gone or of another version: version.json again, the current APK downloaded, then installed. */
+        DOWNLOAD_AGAIN,
+        /** Gone again right after that ([MAX_APK_MISSES] in a row): the manual download page, no circling. */
+        MANUAL,
+    }
+
+    /** Misses in a row after which only the manual download is offered. */
+    const val MAX_APK_MISSES = 2
+
+    /** "Скачать вручную", as in the bot: the directory of the APKs on the main domain. */
+    val MANUAL_DOWNLOAD_URL: String = AmeliaConfig.BACKUP_BASE_URLS.first() + "/app/"
+
+    /** Version code in the name of a downloaded APK ("AmeliaNet-35.apk" → 35); null for any other name. */
+    fun apkCodeOf(fileName: String): Int? =
+        Regex("AmeliaNet-(\\d{1,9})\\.apk").matchEntire(fileName)?.groupValues?.get(1)?.toIntOrNull()
+
+    /**
+     * [exists]/[fileCode]: the file "Установить" holds; [offeredCode]: the newest version known now
+     * (null: none); [missesInRow]: earlier misses since the last install that started.
+     */
+    fun apkAction(exists: Boolean, fileCode: Int?, offeredCode: Int?, missesInRow: Int): ApkAction = when {
+        exists && fileCode != null && fileCode == offeredCode -> ApkAction.INSTALL
+        missesInRow + 1 >= MAX_APK_MISSES -> ApkAction.MANUAL
+        else -> ApkAction.DOWNLOAD_AGAIN
+    }
+
+    private const val PREF_APK_MISSES = "amelia_update_apk_misses"
+
+    /** Misses in a row; kept across app starts (the phone may stop the app while cleaning). */
+    fun apkMisses(): Int = MmkvManager.decodeSettingsInt(PREF_APK_MISSES, 0)
+
+    fun noteApkMiss() = MmkvManager.encodeSettings(PREF_APK_MISSES, apkMisses() + 1)
+
+    /** An install session started: the file was there, the count begins anew. */
+    fun clearApkMisses() = MmkvManager.encodeSettings(PREF_APK_MISSES, 0)
+
     /** A newer version came out meanwhile: what was downloaded for the older one is deleted. */
     fun pruneDownloads(context: Context, v: AppVersion) {
         updatesDir(context).listFiles()?.filterNot { belongsTo(it.name, v.versionCode) }?.forEach { it.delete() }
