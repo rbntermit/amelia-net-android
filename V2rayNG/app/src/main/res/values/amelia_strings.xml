@@ -78,6 +78,11 @@
     <string name="amelia_update_required_block">Сначала обновите приложение</string>
     <string name="amelia_update_channel">Обновления приложения</string>
     <string name="amelia_update_tap">Нажмите, чтобы обновить</string>
+    <!-- 1.9.2: скачанный файл обновления пропал -->
+    <string name="amelia_update_apk_missing">Файл обновления пропал — скачиваю заново</string>
+    <string name="amelia_update_apk_gone_title">Телефон снова удалил обновление</string>
+    <string name="amelia_update_apk_gone_text">Скачанный файл обновления пропадает: телефон чистит память приложения. Скачайте обновление вручную со страницы загрузки и установите его.</string>
+    <string name="amelia_update_apk_gone_open">Открыть страницу загрузки</string>
     <string name="amelia_version">Версия %1$s (%2$d)</string>
 
     <!-- session traffic -->
