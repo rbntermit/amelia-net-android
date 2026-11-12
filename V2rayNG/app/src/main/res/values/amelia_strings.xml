@@ -400,4 +400,30 @@
     <string name="amelia_ruapps_note">Такие приложения всё равно видят, что VPN включён; мимо VPN идёт только их трафик.</string>
     <string name="amelia_ruapps_added">Добавлены: %1$s. Любое можно снять — само оно не вернётся.</string>
     <string name="amelia_ruapps_none">Из готового списка на телефоне ничего не нашлось.</string>
+    <!-- 1.10.0: российские сайты напрямую -->
+    <string name="amelia_rudirect_title">Российские сайты — напрямую</string>
+    <string name="amelia_rudirect_note">Включено — российские сайты открываются напрямую, быстрее. Если вы за границей и госуслуги или банк не открываются — выключите: они пойдут через наш российский сервер.</string>
+    <!-- 1.10.0: проверка сервисов в окне «🩺 Не работает?» -->
+    <string name="amelia_services_button">🔎 Проверка сервисов</string>
+    <string name="amelia_services_vpn_off">VPN выключен — проверять нечего. Включите VPN и нажмите проверку ещё раз.</string>
+    <string name="amelia_services_connect">Включить VPN</string>
+    <string name="amelia_services_running">Открываю YouTube, Gemini, ChatGPT, Instagram, Telegram и Discord…</string>
+    <string name="amelia_services_ok">✅ %1$s открывается</string>
+    <string name="amelia_services_fail">❌ %1$s не открывается</string>
+    <string name="amelia_services_gemini_country">⚠️ Gemini не пускает из этой страны — попробуйте другую локацию или напишите нам</string>
+    <!-- 1.10.0: сайт не открывается -->
+    <string name="amelia_site_title">Сайт не открывается</string>
+    <string name="amelia_site_hint">Адрес сайта</string>
+    <string name="amelia_site_send">Отправить</string>
+    <string name="amelia_site_sent">Отправили, разберёмся</string>
+    <string name="amelia_site_bad">Не похоже на адрес сайта</string>
+    <string name="amelia_site_failed">Не получилось отправить, попробуйте позже</string>
+    <!-- 1.10.0: как у меня -->
+    <string name="amelia_mine_title">Как у меня</string>
+    <string name="amelia_mine_until">Подписка до %1$s</string>
+    <string name="amelia_mine_location">Локация: %1$s</string>
+    <string name="amelia_mine_location_ping">Локация: %1$s · отвечает за %2$d мс</string>
+    <string name="amelia_mine_check_never">Все локации ещё не проверялись</string>
+    <string name="amelia_mine_check">Проверка всех локаций: %1$s — работают %2$d из %3$d</string>
+    <string name="amelia_mine_version">Версия приложения: %1$s</string>
 </resources>

@@ -155,16 +155,24 @@ object AmeliaNetwork {
 
     /**
      * 1.8.0: [post] that also stops at an error code for which [final] is true (/app/support: 400
-     * and 429 are the same answer at every address) and returns it with its code.
+     * and 429 are the same answer at every address) and returns it with its code. 1.10.0: [bases]
+     * of its own and [tunnelFirst] (/app/sitecheck on the foreign domain, often cut directly from Russia).
      */
-    fun postAnswer(context: Context, path: String, final: (Int) -> Boolean = { false }, json: (String) -> String): Answer? {
+    fun postAnswer(
+        context: Context,
+        path: String,
+        final: (Int) -> Boolean = { false },
+        bases: List<String> = POST_BASE_URLS,
+        tunnelFirst: Boolean = false,
+        json: (String) -> String,
+    ): Answer? {
         val routes = buildList {
             physicalNetwork(context)?.let { add(PATH_DIRECT to clientOn(it)) }
             if (AmeliaHttp.tunnelAvailable()) add(PATH_TUNNEL to AmeliaHttp.clientFor(AmeliaHttp.Route.TUNNEL))
-        }
+        }.let { if (tunnelFirst) it.sortedBy { (name, _) -> if (name == PATH_TUNNEL) 0 else 1 } else it }
         for ((name, client) in routes) {
             val body = json(name)
-            for (base in POST_BASE_URLS) {
+            for (base in bases) {
                 try {
                     val request = Request.Builder()
                         .url(base + path)

@@ -224,6 +224,10 @@ class AmeliaActivity : HelperBaseComponentActivity() {
                 onApkGoneClosed = viewModel::apkGoneClosed,
                 onCheckOutside = viewModel::checkOutside,
                 onRuApps = viewModel::setRuApps,
+                onCheckServices = viewModel::checkServices,
+                onSendSite = viewModel::sendSite,
+                onSiteEdited = viewModel::siteEdited,
+                onRuDirect = viewModel::setRuDirect,
             ),
         )
     }

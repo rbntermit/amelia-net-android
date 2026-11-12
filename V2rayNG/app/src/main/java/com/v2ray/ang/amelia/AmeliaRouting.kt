@@ -101,12 +101,17 @@ object AmeliaRouting {
         withGeo: Boolean,
         profile: AmeliaRouteProfile.Profile? = null,
         hasGeo: (String) -> Boolean = { withGeo && (it == GEOSITE_RU || it == GEOIP_RU) },
+        /** 1.10.0 "Российские сайты — напрямую" (on by default, as before): off, the Russian lists leave "direct". */
+        ruDirect: Boolean = true,
     ): MutableList<RulesetItem> {
         val geo: (String) -> Boolean = { withGeo && hasGeo(it) }
-        fun domains(builtIn: List<String>, extra: List<String>?) =
-            (builtIn.map { "domain:$it" } + extra.orEmpty().mapNotNull { domainRule(it, geo) }).distinct()
-        fun ips(builtIn: List<String>, extra: List<String>?) =
-            (builtIn + extra.orEmpty().mapNotNull { ipRule(it, geo) }).distinct()
+        // off: geosite:category-ru and geoip:ru are not direct, also when the subscription's profile names them;
+        // local networks, the built-in and subscription sites and our own domains stay as they are
+        val directGeo: (String) -> Boolean = { geo(it) && (ruDirect || !isRussianList(it)) }
+        fun domains(builtIn: List<String>, extra: List<String>?, g: (String) -> Boolean = geo) =
+            (builtIn.map { "domain:$it" } + extra.orEmpty().mapNotNull { domainRule(it, g) }).distinct()
+        fun ips(builtIn: List<String>, extra: List<String>?, g: (String) -> Boolean = geo) =
+            (builtIn + extra.orEmpty().mapNotNull { ipRule(it, g) }).distinct()
 
         val rules = mutableListOf(
             RulesetItem(
@@ -130,16 +135,16 @@ object AmeliaRouting {
         rules += RulesetItem(
             id = "amelia-direct-sites",
             remarks = "Amelia: direct sites",
-            domain = domains(DIRECT_SITES, profile?.directSites)
-                .let { if (withGeo && GEOSITE_RU !in it) it + GEOSITE_RU else it },
+            domain = domains(DIRECT_SITES, profile?.directSites, directGeo)
+                .let { if (withGeo && ruDirect && GEOSITE_RU !in it) it + GEOSITE_RU else it },
             outboundTag = AppConfig.TAG_DIRECT,
             locked = true,
         )
         rules += RulesetItem(
             id = "amelia-direct-ip",
             remarks = "Amelia: direct IP",
-            ip = ips(DIRECT_IPS, profile?.directIp)
-                .let { if (withGeo && GEOIP_RU !in it) it + GEOIP_RU else it },
+            ip = ips(DIRECT_IPS, profile?.directIp, directGeo)
+                .let { if (withGeo && ruDirect && GEOIP_RU !in it) it + GEOIP_RU else it },
             outboundTag = AppConfig.TAG_DIRECT,
             locked = true,
         )
@@ -181,13 +186,32 @@ object AmeliaRouting {
         return -1
     }
 
+    /** geosite:category-ru or geoip:ru (an attribute after @ does not matter). */
+    fun isRussianList(tag: String): Boolean {
+        val t = tag.substringBefore('@')
+        return t.equals(GEOSITE_RU, ignoreCase = true) || t.equals(GEOIP_RU, ignoreCase = true)
+    }
+
+    // ---- 1.10.0: "Российские сайты — напрямую" ----------------------------------------------------
+
+    /** On by default: Russian sites have gone direct since the first version. */
+    private const val PREF_RU_DIRECT = "amelia_ru_direct"
+
+    fun ruDirect(): Boolean = MmkvManager.decodeSettingsBool(PREF_RU_DIRECT, true)
+
+    /** The rules are rewritten at once; a running tunnel picks them up when it is rebuilt (the caller). */
+    fun setRuDirect(context: Context, on: Boolean) {
+        MmkvManager.encodeSettings(PREF_RU_DIRECT, on)
+        apply(context)
+    }
+
     /** Writes routing and DNS settings. Users cannot edit them, so it is safe to apply on every start. */
     fun apply(context: Context) {
         val withGeo = geoFilesReady(context)
         MmkvManager.encodeRoutingRulesets(
-            buildRulesets(withGeo, AmeliaRouteProfile.load()) { tag ->
+            buildRulesets(withGeo, AmeliaRouteProfile.load(), { tag ->
                 tag == GEOSITE_RU || tag == GEOIP_RU || geoHasTag(context, tag)
-            },
+            }, ruDirect()),
         )
         MmkvManager.encodeSettings(AppConfig.PREF_ROUTING_DOMAIN_STRATEGY, DOMAIN_STRATEGY)
         MmkvManager.encodeSettings(AppConfig.PREF_REMOTE_DNS, REMOTE_DNS)

@@ -174,6 +174,17 @@ data class AmeliaUiState(
     // ---- 1.9.2 ----
     /** The downloaded update vanished twice in a row: the window with the manual download page. */
     val apkGone: Boolean = false,
+    // ---- 1.10.0 ----
+    /** "Проверка сервисов" in the "🩺 Не работает?" window; null until asked. */
+    val services: ServicesUi? = null,
+    /** "Сайт не открывается": sending, and what the server said. */
+    val siteSending: Boolean = false,
+    val siteOutcome: AmeliaSiteCheck.Outcome? = null,
+    /** "Как у меня": the last check of every location and how many of them work. */
+    val checkSummary: AmeliaChecks.Summary? = null,
+    /** "Российские сайты — напрямую" (on by default) and whether the geo bases are there for it. */
+    val ruDirect: Boolean = true,
+    val ruDirectAvailable: Boolean = false,
 ) {
     val selectedName: String?
         get() = locations.firstOrNull { it.guid == selectedGuid }?.name
@@ -274,6 +285,13 @@ data class OutsideUi(
     val loading: Boolean = true,
     val verdict: AmeliaWhoami.Verdict? = null,
     val local: AmeliaWhoami.Local? = null,
+)
+
+/** 1.10.0 "Проверка сервисов": [vpnOff] — nothing checked, the VPN is off; [results] once all answered. */
+data class ServicesUi(
+    val running: Boolean = false,
+    val vpnOff: Boolean = false,
+    val results: List<AmeliaServices.Result> = emptyList(),
 )
 
 /** One installed app in the "мимо VPN" picker. */
@@ -470,7 +488,46 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             serviceEvents.cancelPingAll()
         }
         outsideJob?.cancel()
-        _state.update { it.copy(report = null, outside = null) }
+        servicesJob?.cancel()
+        _state.update { it.copy(report = null, outside = null, services = null, siteOutcome = null, siteSending = false) }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // 1.10.0: "Проверка сервисов", "Сайт не открывается"
+    // ---------------------------------------------------------------------------------------
+
+    private var servicesJob: Job? = null
+
+    /** Each service through the tunnel at once, 8 s each. With the VPN off: only that line and "Включить VPN". */
+    fun checkServices() {
+        if (servicesJob?.isActive == true) return
+        if (!_state.value.isRunning) {
+            _state.update { it.copy(services = ServicesUi(vpnOff = true)) }
+            return
+        }
+        _state.update { it.copy(services = ServicesUi(running = true)) }
+        servicesJob = viewModelScope.launch {
+            val results = AmeliaServices.checkAll()
+            _state.update { it.copy(services = ServicesUi(results = results)) }
+        }
+    }
+
+    /** "Отправить": the site the person typed, with the location on screen; no key and no address go with it. */
+    fun sendSite(input: String) {
+        if (_state.value.siteSending) return
+        val s = _state.value
+        _state.update { it.copy(siteSending = true, siteOutcome = null) }
+        viewModelScope.launch {
+            val outcome = withContext(Dispatchers.IO) {
+                AmeliaSiteCheck.send(getApplication(), input, vpn = s.isRunning, location = s.selectedName)
+            }
+            _state.update { it.copy(siteSending = false, siteOutcome = outcome) }
+        }
+    }
+
+    /** A new address typed: the old answer goes. */
+    fun siteEdited() {
+        if (_state.value.siteOutcome != null) _state.update { it.copy(siteOutcome = null) }
     }
 
     // ---------------------------------------------------------------------------------------
@@ -611,8 +668,16 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 AmeliaApps.bypassed() to installedApps()
             }
             val (ruOn, ruAdded) = withContext(appsWriter) { AmeliaApps.ruEnabled() to AmeliaApps.ruAdded() }
+            // 1.10.0: the switch only where the geo bases are there to send Russian sites anywhere
+            val (ruDirect, geo) = withContext(appsWriter) { AmeliaRouting.ruDirect() to AmeliaRouting.geoFilesReady(getApplication()) }
             appsAtOpen = before
-            _state.update { it.copy(apps = rows, bypassCount = before.size, ruAppsOn = ruOn, ruAdded = ruAdded) }
+            ruDirectAtOpen = ruDirect
+            _state.update {
+                it.copy(
+                    apps = rows, bypassCount = before.size, ruAppsOn = ruOn, ruAdded = ruAdded,
+                    ruDirect = ruDirect, ruDirectAvailable = geo,
+                )
+            }
         }
     }
 
@@ -643,12 +708,32 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** The screen was closed: a changed list reaches a running VPN with one quiet tunnel rebuild. */
+    /** 1.10.0: "Российские сайты — напрямую" when the screen opened. */
+    private var ruDirectAtOpen: Boolean? = null
+
+    /** "Российские сайты — напрямую": the rules are rewritten now, the tunnel rebuilt when the screen closes. */
+    fun setRuDirect(on: Boolean) {
+        _state.update { it.copy(ruDirect = on) }
+        viewModelScope.launch(appsWriter) { AmeliaRouting.setRuDirect(getApplication(), on) }
+    }
+
+    /**
+     * The screen was closed: a changed list (1.10.0: or "Российские сайты — напрямую") reaches a running VPN
+     * with one quiet tunnel rebuild.
+     */
     fun appsClosed() {
         val before = appsAtOpen ?: return
         appsAtOpen = null
+        val ruChanged = ruDirectAtOpen?.let { it != _state.value.ruDirect } == true
+        ruDirectAtOpen = null
         val after = selectedApps() ?: return
-        if (AmeliaApps.shouldRecreateTunnel(before, after, _state.value.isRunning)) restartIfRunning()
+        if (AmeliaApps.shouldRecreateTunnel(before, after, _state.value.isRunning) || (ruChanged && _state.value.isRunning)) {
+            viewModelScope.launch {
+                // the rules of the switch are written before the rebuild reads them
+                withContext(appsWriter) {}
+                restartIfRunning()
+            }
+        }
     }
 
     /**
@@ -727,6 +812,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         val operatorMarks: Map<String, AmeliaHints.Mark>,
         val operatorNote: OperatorNote?,
         val lastFullAt: Long,
+        val summary: AmeliaChecks.Summary?,
     )
 
     /** Blocking: what AmeliaChecks and AmeliaHints know about the current locations. */
@@ -750,6 +836,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             operatorMarks = marks,
             operatorNote = if (!AmeliaHints.usable(hints)) null else OperatorNote(AmeliaHints.operatorName(hints?.asName), hints?.net ?: info.net),
             lastFullAt = store.lastFullAt,
+            summary = AmeliaChecks.summary(store, locations.map { it.name }),
         )
     }
 
@@ -764,6 +851,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                     lastCheckMs = c.lastCheckMs,
                     operatorMarks = c.operatorMarks,
                     operatorNote = c.operatorNote,
+                    checkSummary = c.summary,
                 )
             }
         }
@@ -1030,7 +1118,9 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             val app = getApplication<Application>()
             val result = withContext(Dispatchers.IO) {
                 if (geoSite == null && geoIp == null) loadGeo(app)
-                AmeliaRouteCheck.classify(input, geoSite, geoIp) { host ->
+                // 1.10.0: "Российские сайты — напрямую" off: the Russian lists send nothing direct
+                val ru = AmeliaRouting.ruDirect()
+                AmeliaRouteCheck.classify(input, geoSite.takeIf { ru }, geoIp.takeIf { ru }) { host ->
                     java.net.InetAddress.getAllByName(host).toList()
                 }
             }
@@ -1439,6 +1529,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 lastCheckMs = checks.lastCheckMs,
                 operatorMarks = checks.operatorMarks,
                 operatorNote = checks.operatorNote,
+                checkSummary = checks.summary,
             )
         }
     }

@@ -127,6 +127,11 @@ class ExtraCallbacks(
     val onNotWorking: () -> Unit,
     /** 1.9.0: "Что видно снаружи" in that window. */
     val onCheckOutside: () -> Unit = {},
+    /** 1.10.0: "Проверка сервисов", "Сайт не открывается" (send, the address edited), "Российские сайты — напрямую". */
+    val onCheckServices: () -> Unit = {},
+    val onSendSite: (String) -> Unit = {},
+    val onSiteEdited: () -> Unit = {},
+    val onRuDirect: (Boolean) -> Unit = {},
     /** 1.9.2: the update vanished twice: the manual download page, or the window closed. */
     val onApkGoneOpen: () -> Unit = {},
     val onApkGoneClosed: () -> Unit = {},
@@ -256,6 +261,8 @@ internal fun ReportDialog(
     /** 1.9.0: "Что видно снаружи" and its answer. */
     outside: OutsideUi? = null,
     onCheckOutside: () -> Unit = {},
+    /** 1.10.0: "Проверка сервисов", "Сайт не открывается", "Как у меня". */
+    more: @Composable () -> Unit = {},
 ) {
     var comment by rememberSaveable { mutableStateOf("") }
     // Server unreachable: the report goes to the clipboard right away, for the bot chat
@@ -307,7 +314,10 @@ internal fun ReportDialog(
                     }
                 }
                 // 1.9.0: which address sites see, while the locations are checked and after
-                if (report.phase != ReportPhase.SENDING) OutsideSection(outside, onCheckOutside)
+                if (report.phase != ReportPhase.SENDING) {
+                    OutsideSection(outside, onCheckOutside)
+                    more()
+                }
             }
         },
         confirmButton = {
