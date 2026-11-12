@@ -212,6 +212,7 @@ fun AmeliaApp(
                     AppsScreen(
                         state.apps, extra.onAppBypass, extra.onAppsPreset, onBack = close,
                         ruOn = state.ruAppsOn, ruAdded = state.ruAdded, onRuApps = extra.onRuApps,
+                        ruDirect = state.ruDirect.takeIf { state.ruDirectAvailable }, onRuDirect = extra.onRuDirect,
                     )
                 }
                 showSettings -> {
@@ -273,6 +274,7 @@ fun AmeliaApp(
                 onOpenSupport = { extra.onCloseReport(); extra.onOpenSupport() },
                 outside = state.outside,
                 onCheckOutside = extra.onCheckOutside,
+                more = { HelpSections(state, extra, onConnect = onToggle) },
             )
         }
     }
@@ -489,6 +491,7 @@ private fun HomeScreen(
 ) {
     var showLocations by remember { mutableStateOf(false) }
     var confirmLogout by remember { mutableStateOf(false) }
+    var showMine by remember { mutableStateOf(false) }
 
     Column(
         Modifier
@@ -535,7 +538,8 @@ private fun HomeScreen(
         }
 
         Spacer(Modifier.height(16.dp))
-        PowerButton(state.phase, enabled = state.locations.isNotEmpty(), onClick = onToggle)
+        // 1.10.0: a long press shows "Как у меня"
+        PowerButton(state.phase, enabled = state.locations.isNotEmpty(), onClick = onToggle, onLongClick = { showMine = true })
         Spacer(Modifier.height(16.dp))
         PhaseText(state)
         if (state.phase == ConnPhase.WHITELIST) {
@@ -597,6 +601,7 @@ private fun HomeScreen(
             onDismiss = { showLocations = false },
         )
     }
+    if (showMine) MineDialog(state, onClose = { showMine = false })
     if (confirmLogout) {
         AlertDialog(
             onDismissRequest = { confirmLogout = false },
@@ -730,7 +735,7 @@ private fun ConnPhase.inProgress() =
     this == ConnPhase.STARTING || this == ConnPhase.CHECKING || this == ConnPhase.SWITCHING
 
 @Composable
-private fun PowerButton(phase: ConnPhase, enabled: Boolean, onClick: () -> Unit) {
+private fun PowerButton(phase: ConnPhase, enabled: Boolean, onClick: () -> Unit, onLongClick: (() -> Unit)? = null) {
     val color by animateColorAsState(phaseColor(phase), label = "power-color")
     val transition = rememberInfiniteTransition(label = "power")
     val sweepStart by transition.animateFloat(
@@ -785,7 +790,7 @@ private fun PowerButton(phase: ConnPhase, enabled: Boolean, onClick: () -> Unit)
                     else Brush.verticalGradient(listOf(Color(0xFF2A3275), Color(0xFF1A2058))),
                 )
                 .border(2.dp, color.copy(alpha = 0.8f), CircleShape)
-                .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
+                .combinedClickable(enabled = enabled, role = Role.Button, onLongClick = onLongClick, onClick = onClick),
             contentAlignment = Alignment.Center,
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {

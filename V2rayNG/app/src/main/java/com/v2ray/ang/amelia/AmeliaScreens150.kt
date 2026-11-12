@@ -201,6 +201,9 @@ internal fun AppsScreen(
     ruOn: Boolean = false,
     ruAdded: Set<String> = emptySet(),
     onRuApps: (Boolean) -> Unit = {},
+    /** 1.10.0: "Российские сайты — напрямую"; null: hidden (no geo bases). */
+    ruDirect: Boolean? = null,
+    onRuDirect: (Boolean) -> Unit = {},
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     Column(
@@ -224,6 +227,7 @@ internal fun AppsScreen(
         val installed = remember(apps) { apps.mapTo(HashSet()) { it.pkg } }
         val selected = apps.filter { it.bypass }.mapTo(HashSet()) { it.pkg }
         RuAppsBlock(ruOn, apps.filter { it.bypass && it.pkg in ruAdded }.map { it.label }, onRuApps)
+        ruDirect?.let { RuDirectBlock(it, onRuDirect) }
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),

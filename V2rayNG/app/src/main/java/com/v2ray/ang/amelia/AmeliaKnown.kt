@@ -37,6 +37,16 @@ object AmeliaChecks {
         val lastFullMs: Long = 0L,
     )
 
+    /** 1.10.0 "Как у меня": when every location was last checked, and how many of the current ones work. */
+    data class Summary(val at: Long, val working: Int, val checked: Int)
+
+    /** Pure: of [names] (the locations now), those with a result; null when no full check was ever made. */
+    fun summary(store: Store, names: Collection<String>): Summary? {
+        if (store.lastFullAt <= 0L) return null
+        val mine = names.distinct().mapNotNull { store.entries[it] }
+        return Summary(store.lastFullAt, mine.count { it.ok }, mine.size)
+    }
+
     private const val PREF = "amelia_checks"
 
     /** 1.7.0: the daemon, the check process and the app write here: one lock for all of them. */
