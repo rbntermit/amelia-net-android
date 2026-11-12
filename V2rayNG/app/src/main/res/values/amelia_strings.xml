@@ -414,7 +414,7 @@
     <!-- 1.10.0: сайт не открывается -->
     <string name="amelia_site_title">Сайт не открывается</string>
     <string name="amelia_site_hint">Адрес сайта</string>
-    <string name="amelia_site_send">Отправить</string>
+    <string name="amelia_site_check">Проверить этот сайт</string>
     <string name="amelia_site_sent">Отправили, разберёмся</string>
     <string name="amelia_site_bad">Не похоже на адрес сайта</string>
     <string name="amelia_site_failed">Не получилось отправить, попробуйте позже</string>

@@ -16,10 +16,6 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -39,7 +35,7 @@ internal fun HelpSections(state: AmeliaUiState, extra: ExtraCallbacks, onConnect
         HorizontalDivider(color = Brand.GlassBorder)
         ServicesSection(state.services, onCheck = extra.onCheckServices, onConnect = onConnect)
         HorizontalDivider(color = Brand.GlassBorder)
-        SiteSection(state.siteSending, state.siteOutcome, onSend = extra.onSendSite, onEdited = extra.onSiteEdited)
+        SiteSection(state.siteInput, state.siteSending, state.siteOutcome, onSend = extra.onSendSite, onEdited = extra.onSiteEdited)
         HorizontalDivider(color = Brand.GlassBorder)
         MineCard(state)
     }
@@ -77,14 +73,23 @@ private fun ServicesSection(services: ServicesUi?, onCheck: () -> Unit, onConnec
 
 // ---- "Сайт не открывается" --------------------------------------------------------------------
 
+/**
+ * 1.10.1: the field lives in the screen's state, so "Отправить в поддержку" takes the site too; the answer is
+ * right under the field, and the button says what it does ("Проверить этот сайт").
+ */
 @Composable
-private fun SiteSection(sending: Boolean, outcome: AmeliaSiteCheck.Outcome?, onSend: (String) -> Unit, onEdited: () -> Unit) {
-    var site by rememberSaveable { mutableStateOf("") }
+private fun SiteSection(
+    site: String,
+    sending: Boolean,
+    outcome: AmeliaSiteCheck.Outcome?,
+    onSend: (String) -> Unit,
+    onEdited: (String) -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(stringResource(R.string.amelia_site_title), color = Brand.Text, style = MaterialTheme.typography.titleSmall)
         OutlinedTextField(
             value = site,
-            onValueChange = { site = it.take(300); onEdited() },
+            onValueChange = onEdited,
             label = { Text(stringResource(R.string.amelia_site_hint)) },
             singleLine = true,
             enabled = !sending,
@@ -94,13 +99,6 @@ private fun SiteSection(sending: Boolean, outcome: AmeliaSiteCheck.Outcome?, onS
             shape = RoundedCornerShape(14.dp),
             modifier = Modifier.fillMaxWidth(),
         )
-        if (sending) {
-            CircularProgressIndicator(Modifier.padding(4.dp), color = Brand.Sky)
-        } else {
-            TextButton(onClick = { onSend(site) }, enabled = site.isNotBlank()) {
-                Text(stringResource(R.string.amelia_site_send), color = Brand.Sky)
-            }
-        }
         outcome?.let {
             val (text, color) = when (it) {
                 AmeliaSiteCheck.Outcome.SENT -> stringResource(R.string.amelia_site_sent) to Brand.Green
@@ -108,6 +106,13 @@ private fun SiteSection(sending: Boolean, outcome: AmeliaSiteCheck.Outcome?, onS
                 AmeliaSiteCheck.Outcome.FAILED -> stringResource(R.string.amelia_site_failed) to Brand.Amber
             }
             Text(text, color = color, style = MaterialTheme.typography.bodyMedium)
+        }
+        if (sending) {
+            CircularProgressIndicator(Modifier.padding(4.dp), color = Brand.Sky)
+        } else {
+            TextButton(onClick = { onSend(site) }, enabled = site.isNotBlank()) {
+                Text(stringResource(R.string.amelia_site_check), color = Brand.Sky)
+            }
         }
     }
 }

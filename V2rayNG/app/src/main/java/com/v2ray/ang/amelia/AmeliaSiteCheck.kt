@@ -61,6 +61,32 @@ object AmeliaSiteCheck {
         else -> Outcome.FAILED
     }
 
+    // ---- 1.10.1: the address field and "Отправить в поддержку" (pure, unit-tested) -------------------
+
+    /**
+     * What "Отправить в поддержку" does with the "Адрес сайта" field. In 1.10.0 a site typed there and sent
+     * with the bottom button was lost: only the report went. [domain]: the cleaned site for the report's line;
+     * [sendSiteCheck]: /app/sitecheck goes too (not when "Проверить этот сайт" already sent this very site in
+     * this window); [notASite]: something is typed that is no site (the field says so, the report still goes).
+     */
+    data class WithReport(val domain: String?, val sendSiteCheck: Boolean, val notASite: Boolean = false)
+
+    fun withReport(input: String?, sentByButton: String?): WithReport {
+        val domain = cleanDomain(input) ?: return WithReport(null, false, notASite = !input.isNullOrBlank())
+        return WithReport(domain, sendSiteCheck = domain != sentByButton)
+    }
+
+    const val REPORT_LINE = "Не открывается сайт: "
+
+    /** The report's comment with "Не открывается сайт: <домен>" first, all within [max] (the site line is kept). */
+    fun reportComment(comment: String, domain: String?, max: Int = AmeliaReport.MAX_COMMENT): String {
+        if (domain == null) return comment
+        val line = REPORT_LINE + domain
+        val rest = comment.trim()
+        if (rest.isEmpty()) return line.take(max)
+        return (line + "\n" + rest).take(max)
+    }
+
     private fun okTrue(json: String?): Boolean = runCatching {
         JsonParser.parseString(json.orEmpty()).asJsonObject.get("ok")?.asBoolean == true
     }.getOrDefault(false)

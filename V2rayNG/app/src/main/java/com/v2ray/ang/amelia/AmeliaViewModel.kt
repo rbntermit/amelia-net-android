@@ -10,6 +10,7 @@ import com.v2ray.ang.core.LauncherManager
 import com.v2ray.ang.handler.MmkvManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -177,7 +178,8 @@ data class AmeliaUiState(
     // ---- 1.10.0 ----
     /** "Проверка сервисов" in the "🩺 Не работает?" window; null until asked. */
     val services: ServicesUi? = null,
-    /** "Сайт не открывается": sending, and what the server said. */
+    /** "Сайт не открывается": the address typed (1.10.1: "Отправить в поддержку" takes it too), sending, the answer. */
+    val siteInput: String = "",
     val siteSending: Boolean = false,
     val siteOutcome: AmeliaSiteCheck.Outcome? = null,
     /** "Как у меня": the last check of every location and how many of them work. */
@@ -457,23 +459,37 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
     fun sendReport(comment: String) {
         val r = _state.value.report ?: return
         if (r.phase != ReportPhase.RESULT && r.phase != ReportPhase.FAILED) return
-        _state.update { it.copy(report = r.copy(phase = ReportPhase.SENDING)) }
+        // 1.10.1: a site in "Адрес сайта" goes with the report: its line in the report and /app/sitecheck
+        // (once: not again when "Проверить этот сайт" already sent it in this window)
+        val site = AmeliaSiteCheck.withReport(_state.value.siteInput, siteSentDomain)
+        val text = AmeliaSiteCheck.reportComment(comment, site.domain)
+        _state.update {
+            it.copy(
+                report = r.copy(phase = ReportPhase.SENDING),
+                siteOutcome = if (site.notASite) AmeliaSiteCheck.Outcome.NOT_A_SITE else it.siteOutcome,
+            )
+        }
         viewModelScope.launch {
             val app = getApplication<Application>()
             val key = AmeliaManager.getKey().orEmpty()
             val active = _state.value.selectedName
             val vpn = _state.value.isRunning
+            val siteCheck = site.domain?.takeIf { site.sendSiteCheck && !_state.value.siteSending }?.let { domain ->
+                _state.update { it.copy(siteSending = true, siteOutcome = null) }
+                async(Dispatchers.IO) { domain to AmeliaSiteCheck.send(app, domain, vpn = vpn, location = active) }
+            }
             val id = withContext(Dispatchers.IO) {
-                AmeliaReport.send(app, key, r.servers, active, comment, r.checkMs, vpn)
+                AmeliaReport.send(app, key, r.servers, active, text, r.checkMs, vpn)
                     // 1.8.0: the report is in the "Поддержка" thread; its answer is awaited there
                     ?.also { if (key.isNotEmpty()) AmeliaSupport.reportSent(app, key) }
             }
+            siteCheck?.await()?.let { (domain, outcome) -> siteAnswered(domain, outcome) }
             if (id != null) {
                 _state.update { it.copy(report = it.report?.copy(phase = ReportPhase.SENT, reportId = id)) }
             } else {
                 val text = withContext(Dispatchers.IO) {
                     AmeliaReport.plainText(
-                        AmeliaReport.body(app, key, r.servers, active, comment, AmeliaNetwork.info(app), AmeliaNetwork.PATH_DIRECT, r.checkMs, vpn),
+                        AmeliaReport.body(app, key, r.servers, active, text, AmeliaNetwork.info(app), AmeliaNetwork.PATH_DIRECT, r.checkMs, vpn),
                     )
                 }
                 _state.update { it.copy(report = it.report?.copy(phase = ReportPhase.FAILED, fallbackText = text)) }
@@ -489,7 +505,8 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         }
         outsideJob?.cancel()
         servicesJob?.cancel()
-        _state.update { it.copy(report = null, outside = null, services = null, siteOutcome = null, siteSending = false) }
+        siteSentDomain = null
+        _state.update { it.copy(report = null, outside = null, services = null, siteInput = "", siteOutcome = null, siteSending = false) }
     }
 
     // ---------------------------------------------------------------------------------------
@@ -512,7 +529,10 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** "Отправить": the site the person typed, with the location on screen; no key and no address go with it. */
+    /** 1.10.1: the site /app/sitecheck took in this window (by "Проверить этот сайт" or with the report). */
+    private var siteSentDomain: String? = null
+
+    /** "Проверить этот сайт": the site the person typed, with the location on screen; no key and no address go with it. */
     fun sendSite(input: String) {
         if (_state.value.siteSending) return
         val s = _state.value
@@ -521,13 +541,19 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             val outcome = withContext(Dispatchers.IO) {
                 AmeliaSiteCheck.send(getApplication(), input, vpn = s.isRunning, location = s.selectedName)
             }
-            _state.update { it.copy(siteSending = false, siteOutcome = outcome) }
+            siteAnswered(AmeliaSiteCheck.cleanDomain(input), outcome)
         }
     }
 
-    /** A new address typed: the old answer goes. */
-    fun siteEdited() {
-        if (_state.value.siteOutcome != null) _state.update { it.copy(siteOutcome = null) }
+    /** The answer under the field; a site the server took is not sent again with the report. */
+    private fun siteAnswered(domain: String?, outcome: AmeliaSiteCheck.Outcome) {
+        if (outcome == AmeliaSiteCheck.Outcome.SENT) siteSentDomain = domain
+        _state.update { it.copy(siteSending = false, siteOutcome = outcome) }
+    }
+
+    /** The address field changed: the old answer goes. */
+    fun siteEdited(text: String) {
+        _state.update { it.copy(siteInput = text.take(300), siteOutcome = if (text == it.siteInput) it.siteOutcome else null) }
     }
 
     // ---------------------------------------------------------------------------------------

@@ -130,7 +130,7 @@ class ExtraCallbacks(
     /** 1.10.0: "Проверка сервисов", "Сайт не открывается" (send, the address edited), "Российские сайты — напрямую". */
     val onCheckServices: () -> Unit = {},
     val onSendSite: (String) -> Unit = {},
-    val onSiteEdited: () -> Unit = {},
+    val onSiteEdited: (String) -> Unit = {},
     val onRuDirect: (Boolean) -> Unit = {},
     /** 1.9.2: the update vanished twice: the manual download page, or the window closed. */
     val onApkGoneOpen: () -> Unit = {},
