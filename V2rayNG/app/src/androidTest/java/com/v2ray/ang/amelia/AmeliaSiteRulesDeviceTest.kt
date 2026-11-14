@@ -1,5 +1,6 @@
 package com.v2ray.ang.amelia
 
+import android.view.KeyEvent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.rememberScrollState
@@ -11,14 +12,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.v2ray.ang.R
+import com.v2ray.ang.AppConfig
 import com.v2ray.ang.handler.MmkvManager
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -60,6 +66,22 @@ class AmeliaSiteRulesDeviceTest {
         AmeliaRouting.saveSiteRule("kinopoisk.ru", null)
         AmeliaRouting.apply(context)
         assertEquals(emptyList<AmeliaRouting.SiteRule>(), AmeliaRouting.loadSiteRules())
+    }
+
+    @Test
+    fun failedRebuildRollsBackBothSavedAndGeneratedRules() {
+        AmeliaRouting.saveSiteRule("example.com", true) { AmeliaRouting.apply(context) }
+        val generated = MmkvManager.decodeSettingsString(AppConfig.PREF_ROUTING_RULESET)
+        try {
+            AmeliaRouting.saveSiteRule("example.com", false) {
+                MmkvManager.encodeSettings(AppConfig.PREF_ROUTING_RULESET, "[]")
+                throw java.io.IOException("Simulated routing write failure")
+            }
+            org.junit.Assert.fail("The failure must be reported")
+        } catch (_: java.io.IOException) {
+            assertEquals(listOf(AmeliaRouting.SiteRule("example.com", true)), AmeliaRouting.loadSiteRules())
+            assertEquals(generated, MmkvManager.decodeSettingsString(AppConfig.PREF_ROUTING_RULESET))
+        }
     }
 
     private fun showEditor() {
@@ -111,5 +133,34 @@ class AmeliaSiteRulesDeviceTest {
         compose.runOnIdle { ui = AmeliaUiState(siteRulesError = R.string.amelia_sites_failed) }
         compose.onNodeWithText(text(R.string.amelia_sites_failed)).performScrollTo().assertIsDisplayed()
         compose.onNodeWithText(text(R.string.amelia_site_hint)).assertIsNotEnabled()
+    }
+
+    @Test
+    fun keyboardAndDpadActivateTheSameActions() {
+        showEditor()
+        compose.onNodeWithText(text(R.string.amelia_site_hint)).performTextInput("example.com")
+        compose.onNodeWithText(text(R.string.amelia_sites_vpn)).performScrollTo()
+            .performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_ENTER)
+        compose.onNodeWithText(text(R.string.amelia_sites_rule_vpn, "example.com")).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText(text(R.string.amelia_sites_direct)).performScrollTo()
+            .performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+        compose.onNodeWithText(text(R.string.amelia_sites_rule_direct, "example.com")).performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun uncommittedAddressSurvivesStateRestoration() {
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent {
+            MaterialTheme {
+                Column(Modifier.imePadding().verticalScroll(rememberScrollState())) {
+                    SiteRulesSection(ui, onSet = { _, _ -> }, onReload = {})
+                }
+            }
+        }
+        compose.onNodeWithText(text(R.string.amelia_site_hint)).performTextInput("shop.example.com")
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithText(text(R.string.amelia_site_hint)).assertTextContains("shop.example.com")
     }
 }

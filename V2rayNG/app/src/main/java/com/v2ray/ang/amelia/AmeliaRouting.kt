@@ -64,11 +64,23 @@ object AmeliaRouting {
 
     fun loadSiteRules(): List<SiteRule> = parseSiteRules(MmkvManager.decodeSettingsString(PREF_SITE_RULES))
 
-    /** Atomic read/modify/write across processes. Generated routing is rebuilt from this source. */
-    fun saveSiteRule(domain: String, viaVpn: Boolean?): List<SiteRule> = MmkvManager.withSettingsLock {
+    /** Atomic across processes; a failed rebuild restores the source and the last generated rules. */
+    fun saveSiteRule(domain: String, viaVpn: Boolean?, applyRules: () -> Unit = {}): List<SiteRule> = MmkvManager.withSettingsLock {
+        val before = MmkvManager.decodeSettingsString(PREF_SITE_RULES)
+        val generatedBefore = MmkvManager.decodeSettingsString(AppConfig.PREF_ROUTING_RULESET)
         val next = changeSiteRules(loadSiteRules(), domain, viaVpn)
         if (!MmkvManager.encodeSettings(PREF_SITE_RULES, siteRulesJson(next))) {
             throw IOException("Could not save personal site rules")
+        }
+        try {
+            applyRules()
+        } catch (e: Exception) {
+            val sourceRestored = MmkvManager.encodeSettings(PREF_SITE_RULES, before)
+            val generatedRestored = MmkvManager.encodeSettings(AppConfig.PREF_ROUTING_RULESET, generatedBefore)
+            if (!sourceRestored || !generatedRestored) {
+                LogUtil.w(AppConfig.TAG, "Amelia: routing rollback personal site rule failed", e)
+            }
+            throw e
         }
         next
     }

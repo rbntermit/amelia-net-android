@@ -4,10 +4,10 @@ import android.app.Application
 import androidx.annotation.StringRes
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.v2ray.ang.AppConfig
 import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.core.LauncherManager
-import com.v2ray.ang.AppConfig
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.util.LogUtil
 import kotlinx.coroutines.CancellationException
@@ -1150,14 +1150,16 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         routeJob = viewModelScope.launch {
             _state.update { it.copy(routeChecking = true, routeCheck = null, routeDirectMs = null) }
             val app = getApplication<Application>()
-            val result = try { withContext(Dispatchers.IO) {
-                if (geoSite == null && geoIp == null) loadGeo(app)
-                // 1.10.0: "Российские сайты — напрямую" off: the Russian lists send nothing direct
-                val ru = AmeliaRouting.ruDirect()
-                AmeliaRouteCheck.classify(input, geoSite.takeIf { ru }, geoIp.takeIf { ru }, AmeliaRouting.loadSiteRules()) { host ->
-                    java.net.InetAddress.getAllByName(host).toList()
+            val result = try {
+                withContext(Dispatchers.IO) {
+                    if (geoSite == null && geoIp == null) loadGeo(app)
+                    // 1.10.0: "Российские сайты — напрямую" off: the Russian lists send nothing direct
+                    val ru = AmeliaRouting.ruDirect()
+                    AmeliaRouteCheck.classify(input, geoSite.takeIf { ru }, geoIp.takeIf { ru }, AmeliaRouting.loadSiteRules()) { host ->
+                        java.net.InetAddress.getAllByName(host).toList()
+                    }
                 }
-            } } catch (e: Exception) {
+            } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 LogUtil.w(AppConfig.TAG, "Amelia: UI classify site route failed", e)
                 _state.update { it.copy(routeChecking = false, siteRulesReady = false, siteRulesError = R.string.amelia_sites_failed) }
@@ -1200,15 +1202,19 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             _state.update { it.copy(siteRulesError = R.string.amelia_site_bad) }
             return
         }
-        if (AmeliaRouting.changeSiteRules(_state.value.siteRules, domain, viaVpn) == _state.value.siteRules) return
+        if (AmeliaRouting.changeSiteRules(_state.value.siteRules, domain, viaVpn) == _state.value.siteRules) {
+            _state.update { it.copy(siteRulesError = null) }
+            return
+        }
         _state.update { it.copy(siteRulesBusy = true, siteRulesError = null) }
         routeJob?.cancel()
         _state.update { it.copy(routeCheck = null, routeChecking = false, routeDirectMs = null) }
         viewModelScope.launch {
             try {
-                val rules = withContext(siteRulesWriter) { AmeliaRouting.saveSiteRule(domain, viaVpn) }
+                val rules = withContext(siteRulesWriter) {
+                    AmeliaRouting.saveSiteRule(domain, viaVpn) { AmeliaRouting.apply(getApplication()) }
+                }
                 _state.update { it.copy(siteRules = rules) }
-                withContext(siteRulesWriter) { AmeliaRouting.apply(getApplication()) }
                 restartIfRunning()
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
