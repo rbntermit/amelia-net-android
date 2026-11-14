@@ -135,6 +135,8 @@ class AmeliaActivity : HelperBaseComponentActivity() {
                 onOpen = viewModel::loadSettingsInfo,
                 onCheckRoute = viewModel::checkRoute,
                 onRefreshSubscription = { viewModel.refresh() },
+                onSetSiteRule = viewModel::setSiteRule,
+                onReloadSiteRules = viewModel::loadSiteRules,
             ),
             extra = ExtraCallbacks(
                 onOpenAbout = viewModel::loadAbout,

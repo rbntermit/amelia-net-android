@@ -32,9 +32,9 @@ class Amelia1100Test {
     fun opensOrNot() {
         assertEquals(Status.OK, AmeliaServices.status(204))
         assertEquals(Status.OK, AmeliaServices.status(200))
-        // a page that answers at all is reachable, even "forbidden" or "not found"
-        assertEquals(Status.OK, AmeliaServices.status(403))
-        assertEquals(Status.OK, AmeliaServices.status(404))
+        // an HTTP answer alone no longer counts as successful access
+        assertEquals(Status.DENIED, AmeliaServices.status(403))
+        assertEquals(Status.UNCONFIRMED, AmeliaServices.status(404))
         // server errors, timeouts and connection errors are not
         assertEquals(Status.FAIL, AmeliaServices.status(500))
         assertEquals(Status.FAIL, AmeliaServices.status(503))

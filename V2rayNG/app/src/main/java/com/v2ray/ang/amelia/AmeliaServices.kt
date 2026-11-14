@@ -35,6 +35,12 @@ object AmeliaServices {
     enum class Status {
         /** ✅ it opens. */
         OK,
+        /** The service answered, but refused access; the reason is not necessarily the country. */
+        DENIED,
+        /** The service asks the caller to wait (HTTP 429). */
+        RATE_LIMITED,
+        /** An HTTP answer does not confirm that the service works (redirect, login, missing page). */
+        UNCONFIRMED,
         /** ❌ timeout, connection error or a server error (5xx). */
         FAIL,
         /** ⚠️ Gemini answered "not available in your country". */
@@ -45,8 +51,14 @@ object AmeliaServices {
 
     // ---- pure (unit-tested) -------------------------------------------------------------------
 
-    /** Any answer below 500 means the service is reachable; no answer or 5xx means it is not. */
-    fun status(code: Int?): Status = if (code != null && code in 100..499) Status.OK else Status.FAIL
+    /** Only a successful HTTP answer confirms this check; errors are never a green result. */
+    fun status(code: Int?): Status = when (code) {
+        in 200..299 -> Status.OK
+        401, 403, 451 -> Status.DENIED
+        429 -> Status.RATE_LIMITED
+        in 300..499 -> Status.UNCONFIRMED
+        else -> Status.FAIL
+    }
 
     /** Where Google sends people from countries without Gemini (the page about where it is available). */
     private val GEMINI_UNAVAILABLE_URL = listOf(
@@ -85,7 +97,7 @@ object AmeliaServices {
 
     /** One service's result from what came back ([code] null: no answer at all). */
     fun judge(s: Service, code: Int?, finalUrl: String?, page: String?): Status = when {
-        s.gemini && code != null && geminiBlocked(finalUrl, page) -> Status.NOT_IN_COUNTRY
+        s.gemini && code in 200..499 && geminiBlocked(finalUrl, page) -> Status.NOT_IN_COUNTRY
         else -> status(code)
     }
 
