@@ -78,6 +78,7 @@ object AmeliaServices {
         "isn't available in your country",
         "isn’t available in your country",
         "is not available in your country",
+        "not available in your country",
         "not supported in your country",
         "недоступен в вашей стране",
         "недоступно в вашей стране",

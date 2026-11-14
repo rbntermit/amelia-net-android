@@ -4,6 +4,7 @@ import com.v2ray.ang.amelia.AmeliaHttp.Route
 import com.v2ray.ang.amelia.AmeliaSubscriptionClient.Attempt
 import com.v2ray.ang.amelia.AmeliaSubscriptionClient.Result
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class AmeliaFallbackTest {
@@ -103,9 +104,9 @@ class AmeliaFallbackTest {
         assertEquals("$msk2/app/A.apk" to Route.DIRECT, plan[all.size])
         assertEquals(listOf("$msk2/app/A.apk", "$msk1/app/A.apk", "$spb1/app/A.apk", "$com/app/A.apk", "$net/app/A.apk"),
             plan.take(all.size).map { it.first })
-        // a GitHub URL is used as given, tunnel then direct
+        // external APK sources are rejected before making a request
         val gh = "https://github.com/o/r/releases/download/v1/a.apk"
-        assertEquals(listOf(gh to Route.TUNNEL, gh to Route.DIRECT), AmeliaUpdater.downloadPlan(gh, msk1, tunnel = true))
-        assertEquals(listOf(gh to Route.DIRECT), AmeliaUpdater.downloadPlan(gh, msk1, tunnel = false))
+        assertTrue(AmeliaUpdater.downloadPlan(gh, msk1, tunnel = true).isEmpty())
+        assertTrue(AmeliaUpdater.downloadPlan(gh, msk1, tunnel = false).isEmpty())
     }
 }

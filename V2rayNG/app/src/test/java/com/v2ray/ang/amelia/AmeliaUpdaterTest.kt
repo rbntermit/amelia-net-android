@@ -59,8 +59,8 @@ class AmeliaUpdaterTest {
 
     @Test
     fun allowedHosts() {
-        assertTrue(AmeliaUpdater.isAllowedUrl("https://github.com/o/r/releases/download/v1/a.apk"))
-        assertTrue(AmeliaUpdater.isAllowedUrl("https://release-assets.githubusercontent.com/x"))
+        assertFalse(AmeliaUpdater.isAllowedUrl("https://github.com/o/r/releases/download/v1/a.apk"))
+        assertFalse(AmeliaUpdater.isAllowedUrl("https://release-assets.githubusercontent.com/x"))
         assertTrue(AmeliaUpdater.isAllowedUrl("https://sub.ameliajustamelia.net:9443/app/a.apk"))
         assertFalse(AmeliaUpdater.isAllowedUrl("https://ameliajustamelia.com.evil.example/a.apk"))
         assertFalse(AmeliaUpdater.isAllowedUrl("https://notameliajustamelia.com/a.apk"))
