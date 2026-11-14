@@ -1,25 +1,31 @@
 package com.v2ray.ang.amelia
 
-import android.view.KeyEvent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.StateRestorationTester
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -84,8 +90,12 @@ class AmeliaSiteRulesDeviceTest {
         }
     }
 
-    private fun showEditor() {
+    private fun showEditor(keyboard: Boolean = false) {
         compose.setContent {
+            val inputMode = LocalInputModeManager.current
+            LaunchedEffect(keyboard) {
+                if (keyboard) inputMode.requestInputMode(InputMode.Keyboard)
+            }
             MaterialTheme {
                 Column(Modifier.imePadding().verticalScroll(rememberScrollState())) {
                     SiteRulesSection(ui, onSet = { input, viaVpn ->
@@ -137,15 +147,17 @@ class AmeliaSiteRulesDeviceTest {
 
     @Test
     fun keyboardAndDpadActivateTheSameActions() {
-        showEditor()
+        showEditor(keyboard = true)
         compose.onNodeWithText(text(R.string.amelia_site_hint)).performTextInput("example.com")
         compose.onNodeWithText(text(R.string.amelia_sites_vpn)).performScrollTo()
             .performSemanticsAction(SemanticsActions.RequestFocus) { it() }
-        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_ENTER)
+        compose.onNodeWithText(text(R.string.amelia_sites_vpn)).assertIsFocused()
+            .performKeyInput { pressKey(Key.Enter) }
         compose.onNodeWithText(text(R.string.amelia_sites_rule_vpn, "example.com")).performScrollTo().assertIsDisplayed()
         compose.onNodeWithText(text(R.string.amelia_sites_direct)).performScrollTo()
             .performSemanticsAction(SemanticsActions.RequestFocus) { it() }
-        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
+        compose.onNodeWithText(text(R.string.amelia_sites_direct)).assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionCenter) }
         compose.onNodeWithText(text(R.string.amelia_sites_rule_direct, "example.com")).performScrollTo().assertIsDisplayed()
     }
 
