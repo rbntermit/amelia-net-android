@@ -87,11 +87,45 @@ jobs:
           java-version: '21'
           cache: gradle
 
-      - name: Unit tests (Amelia)
+      - name: All unit tests and lint (required before signing)
         working-directory: V2rayNG
         run: |
           chmod 755 gradlew
-          ./gradlew --no-daemon :app:testPlaystoreDebugUnitTest --tests 'com.v2ray.ang.amelia.*'
+          ./gradlew --no-daemon --continue :app:testPlaystoreDebugUnitTest :app:lintPlaystoreDebug
+
+      - name: Test and lint reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-checks-reports
+          path: |
+            V2rayNG/app/build/reports/
+            V2rayNG/app/build/test-results/
+
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Device tests (required before signing)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: default
+          disable-animations: true
+          working-directory: V2rayNG
+          script: ./gradlew --no-daemon :app:connectedPlaystoreDebugAndroidTest
+
+      - name: Device test reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: device-checks-reports
+          path: |
+            V2rayNG/app/build/reports/androidTests/
+            V2rayNG/app/build/outputs/androidTest-results/
 
       - name: Decode keystore
         if: github.event_name != 'pull_request'

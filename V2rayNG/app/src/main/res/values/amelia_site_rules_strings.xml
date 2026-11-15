@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Amelia.Net's interface is Russian in every supported system locale. -->
+<resources>
+    <string translatable="false" name="amelia_services_denied">⚠️ %1$s: сервис отказал в доступе</string>
+    <string translatable="false" name="amelia_services_limited">⚠️ %1$s: слишком много запросов, попробуйте позже</string>
+    <string translatable="false" name="amelia_services_unconfirmed">⚠️ %1$s ответил, но доступность не подтверждена</string>
+    <string translatable="false" name="amelia_sites_title">Правила для сайтов</string>
+    <string translatable="false" name="amelia_sites_note">Укажите сайт и выберите, как его открывать. Правило действует и для его поддоменов; более точный адрес важнее общего. Удаление вернёт обычный выбор. Служебные адреса Amelia для проверки VPN всегда идут через VPN. Для приложений из списка «Мимо VPN» эти правила не действуют.</string>
+    <string translatable="false" name="amelia_sites_vpn">Этот сайт через VPN</string>
+    <string translatable="false" name="amelia_sites_direct">Этот сайт напрямую</string>
+    <string translatable="false" name="amelia_sites_rule_vpn">%1$s — через VPN</string>
+    <string translatable="false" name="amelia_sites_rule_direct">%1$s — напрямую</string>
+    <string translatable="false" name="amelia_sites_delete">Удалить правило для %1$s</string>
+    <string translatable="false" name="amelia_sites_empty">Личных правил пока нет</string>
+    <string translatable="false" name="amelia_sites_failed">Не получилось прочитать или применить правила. Попробуйте открыть настройки ещё раз.</string>
+    <string translatable="false" name="amelia_sites_retry">Загрузить правила ещё раз</string>
+    <string translatable="false" name="amelia_reason_personal">Ваше правило для %1$s</string>
+</resources>

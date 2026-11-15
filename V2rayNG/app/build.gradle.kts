@@ -16,8 +16,8 @@ android {
         minSdk = 24
         targetSdk = 37
         // Bump both on every release (see RELEASING.md); the in-app updater compares versionCode.
-        versionCode = 40
-        versionName = "1.10.1"
+        versionCode = 41
+        versionName = "1.11.0"
         // Oldest versionCode that still works with the servers: goes to version.json as
         // minVersionCode. Older apps must update before they can connect. Raise it only when
         // a server-side change breaks old versions.
@@ -188,6 +188,7 @@ dependencies {
     implementation(libs.coil.compose)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     // Data and Storage Libraries
     implementation(libs.mmkv.static)
@@ -216,6 +217,7 @@ dependencies {
     testRuntimeOnly(libs.junit.platform.launcher)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     testImplementation(libs.mockito.core)
     testImplementation(libs.mockito.kotlin)
     coreLibraryDesugaring(libs.desugar.jdk.libs)

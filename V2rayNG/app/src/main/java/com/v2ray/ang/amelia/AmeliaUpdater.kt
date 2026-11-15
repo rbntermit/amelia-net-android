@@ -61,9 +61,9 @@ object AmeliaUpdater {
     internal fun shouldNotify(code: Int, ready: Boolean, lastCode: Int, lastReady: Boolean): Boolean =
         code > lastCode || (code == lastCode && ready && !lastReady)
 
-    /** APK downloads are accepted only from these hosts and their subdomains. */
+    /** In-app APK downloads stay on Amelia's servers, including redirects. */
     private val ALLOWED_HOSTS = listOf(
-        "ameliajustamelia.com", "ameliajustamelia.net", "github.com", "githubusercontent.com",
+        "ameliajustamelia.com", "ameliajustamelia.net",
     )
 
     data class AppVersion(
@@ -130,6 +130,14 @@ object AmeliaUpdater {
         if (!uri.scheme.equals("https", ignoreCase = true)) return false
         val host = uri.host?.lowercase() ?: return false
         return ALLOWED_HOSTS.any { host == it || host.endsWith(".$it") }
+    }
+
+    /** Runs for every network request, including each redirect, before its HTTP request is sent. */
+    internal fun ownApkResponse(chain: okhttp3.Interceptor.Chain): okhttp3.Response {
+        if (!isAllowedUrl(chain.request().url.toString())) {
+            throw java.io.IOException("Update redirect outside Amelia servers")
+        }
+        return chain.proceed(chain.request())
     }
 
     private const val PREF_LAST_ANSWER = "amelia_update_last_answer"
@@ -206,9 +214,10 @@ object AmeliaUpdater {
     /**
      * Where to download the APK from, in order. An APK on our domains is fetched from the
      * address that answered version.json first ([lastBase]), then from the other addresses;
-     * through the tunnel first when the VPN is on. Other hosts (GitHub) are used as given.
+     * through the tunnel first when the VPN is on. External APK sources are rejected.
      */
     internal fun downloadPlan(url: String, lastBase: String?, tunnel: Boolean): List<Pair<String, AmeliaHttp.Route>> {
+        if (!isAllowedUrl(url)) return emptyList()
         if (!AmeliaHttp.isOwnUrl(url)) {
             return AmeliaHttp.plan(listOf(url), tunnel).map { it.base to it.route }
         }
@@ -373,8 +382,11 @@ object AmeliaUpdater {
             val request = AmeliaHttp.get(url).newBuilder()
                 .apply { if (have > 0) header("Range", "bytes=$have-") }
                 .build()
-            AmeliaHttp.clientFor(route).newCall(request).execute().use { resp ->
-                // Redirects (e.g. GitHub → CDN) must stay on allowed hosts too
+            val client = AmeliaHttp.clientFor(route).newBuilder()
+                .addNetworkInterceptor { chain -> ownApkResponse(chain) }
+                .build()
+            client.newCall(request).execute().use { resp ->
+                // Also reject a response supplied by a cache or another application interceptor.
                 if (!isAllowedUrl(resp.request.url.toString())) return false
                 val digest = MessageDigest.getInstance("SHA-256")
                 var done = when (resumeAction(have, resp.code)) {

@@ -62,6 +62,9 @@ private fun ServicesSection(services: ServicesUi?, onCheck: () -> Unit, onConnec
             else -> services.results.forEach { r ->
                 val (text, color) = when (r.status) {
                     AmeliaServices.Status.OK -> stringResource(R.string.amelia_services_ok, r.name) to Brand.Green
+                    AmeliaServices.Status.DENIED -> stringResource(R.string.amelia_services_denied, r.name) to Brand.Amber
+                    AmeliaServices.Status.RATE_LIMITED -> stringResource(R.string.amelia_services_limited, r.name) to Brand.Amber
+                    AmeliaServices.Status.UNCONFIRMED -> stringResource(R.string.amelia_services_unconfirmed, r.name) to Brand.Amber
                     AmeliaServices.Status.FAIL -> stringResource(R.string.amelia_services_fail, r.name) to Brand.Amber
                     AmeliaServices.Status.NOT_IN_COUNTRY -> stringResource(R.string.amelia_services_gemini_country) to Brand.Amber
                 }

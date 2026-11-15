@@ -1,11 +1,17 @@
 package com.v2ray.ang.amelia
 
 import android.content.Context
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.dto.entities.RulesetItem
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.util.Utils
+import com.v2ray.ang.util.LogUtil
 import java.io.File
+import java.io.IOException
+import java.net.IDN
+import java.util.Locale
 
 /**
  * Built-in routing, mirrors HAPP_ROUTING from sub_server.py:
@@ -16,6 +22,68 @@ import java.io.File
  * anything unmatched goes to the first outbound, which is the proxy.
  */
 object AmeliaRouting {
+
+    /** One personal domain rule, including subdomains. A more specific domain wins. */
+    data class SiteRule(val domain: String, val viaVpn: Boolean)
+
+    private const val PREF_SITE_RULES = "amelia_site_rules_v1"
+    private val SERVICE_SITES = listOf("sub.ameliajustamelia.com", "sub.ameliajustamelia.net")
+
+    /** Reuse the site's input validation, then store IDNs in the form understood by Xray. */
+    fun siteDomain(input: String): String? {
+        val domain = AmeliaSiteCheck.cleanDomain(input) ?: return null
+        return runCatching { IDN.toASCII(domain, IDN.USE_STD3_ASCII_RULES).lowercase(Locale.ROOT) }
+            .getOrNull()?.takeIf { AmeliaSiteCheck.cleanDomain(it) == it }
+    }
+
+    fun parseSiteRules(json: String?): List<SiteRule> {
+        if (json.isNullOrBlank()) return emptyList()
+        return JsonParser.parseString(json).asJsonObject.entrySet().map { (domain, value) ->
+            require(siteDomain(domain) == domain) { "Invalid saved site rule" }
+            require(value.isJsonPrimitive && value.asJsonPrimitive.isBoolean) { "Invalid saved site route" }
+            SiteRule(domain, value.asBoolean)
+        }.sortedBy { it.domain }
+    }
+
+    fun siteRulesJson(rules: List<SiteRule>): String = JsonObject().also { obj ->
+        rules.sortedBy { it.domain }.forEach { obj.addProperty(it.domain, it.viaVpn) }
+    }.toString()
+
+    /** One rule per domain; changing direction replaces the old rule, deleting restores defaults. */
+    fun changeSiteRules(rules: List<SiteRule>, domain: String, viaVpn: Boolean?): List<SiteRule> {
+        require(siteDomain(domain) == domain) { "Invalid site domain" }
+        return (rules.filterNot { it.domain == domain } +
+            listOfNotNull(viaVpn?.let { SiteRule(domain, it) })).sortedBy { it.domain }
+    }
+
+    /** Service checks must keep using the foreign endpoint through the tunnel. */
+    fun personalSiteRule(host: String, rules: List<SiteRule>): SiteRule? {
+        if (SERVICE_SITES.any { AmeliaRouteCheck.domainMatches(it, host) }) return null
+        return rules.filter { AmeliaRouteCheck.domainMatches(it.domain, host) }.maxByOrNull { it.domain.length }
+    }
+
+    fun loadSiteRules(): List<SiteRule> = parseSiteRules(MmkvManager.decodeSettingsString(PREF_SITE_RULES))
+
+    /** Atomic across processes; a failed rebuild restores the source and the last generated rules. */
+    fun saveSiteRule(domain: String, viaVpn: Boolean?, applyRules: () -> Unit = {}): List<SiteRule> = MmkvManager.withSettingsLock {
+        val before = MmkvManager.decodeSettingsString(PREF_SITE_RULES)
+        val generatedBefore = MmkvManager.decodeSettingsString(AppConfig.PREF_ROUTING_RULESET)
+        val next = changeSiteRules(loadSiteRules(), domain, viaVpn)
+        if (!MmkvManager.encodeSettings(PREF_SITE_RULES, siteRulesJson(next))) {
+            throw IOException("Could not save personal site rules")
+        }
+        try {
+            applyRules()
+        } catch (e: Exception) {
+            val sourceRestored = MmkvManager.encodeSettings(PREF_SITE_RULES, before)
+            val generatedRestored = MmkvManager.encodeSettings(AppConfig.PREF_ROUTING_RULESET, generatedBefore)
+            if (!sourceRestored || !generatedRestored) {
+                LogUtil.w(AppConfig.TAG, "Amelia: routing rollback personal site rule failed", e)
+            }
+            throw e
+        }
+        next
+    }
 
     /** Always through VPN, even when the address is Russian. */
     val PROXY_SITES = listOf(
@@ -103,6 +171,7 @@ object AmeliaRouting {
         hasGeo: (String) -> Boolean = { withGeo && (it == GEOSITE_RU || it == GEOIP_RU) },
         /** 1.10.0 "Российские сайты — напрямую" (on by default, as before): off, the Russian lists leave "direct". */
         ruDirect: Boolean = true,
+        siteRules: List<SiteRule> = emptyList(),
     ): MutableList<RulesetItem> {
         val geo: (String) -> Boolean = { withGeo && hasGeo(it) }
         // off: geosite:category-ru and geoip:ru are not direct, also when the subscription's profile names them;
@@ -122,6 +191,25 @@ object AmeliaRouting {
                 locked = true,
             ),
         )
+        if (siteRules.isNotEmpty()) {
+            val personal = siteRules.sortedWith(compareByDescending<SiteRule> { it.domain.length }.thenBy { it.domain })
+                .map { rule ->
+                    RulesetItem(
+                        id = "amelia-personal-${rule.domain}",
+                        remarks = "Amelia: personal site rule",
+                        domain = listOf("domain:${rule.domain}"),
+                        outboundTag = if (rule.viaVpn) AppConfig.TAG_PROXY else AppConfig.TAG_DIRECT,
+                        locked = true,
+                    )
+                }
+            rules.addAll(0, listOf(RulesetItem(
+                id = "amelia-service-sites",
+                remarks = "Amelia: service checks via VPN",
+                domain = SERVICE_SITES.map { "domain:$it" },
+                outboundTag = AppConfig.TAG_PROXY,
+                locked = true,
+            )) + personal)
+        }
         val proxyIp = ips(emptyList(), profile?.proxyIp)
         if (proxyIp.isNotEmpty()) {
             rules += RulesetItem(
@@ -208,10 +296,17 @@ object AmeliaRouting {
     /** Writes routing and DNS settings. Users cannot edit them, so it is safe to apply on every start. */
     fun apply(context: Context) {
         val withGeo = geoFilesReady(context)
-        MmkvManager.encodeRoutingRulesets(
+        // A corrupt personal setting must not crash startup or replace the last usable routing.
+        val personalRules = try {
+            loadSiteRules()
+        } catch (e: Exception) {
+            LogUtil.w(AppConfig.TAG, "Amelia: routing load personal site rules failed; retaining generated rules", e)
+            null
+        }
+        if (personalRules != null) MmkvManager.encodeRoutingRulesets(
             buildRulesets(withGeo, AmeliaRouteProfile.load(), { tag ->
                 tag == GEOSITE_RU || tag == GEOIP_RU || geoHasTag(context, tag)
-            }, ruDirect()),
+            }, ruDirect(), personalRules),
         )
         MmkvManager.encodeSettings(AppConfig.PREF_ROUTING_DOMAIN_STRATEGY, DOMAIN_STRATEGY)
         MmkvManager.encodeSettings(AppConfig.PREF_REMOTE_DNS, REMOTE_DNS)

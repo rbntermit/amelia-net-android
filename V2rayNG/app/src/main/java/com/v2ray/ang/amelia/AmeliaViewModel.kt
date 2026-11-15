@@ -4,10 +4,13 @@ import android.app.Application
 import androidx.annotation.StringRes
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.v2ray.ang.AppConfig
 import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.core.LauncherManager
 import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.util.LogUtil
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -187,6 +190,10 @@ data class AmeliaUiState(
     /** "Российские сайты — напрямую" (on by default) and whether the geo bases are there for it. */
     val ruDirect: Boolean = true,
     val ruDirectAvailable: Boolean = false,
+    val siteRules: List<AmeliaRouting.SiteRule> = emptyList(),
+    val siteRulesBusy: Boolean = false,
+    val siteRulesReady: Boolean = false,
+    @param:StringRes val siteRulesError: Int? = null,
 ) {
     val selectedName: String?
         get() = locations.firstOrNull { it.guid == selectedGuid }?.name
@@ -1116,6 +1123,7 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Settings screen opened: geo base info and the last update check time. */
     fun loadSettingsInfo() {
+        loadSiteRules()
         _state.update { it.copy(lastUpdateCheck = AmeliaUpdater.lastCheck()) }
         viewModelScope.launch {
             val app = getApplication<Application>()
@@ -1142,13 +1150,20 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
         routeJob = viewModelScope.launch {
             _state.update { it.copy(routeChecking = true, routeCheck = null, routeDirectMs = null) }
             val app = getApplication<Application>()
-            val result = withContext(Dispatchers.IO) {
-                if (geoSite == null && geoIp == null) loadGeo(app)
-                // 1.10.0: "Российские сайты — напрямую" off: the Russian lists send nothing direct
-                val ru = AmeliaRouting.ruDirect()
-                AmeliaRouteCheck.classify(input, geoSite.takeIf { ru }, geoIp.takeIf { ru }) { host ->
-                    java.net.InetAddress.getAllByName(host).toList()
+            val result = try {
+                withContext(Dispatchers.IO) {
+                    if (geoSite == null && geoIp == null) loadGeo(app)
+                    // 1.10.0: "Российские сайты — напрямую" off: the Russian lists send nothing direct
+                    val ru = AmeliaRouting.ruDirect()
+                    AmeliaRouteCheck.classify(input, geoSite.takeIf { ru }, geoIp.takeIf { ru }, AmeliaRouting.loadSiteRules()) { host ->
+                        java.net.InetAddress.getAllByName(host).toList()
+                    }
                 }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                LogUtil.w(AppConfig.TAG, "Amelia: UI classify site route failed", e)
+                _state.update { it.copy(routeChecking = false, siteRulesReady = false, siteRulesError = R.string.amelia_sites_failed) }
+                return@launch
             }
             _state.update { it.copy(routeCheck = result) }
             val directMs = if (result.route == AmeliaRouteCheck.Route.DIRECT) {
@@ -1156,6 +1171,58 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
                 withContext(Dispatchers.IO) { AmeliaFailover.directReachMs(result.host) }
             } else null
             _state.update { it.copy(routeChecking = false, routeDirectMs = directMs) }
+        }
+    }
+
+    private val siteRulesWriter = Dispatchers.IO.limitedParallelism(1)
+
+    /** Loading and changing durable rules belongs to this ViewModel, never to the composable. */
+    fun loadSiteRules() {
+        if (_state.value.siteRulesBusy) return
+        _state.update { it.copy(siteRulesBusy = true, siteRulesError = null) }
+        viewModelScope.launch {
+            try {
+                val rules = withContext(siteRulesWriter) { AmeliaRouting.loadSiteRules() }
+                _state.update { it.copy(siteRules = rules, siteRulesReady = true) }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                LogUtil.w(AppConfig.TAG, "Amelia: UI load personal site rules failed", e)
+                _state.update { it.copy(siteRulesReady = false, siteRulesError = R.string.amelia_sites_failed) }
+            } finally {
+                _state.update { it.copy(siteRulesBusy = false) }
+            }
+        }
+    }
+
+    /** Null removes the rule. Persist and rebuild routing before asking the daemon to restart. */
+    fun setSiteRule(input: String, viaVpn: Boolean?) {
+        if (_state.value.siteRulesBusy || !_state.value.siteRulesReady) return
+        val domain = AmeliaRouting.siteDomain(input)
+        if (domain == null) {
+            _state.update { it.copy(siteRulesError = R.string.amelia_site_bad) }
+            return
+        }
+        if (AmeliaRouting.changeSiteRules(_state.value.siteRules, domain, viaVpn) == _state.value.siteRules) {
+            _state.update { it.copy(siteRulesError = null) }
+            return
+        }
+        _state.update { it.copy(siteRulesBusy = true, siteRulesError = null) }
+        routeJob?.cancel()
+        _state.update { it.copy(routeCheck = null, routeChecking = false, routeDirectMs = null) }
+        viewModelScope.launch {
+            try {
+                val rules = withContext(siteRulesWriter) {
+                    AmeliaRouting.saveSiteRule(domain, viaVpn) { AmeliaRouting.apply(getApplication()) }
+                }
+                _state.update { it.copy(siteRules = rules) }
+                restartIfRunning()
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                LogUtil.w(AppConfig.TAG, "Amelia: UI save or apply personal site rule failed", e)
+                _state.update { it.copy(siteRulesError = R.string.amelia_sites_failed) }
+            } finally {
+                _state.update { it.copy(siteRulesBusy = false) }
+            }
         }
     }
 

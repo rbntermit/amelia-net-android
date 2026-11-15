@@ -141,6 +141,8 @@ class SettingsCallbacks(
     val onOpen: () -> Unit,
     val onCheckRoute: (String) -> Unit,
     val onRefreshSubscription: () -> Unit,
+    val onSetSiteRule: (String, Boolean?) -> Unit,
+    val onReloadSiteRules: () -> Unit,
 )
 
 @Composable
@@ -1290,6 +1292,7 @@ private fun SettingsScreen(
         SettingsAutoSwitchSection(state, extra, onOpenJournal)
         SettingsUpdateSection(state, updates, onAbout)
         SettingsBypassSection(state, settings)
+        SiteRulesSection(state, settings.onSetSiteRule, settings.onReloadSiteRules)
         SettingsProbeSection(state, extra)
         SettingsCrashSection(state, extra)
         TextButton(onClick = extra.onStartReport) {
@@ -1459,6 +1462,7 @@ private fun RouteResult(r: AmeliaRouteCheck.Result, directMs: Long?, checking: B
             val rule = r.rule.orEmpty()
             Text(
                 when (r.reason) {
+                    AmeliaRouteCheck.Reason.PERSONAL -> stringResource(R.string.amelia_reason_personal, rule)
                     AmeliaRouteCheck.Reason.PROXY_SITE -> stringResource(R.string.amelia_reason_proxy_site, rule)
                     AmeliaRouteCheck.Reason.DIRECT_SITE -> stringResource(R.string.amelia_reason_direct_site, rule)
                     AmeliaRouteCheck.Reason.RU_SITE -> stringResource(R.string.amelia_reason_ru_site, rule)

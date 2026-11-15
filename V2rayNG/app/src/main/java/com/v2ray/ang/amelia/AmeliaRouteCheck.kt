@@ -18,6 +18,8 @@ object AmeliaRouteCheck {
     enum class Route { DIRECT, VPN }
 
     enum class Reason {
+        /** The person's explicit domain rule. */
+        PERSONAL,
         /** Listed in "always via VPN" (YouTube and Google video hosts). */
         PROXY_SITE,
         /** Listed in "direct" (Kinopoisk, Max…). */
@@ -58,6 +60,7 @@ object AmeliaRouteCheck {
         if (s.count { it == ':' } == 1) s = s.substringBefore(':')
         s = s.trimEnd('.')
         if (s.isEmpty() || s.length > 253) return null
+        s = runCatching { java.net.IDN.toASCII(s).lowercase(java.util.Locale.ROOT) }.getOrNull() ?: return null
         return s.takeIf { isIpLiteral(it) || HOST_RE.matches(it) }
     }
 
@@ -78,8 +81,20 @@ object AmeliaRouteCheck {
         geoSite: GeoSite?,
         geoIp: CidrSet?,
         resolve: (String) -> List<InetAddress>,
+    ): Result = classify(input, geoSite, geoIp, emptyList(), resolve)
+
+    fun classify(
+        input: String,
+        geoSite: GeoSite?,
+        geoIp: CidrSet?,
+        siteRules: List<AmeliaRouting.SiteRule>,
+        resolve: (String) -> List<InetAddress>,
     ): Result {
         val host = normalize(input) ?: return Result(input.trim(), null, Reason.BAD_INPUT)
+
+        AmeliaRouting.personalSiteRule(host, siteRules)?.let {
+            return Result(host, if (it.viaVpn) Route.VPN else Route.DIRECT, Reason.PERSONAL, it.domain)
+        }
 
         if (!isIpLiteral(host)) {
             AmeliaRouting.PROXY_SITES.firstOrNull { domainMatches(it, host) }
