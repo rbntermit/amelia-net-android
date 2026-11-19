@@ -813,12 +813,12 @@ object MmkvManager {
      *
      * @param rulesetList The list of routing rulesets.
      */
-    fun encodeRoutingRulesets(rulesetList: MutableList<RulesetItem>?) {
-        if (rulesetList.isNullOrEmpty())
+    fun encodeRoutingRulesets(rulesetList: MutableList<RulesetItem>?): Boolean =
+        if (rulesetList.isNullOrEmpty()) {
             encodeSettings(PREF_ROUTING_RULESET, "")
-        else
+        } else {
             encodeSettings(PREF_ROUTING_RULESET, JsonUtil.toJson(rulesetList))
-    }
+        }
 
     //endregion
 

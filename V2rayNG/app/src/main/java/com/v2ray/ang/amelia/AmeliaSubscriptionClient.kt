@@ -22,6 +22,8 @@ object AmeliaSubscriptionClient {
         ) : Result()
         /** A server answered 404 and none answered with a subscription: no such key. */
         data object UnknownKey : Result()
+        /** One or more servers answered, but their bodies could not be imported. */
+        data object Unusable : Result()
         /** No server could be reached or all returned errors. */
         data object NetworkError : Result()
     }
@@ -37,28 +39,39 @@ object AmeliaSubscriptionClient {
 
     /**
      * Tries attempts in order until one returns the subscription. A failure (timeout, TLS,
-     * 5xx, empty body) moves on; 404 is remembered but also moves on, so a stale server cannot
-     * hide a key another one knows.
+     * 5xx, empty or unusable body) moves on. A 404 cannot hide a usable response from another mirror.
      */
-    internal fun fetchWith(plan: List<AmeliaHttp.Attempt>, attempt: (AmeliaHttp.Attempt) -> Attempt): Result {
+    internal fun fetchWith(
+        plan: List<AmeliaHttp.Attempt>,
+        accept: (String) -> Boolean = { true },
+        attempt: (AmeliaHttp.Attempt) -> Attempt,
+    ): Result {
         var sawNotFound = false
+        var sawUnusable = false
         for (a in plan) {
             when (val r = attempt(a)) {
-                is Attempt.Ok -> return Result.Ok(r.body, r.info, a.base, a.route)
+                is Attempt.Ok -> {
+                    if (accept(r.body)) return Result.Ok(r.body, r.info, a.base, a.route)
+                    sawUnusable = true
+                }
                 Attempt.NotFound -> sawNotFound = true
                 Attempt.Failed -> Unit
             }
         }
-        return if (sawNotFound) Result.UnknownKey else Result.NetworkError
+        return when {
+            sawUnusable -> Result.Unusable
+            sawNotFound -> Result.UnknownKey
+            else -> Result.NetworkError
+        }
     }
 
     /**
      * Blocking; call from Dispatchers.IO.
      * @param preferredBaseUrl the server that answered last time, tried first.
      */
-    fun fetch(key: String, preferredBaseUrl: String? = AmeliaHttp.lastBase()): Result {
+    fun fetch(key: String, preferredBaseUrl: String?, accept: (String) -> Boolean): Result {
         val plan = AmeliaHttp.plan(AmeliaHttp.orderBases(preferredBaseUrl), AmeliaHttp.tunnelAvailable())
-        val result = fetchWith(plan) { a -> request(a, key) }
+        val result = fetchWith(plan, accept) { a -> request(a, key) }
         if (result is Result.Ok) AmeliaHttp.rememberBase(result.baseUrl)
         return result
     }
@@ -67,10 +80,10 @@ object AmeliaSubscriptionClient {
      * 1.6.1, blocking: the subscription from [AmeliaConfig.RESUBSCRIBE_BASE_URLS] over [direct] (the phone's own
      * network, never the tunnel), [timeoutMs] for the whole download, shared by the addresses in turn.
      */
-    fun fetchDirect(key: String, direct: OkHttpClient, timeoutMs: Long): Result {
+    fun fetchDirect(key: String, direct: OkHttpClient, timeoutMs: Long, accept: (String) -> Boolean): Result {
         val deadline = System.currentTimeMillis() + timeoutMs
         val plan = AmeliaHttp.plan(AmeliaConfig.RESUBSCRIBE_BASE_URLS, tunnel = false)
-        val result = fetchWith(plan) { a ->
+        val result = fetchWith(plan, accept) { a ->
             val left = deadline - System.currentTimeMillis()
             if (left <= 0) Attempt.Failed
             else request(a, key, direct.newBuilder().callTimeout(left, TimeUnit.MILLISECONDS).build())

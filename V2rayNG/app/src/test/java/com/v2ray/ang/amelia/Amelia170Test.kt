@@ -197,6 +197,9 @@ class Amelia170Test {
         // a link to another site is never opened
         assertNull(AmeliaSite.parseToken(base, """{"ok":true,"t":"t.a","me":"https://evil.example/me","buy":"/buy?sid=t.a"}""", now))
         assertNull(AmeliaSite.parseToken(base, """{"ok":true,"t":"t.a","me":"//evil.example/me","buy":"/buy?sid=t.a"}""", now))
+        assertNull(AmeliaSite.parseToken(base, """{"ok":true,"t":"t.a","me":"/me/subscriptionKey","buy":"/buy?sid=t.a"}""", now))
+        assertNull(AmeliaSite.parseToken(base, """{"ok":true,"t":"t.a","me":"/me/t.a","buy":"/buy?sid=subscriptionKey"}""", now))
+        assertNull(AmeliaSite.parseToken(base, """{"ok":true,"t":"subscriptionKey","me":"/me/subscriptionKey","buy":"/buy?sid=subscriptionKey"}""", now))
         assertFalse(AmeliaSite.usable(null, now))
         assertEquals("""{"key":"abcd1234"}""", AmeliaSite.tokenRequest("abcd1234"))
         assertEquals(listOf(base, "https://msk1.ameliajustamelia.com:9443", "https://spb1.ameliajustamelia.com:9443"), AmeliaConfig.RESUBSCRIBE_BASE_URLS)

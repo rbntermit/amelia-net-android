@@ -112,6 +112,24 @@ class Amelia173Test {
     }
 
     @Test
+    fun unusableSuccessfulResponseDoesNotStopMirrorSelection() {
+        val plan = AmeliaHttp.plan(listOf(msk1, msk2, spb1), tunnel = false)
+        val invalid = ok.copy(body = "<html>Maintenance</html>")
+        val tried = mutableListOf<String>()
+        val result = AmeliaSubscriptionClient.fetchWith(plan, accept = { it == ok.body }) { attempt ->
+            tried += attempt.base
+            if (attempt.base == msk1) invalid else ok
+        }
+        assertEquals(listOf(msk1, msk2), tried)
+        assertEquals(msk2, (result as Result.Ok).baseUrl)
+
+        val unusable = AmeliaSubscriptionClient.fetchWith(plan, accept = { false }) { attempt ->
+            if (attempt.base == msk1) invalid else Attempt.NotFound
+        }
+        assertEquals(Result.Unusable, unusable)
+    }
+
+    @Test
     fun journalSaysWhichAddressServedTheSubscription() {
         val str = strings()
         assertEquals("Подписка скачана: spb1, через VPN", AmeliaAbout.subSourceLine(spb1, true, str))

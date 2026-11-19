@@ -1,17 +1,13 @@
 package com.v2ray.ang.amelia
 
+import com.v2ray.ang.AppConfig
+import com.v2ray.ang.dto.entities.RulesetItem
 import java.net.InetAddress
+import java.util.Locale
 
 /**
- * "Where does this site go?" — answers the way the core routes it with [AmeliaRouting] rules:
- *
- * 1. always-via-VPN sites (YouTube…)            → VPN
- * 2. direct sites, then geosite:category-ru     → direct
- * 3. otherwise the address is resolved (domainStrategy IPIfNonMatch):
- *    local networks or geoip:ru                 → direct
- * 4. everything else                            → VPN
- *
- * The geo bases are the same files the core uses (downloaded by [AmeliaGeoUpdater]).
+ * Estimates the route from the generated rules used by local Xray. With IPIfNonMatch, the
+ * first pass checks domain rules; the second checks IP rules in order using the resolved addresses.
  */
 object AmeliaRouteCheck {
 
@@ -30,8 +26,12 @@ object AmeliaRouteCheck {
         LOCAL_NETWORK,
         /** Address in geoip:ru. */
         RU_IP,
+        PROXY_IP,
+        DIRECT_IP,
         /** No rule matched: default route through the VPN. */
         DEFAULT,
+        /** A rule requires data or connection details the checker does not have. */
+        UNAVAILABLE,
         /** Not a host name or IP address. */
         BAD_INPUT,
     }
@@ -44,6 +44,8 @@ object AmeliaRouteCheck {
         val rule: String? = null,
         /** Resolved address used for the IP rules. */
         val ip: String? = null,
+        /** Exact domain that the editor would save. */
+        val siteRuleDomain: String? = null,
     )
 
     // ---- input ------------------------------------------------------------------------------
@@ -56,7 +58,11 @@ object AmeliaRouteCheck {
         s = s.substringAfter("://")
         s = s.substringBefore('/').substringBefore('?').substringBefore('#')
         s = s.substringAfter('@')
-        if (s.startsWith("[")) return s.substringAfter('[').substringBefore(']').takeIf { isIpLiteral(it) }
+        if (s.startsWith("[")) {
+            val end = s.indexOf(']')
+            if (end < 0) return null
+            return s.substring(1, end).takeIf { it.contains(':') && isIpLiteral(it) }
+        }
         if (s.count { it == ':' } == 1) s = s.substringBefore(':')
         s = s.trimEnd('.')
         if (s.isEmpty() || s.length > 253) return null
@@ -66,9 +72,13 @@ object AmeliaRouteCheck {
 
     private val IPV4_RE = Regex("^\\d{1,3}(\\.\\d{1,3}){3}$")
 
-    fun isIpLiteral(s: String): Boolean =
-        IPV4_RE.matches(s) && s.split('.').all { it.toInt() <= 255 } ||
-            (s.contains(':') && s.all { it.isDigit() || it in 'a'..'f' || it == ':' || it == '.' })
+    private fun literalAddress(s: String): InetAddress? {
+        val ipv4 = IPV4_RE.matches(s) && s.split('.').all { it.toInt() <= 255 }
+        val ipv6 = ':' in s && s.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' || it == ':' || it == '.' }
+        return if (ipv4 || ipv6) runCatching { InetAddress.getByName(s) }.getOrNull() else null
+    }
+
+    fun isIpLiteral(s: String): Boolean = literalAddress(s) != null
 
     // ---- rules ------------------------------------------------------------------------------
 
@@ -89,31 +99,108 @@ object AmeliaRouteCheck {
         geoIp: CidrSet?,
         siteRules: List<AmeliaRouting.SiteRule>,
         resolve: (String) -> List<InetAddress>,
+    ): Result = classify(
+        input,
+        AmeliaRouting.buildRulesets(
+            withGeo = true,
+            hasGeo = { tag ->
+                (tag == AmeliaRouting.GEOSITE_RU && geoSite != null) ||
+                    (tag == AmeliaRouting.GEOIP_RU && geoIp != null)
+            },
+            siteRules = siteRules,
+        ),
+        { code -> geoSite.takeIf { code.equals("CATEGORY-RU", true) } },
+        { code -> geoIp.takeIf { code.equals("RU", true) } },
+        resolve,
+    )
+
+    internal fun classify(
+        input: String,
+        rules: List<RulesetItem>,
+        geoSite: (String) -> GeoSite?,
+        geoIp: (String) -> CidrSet?,
+        resolve: (String) -> List<InetAddress>?,
     ): Result {
         val host = normalize(input) ?: return Result(input.trim(), null, Reason.BAD_INPUT)
+        val literal = literalAddress(host)
+        val editableDomain = if (literal == null) AmeliaRouting.editableSiteDomain(host) else null
+        val unavailable = Result(host, null, Reason.UNAVAILABLE, siteRuleDomain = editableDomain)
+        val active = rules.filter { it.enabled }
+        if (active.any { r ->
+                r.outboundTag !in listOf(AppConfig.TAG_DIRECT, AppConfig.TAG_PROXY) ||
+                    !r.port.isNullOrEmpty() || !r.network.isNullOrEmpty() ||
+                    !r.process.isNullOrEmpty() || !r.protocol.isNullOrEmpty() ||
+                    (!r.domain.isNullOrEmpty() && !r.ip.isNullOrEmpty())
+            }
+        ) return unavailable
 
-        AmeliaRouting.personalSiteRule(host, siteRules)?.let {
-            return Result(host, if (it.viaVpn) Route.VPN else Route.DIRECT, Reason.PERSONAL, it.domain)
+        if (literal == null) {
+            for (rule in active) {
+                var missingData = false
+                for (entry in rule.domain.orEmpty()) {
+                    val match = domainMatch(entry, host, geoSite)
+                    if (match == null) missingData = true
+                    if (match.isNullOrEmpty()) continue
+                    val route = rule.route()
+                    val reason = when {
+                        rule.id.startsWith("amelia-personal-") -> Reason.PERSONAL
+                        route == Route.VPN -> Reason.PROXY_SITE
+                        entry.equals(AmeliaRouting.GEOSITE_RU, true) -> Reason.RU_SITE
+                        else -> Reason.DIRECT_SITE
+                    }
+                    return Result(host, route, reason, match, siteRuleDomain = editableDomain)
+                }
+                if (missingData) return unavailable
+            }
         }
 
-        if (!isIpLiteral(host)) {
-            AmeliaRouting.PROXY_SITES.firstOrNull { domainMatches(it, host) }
-                ?.let { return Result(host, Route.VPN, Reason.PROXY_SITE, it) }
-            AmeliaRouting.DIRECT_SITES.firstOrNull { domainMatches(it, host) }
-                ?.let { return Result(host, Route.DIRECT, Reason.DIRECT_SITE, it) }
-            geoSite?.match(host)?.let { return Result(host, Route.DIRECT, Reason.RU_SITE, it) }
+        val addresses = if (literal != null) listOf(literal) else resolve(host) ?: return unavailable
+        for (rule in active) {
+            var missingData = false
+            for (entry in rule.ip.orEmpty()) {
+                if (addresses.isEmpty()) break
+                val nets = when {
+                    entry.startsWith("geoip:", true) -> geoIp(entry.substringAfter(':'))
+                    entry.startsWith("ext:", true) || entry.startsWith("!") -> null
+                    else -> CidrSet.parse(listOf(entry)).takeIf { it.size != 0 }
+                }
+                if (nets == null) {
+                    missingData = true
+                    continue
+                }
+                for (address in addresses) {
+                    val match = nets.match(address) ?: continue
+                    val route = rule.route()
+                    val reason = when {
+                        route == Route.VPN -> Reason.PROXY_IP
+                        entry.equals(AmeliaRouting.GEOIP_RU, true) -> Reason.RU_IP
+                        entry in AmeliaRouting.DIRECT_IPS -> Reason.LOCAL_NETWORK
+                        else -> Reason.DIRECT_IP
+                    }
+                    return Result(host, route, reason, match, address.hostAddress, editableDomain)
+                }
+            }
+            if (missingData) return unavailable
         }
 
-        val addresses = if (isIpLiteral(host)) {
-            listOfNotNull(runCatching { InetAddress.getByName(host) }.getOrNull())
-        } else {
-            runCatching { resolve(host) }.getOrDefault(emptyList())
+        return Result(host, Route.VPN, Reason.DEFAULT, ip = addresses.firstOrNull()?.hostAddress, siteRuleDomain = editableDomain)
+    }
+
+    private fun RulesetItem.route(): Route = if (outboundTag == AppConfig.TAG_DIRECT) Route.DIRECT else Route.VPN
+
+    /** Null means the rule could not be checked. An empty string means that it did not match. */
+    private fun domainMatch(entry: String, host: String, geoSite: (String) -> GeoSite?): String? {
+        val value = entry.substringAfter(':')
+        return when (entry.substringBefore(':').lowercase(Locale.ROOT)) {
+            "domain" -> value.takeIf { domainMatches(it.lowercase(Locale.ROOT), host) }.orEmpty()
+            "full" -> entry.takeIf { value.equals(host, true) }.orEmpty()
+            "keyword" -> entry.takeIf { host.contains(value, ignoreCase = true) }.orEmpty()
+            "regexp" -> runCatching { entry.takeIf { Regex(value).containsMatchIn(host) }.orEmpty() }.getOrNull()
+            "dotless" -> entry.takeIf { '.' !in host && value in host }.orEmpty()
+            "geosite" -> geoSite(value)?.let { it.match(host).orEmpty() }
+            "ext" -> null
+            else -> entry.takeIf { host.contains(it, ignoreCase = true) }.orEmpty()
         }
-        for (a in addresses) {
-            LOCAL_NETS.match(a)?.let { return Result(host, Route.DIRECT, Reason.LOCAL_NETWORK, it, a.hostAddress) }
-            geoIp?.match(a)?.let { return Result(host, Route.DIRECT, Reason.RU_IP, it, a.hostAddress) }
-        }
-        return Result(host, Route.VPN, Reason.DEFAULT, ip = addresses.firstOrNull()?.hostAddress)
     }
 
     // ---- networks ---------------------------------------------------------------------------
@@ -127,7 +214,7 @@ object AmeliaRouteCheck {
             for ((net, prefix) in nets) {
                 if (net.size != ip.size) continue
                 if (inNet(ip, net, prefix)) {
-                    return InetAddress.getByAddress(net).hostAddress + "/" + prefix
+                    return InetAddress.getByAddress(net).hostAddress?.let { "$it/$prefix" }
                 }
             }
             return null
@@ -148,14 +235,14 @@ object AmeliaRouteCheck {
         companion object {
             fun parse(cidrs: List<String>): CidrSet = CidrSet(cidrs.mapNotNull { c ->
                 val ip = c.substringBefore('/')
-                val bytes = runCatching { InetAddress.getByName(ip).address }.getOrNull() ?: return@mapNotNull null
-                val prefix = c.substringAfter('/', "").toIntOrNull() ?: bytes.size * 8
+                val bytes = literalAddress(ip)?.address ?: return@mapNotNull null
+                val width = bytes.size * 8
+                val prefix = if ('/' in c) c.substringAfter('/').toIntOrNull() ?: return@mapNotNull null else width
+                if (prefix !in 0..width) return@mapNotNull null
                 bytes to prefix
             })
         }
     }
-
-    private val LOCAL_NETS: CidrSet by lazy { CidrSet.parse(AmeliaRouting.DIRECT_IPS) }
 
     // ---- geosite --------------------------------------------------------------------------
 
@@ -206,7 +293,10 @@ object AmeliaRouteCheck {
             when (wire) {
                 0 -> varint()
                 1 -> pos += 8
-                2 -> pos += varint().toInt()
+                2 -> {
+                    val length = varint().toInt()
+                    pos += length
+                }
                 5 -> pos += 4
                 else -> error("bad wire type $wire")
             }

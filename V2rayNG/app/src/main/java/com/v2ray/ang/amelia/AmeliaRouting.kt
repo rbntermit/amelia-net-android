@@ -36,6 +36,9 @@ object AmeliaRouting {
             .getOrNull()?.takeIf { AmeliaSiteCheck.cleanDomain(it) == it }
     }
 
+    fun editableSiteDomain(input: String): String? =
+        siteDomain(input)?.takeUnless { domain -> SERVICE_SITES.any { AmeliaRouteCheck.domainMatches(it, domain) } }
+
     fun parseSiteRules(json: String?): List<SiteRule> {
         if (json.isNullOrBlank()) return emptyList()
         return JsonParser.parseString(json).asJsonObject.entrySet().map { (domain, value) ->
@@ -64,8 +67,12 @@ object AmeliaRouting {
 
     fun loadSiteRules(): List<SiteRule> = parseSiteRules(MmkvManager.decodeSettingsString(PREF_SITE_RULES))
 
-    /** Atomic across processes; a failed rebuild restores the source and the last generated rules. */
-    fun saveSiteRule(domain: String, viaVpn: Boolean?, applyRules: () -> Unit = {}): List<SiteRule> = MmkvManager.withSettingsLock {
+    /** Personal rules and the generated rules are both stored on this Android device. */
+    fun saveSiteRule(context: Context, domain: String, viaVpn: Boolean?): List<SiteRule> =
+        saveSiteRule(domain, viaVpn) { writeLocalRules(context, it) }
+
+    /** A failed rebuild restores both values before another process can rebuild the rules. */
+    internal fun saveSiteRule(domain: String, viaVpn: Boolean?, applyRules: (List<SiteRule>) -> Unit): List<SiteRule> = MmkvManager.withSettingsLock {
         val before = MmkvManager.decodeSettingsString(PREF_SITE_RULES)
         val generatedBefore = MmkvManager.decodeSettingsString(AppConfig.PREF_ROUTING_RULESET)
         val next = changeSiteRules(loadSiteRules(), domain, viaVpn)
@@ -73,7 +80,7 @@ object AmeliaRouting {
             throw IOException("Could not save personal site rules")
         }
         try {
-            applyRules()
+            applyRules(next)
         } catch (e: Exception) {
             val sourceRestored = MmkvManager.encodeSettings(PREF_SITE_RULES, before)
             val generatedRestored = MmkvManager.encodeSettings(AppConfig.PREF_ROUTING_RULESET, generatedBefore)
@@ -224,7 +231,7 @@ object AmeliaRouting {
             id = "amelia-direct-sites",
             remarks = "Amelia: direct sites",
             domain = domains(DIRECT_SITES, profile?.directSites, directGeo)
-                .let { if (withGeo && ruDirect && GEOSITE_RU !in it) it + GEOSITE_RU else it },
+                .let { if (directGeo(GEOSITE_RU) && GEOSITE_RU !in it) it + GEOSITE_RU else it },
             outboundTag = AppConfig.TAG_DIRECT,
             locked = true,
         )
@@ -232,7 +239,7 @@ object AmeliaRouting {
             id = "amelia-direct-ip",
             remarks = "Amelia: direct IP",
             ip = ips(DIRECT_IPS, profile?.directIp, directGeo)
-                .let { if (withGeo && ruDirect && GEOIP_RU !in it) it + GEOIP_RU else it },
+                .let { if (directGeo(GEOIP_RU) && GEOIP_RU !in it) it + GEOIP_RU else it },
             outboundTag = AppConfig.TAG_DIRECT,
             locked = true,
         )
@@ -293,21 +300,25 @@ object AmeliaRouting {
         apply(context)
     }
 
-    /** Writes routing and DNS settings. Users cannot edit them, so it is safe to apply on every start. */
-    fun apply(context: Context) {
+    /** Caller holds the settings lock while reading the sources and writing the local Xray rules. */
+    private fun writeLocalRules(context: Context, personalRules: List<SiteRule>) {
         val withGeo = geoFilesReady(context)
-        // A corrupt personal setting must not crash startup or replace the last usable routing.
-        val personalRules = try {
-            loadSiteRules()
-        } catch (e: Exception) {
-            LogUtil.w(AppConfig.TAG, "Amelia: routing load personal site rules failed; retaining generated rules", e)
-            null
-        }
-        if (personalRules != null) MmkvManager.encodeRoutingRulesets(
+        val saved = MmkvManager.encodeRoutingRulesets(
             buildRulesets(withGeo, AmeliaRouteProfile.load(), { tag ->
                 tag == GEOSITE_RU || tag == GEOIP_RU || geoHasTag(context, tag)
             }, ruDirect(), personalRules),
         )
+        if (!saved) throw IOException("Could not write local Xray routing rules")
+    }
+
+    /** Writes the local routing and DNS settings on app start and after a data refresh. */
+    fun apply(context: Context) {
+        // Preserve the last usable rules if a setting cannot be read or the new rules cannot be written.
+        try {
+            MmkvManager.withSettingsLock { writeLocalRules(context, loadSiteRules()) }
+        } catch (e: Exception) {
+            LogUtil.w(AppConfig.TAG, "Amelia: rebuild local Xray routing failed", e)
+        }
         MmkvManager.encodeSettings(AppConfig.PREF_ROUTING_DOMAIN_STRATEGY, DOMAIN_STRATEGY)
         MmkvManager.encodeSettings(AppConfig.PREF_REMOTE_DNS, REMOTE_DNS)
         MmkvManager.encodeSettings(AppConfig.PREF_DOMESTIC_DNS, DOMESTIC_DNS)

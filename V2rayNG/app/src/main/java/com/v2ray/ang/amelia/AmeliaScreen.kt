@@ -157,6 +157,8 @@ fun AmeliaApp(
     onLogout: () -> Unit,
     onOpenUrl: (String) -> Unit,
     onMessageShown: () -> Unit,
+    onRetrySitePage: (AmeliaSite.Page) -> Unit,
+    onDismissSitePageError: () -> Unit,
     updates: UpdateCallbacks,
     settings: SettingsCallbacks,
     extra: ExtraCallbacks,
@@ -179,6 +181,26 @@ fun AmeliaApp(
         var showJournal by rememberSaveable { mutableStateOf(false) }
         val openAbout = { extra.onOpenAbout(); showAbout = true }
         val openJournal = { extra.onOpenJournal(); showJournal = true }
+        state.sitePageError?.let { page ->
+            AlertDialog(
+                onDismissRequest = onDismissSitePageError,
+                title = { Text(stringResource(R.string.amelia_site_page_failed)) },
+                text = { Text(stringResource(R.string.amelia_site_page_retry_explanation)) },
+                confirmButton = {
+                    TextButton(onClick = { onRetrySitePage(page) }) {
+                        Text(stringResource(R.string.amelia_site_page_retry))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        onDismissSitePageError()
+                        onOpenUrl(AmeliaConfig.botUrl(page.botScreen))
+                    }) {
+                        Text(stringResource(R.string.amelia_report_bot))
+                    }
+                },
+            )
+        }
 
         BrandBackground {
             val support = state.support
@@ -1384,7 +1406,7 @@ private fun SettingsUpdateSection(state: AmeliaUiState, updates: UpdateCallbacks
 
 /** What goes around the VPN, and a checker for any site or address. */
 @Composable
-private fun SettingsBypassSection(state: AmeliaUiState, settings: SettingsCallbacks) {
+internal fun SettingsBypassSection(state: AmeliaUiState, settings: SettingsCallbacks) {
     var input by rememberSaveable { mutableStateOf("") }
     Glass(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1423,7 +1445,9 @@ private fun SettingsBypassSection(state: AmeliaUiState, settings: SettingsCallba
                 label = { Text(stringResource(R.string.amelia_route_hint)) },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { if (input.isNotBlank()) settings.onCheckRoute(input) }),
+                keyboardActions = KeyboardActions(
+                    onSearch = { if (input.isNotBlank() && !state.routeChecking && !state.siteRulesBusy) settings.onCheckRoute(input) },
+                ),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = Brand.Sky,
                     unfocusedBorderColor = Brand.GlassBorder,
@@ -1435,11 +1459,22 @@ private fun SettingsBypassSection(state: AmeliaUiState, settings: SettingsCallba
             )
             GradientButton(
                 text = stringResource(R.string.amelia_route_check),
-                enabled = input.isNotBlank() && !state.routeChecking,
+                enabled = input.isNotBlank() && !state.routeChecking && !state.siteRulesBusy,
                 busy = state.routeChecking && state.routeCheck == null,
                 onClick = { settings.onCheckRoute(input) },
             )
-            state.routeCheck?.let { RouteResult(it, state.routeDirectMs, state.routeChecking) }
+            state.routeCheck?.let { result ->
+                RouteResult(result, state.routeDirectMs, state.routeChecking)
+                result.siteRuleDomain?.let { domain ->
+                    val enabled = state.siteRulesReady && !state.siteRulesBusy
+                    TextButton(onClick = { settings.onSetSiteRule(domain, true) }, enabled = enabled) {
+                        Text(stringResource(R.string.amelia_route_set_vpn, domain))
+                    }
+                    TextButton(onClick = { settings.onSetSiteRule(domain, false) }, enabled = enabled) {
+                        Text(stringResource(R.string.amelia_route_set_direct, domain))
+                    }
+                }
+            }
         }
     }
 }
@@ -1447,14 +1482,22 @@ private fun SettingsBypassSection(state: AmeliaUiState, settings: SettingsCallba
 @Composable
 private fun RouteResult(r: AmeliaRouteCheck.Result, directMs: Long?, checking: Boolean) {
     if (r.route == null) {
-        Text(stringResource(R.string.amelia_reason_bad_input), color = Brand.Amber)
+        val message = if (r.reason == AmeliaRouteCheck.Reason.BAD_INPUT) {
+            R.string.amelia_reason_bad_input
+        } else {
+            R.string.amelia_route_unavailable
+        }
+        Text(stringResource(message), color = Brand.Amber)
         return
     }
     val direct = r.route == AmeliaRouteCheck.Route.DIRECT
     Glass(Modifier.fillMaxWidth(), tint = if (direct) Color(0x333DDC97) else Color(0x3359ABFF)) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
-                r.host + " — " + stringResource(if (direct) R.string.amelia_route_direct else R.string.amelia_route_vpn),
+                stringResource(
+                    R.string.amelia_route_local_result, r.host,
+                    stringResource(if (direct) R.string.amelia_route_direct else R.string.amelia_route_vpn),
+                ),
                 color = if (direct) Brand.Green else Brand.Sky,
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
@@ -1468,7 +1511,10 @@ private fun RouteResult(r: AmeliaRouteCheck.Result, directMs: Long?, checking: B
                     AmeliaRouteCheck.Reason.RU_SITE -> stringResource(R.string.amelia_reason_ru_site, rule)
                     AmeliaRouteCheck.Reason.LOCAL_NETWORK -> stringResource(R.string.amelia_reason_local, rule)
                     AmeliaRouteCheck.Reason.RU_IP -> stringResource(R.string.amelia_reason_ru_ip, rule)
+                    AmeliaRouteCheck.Reason.PROXY_IP -> stringResource(R.string.amelia_route_proxy_ip, rule)
+                    AmeliaRouteCheck.Reason.DIRECT_IP -> stringResource(R.string.amelia_route_direct_ip, rule)
                     AmeliaRouteCheck.Reason.DEFAULT -> stringResource(R.string.amelia_reason_default)
+                    AmeliaRouteCheck.Reason.UNAVAILABLE -> stringResource(R.string.amelia_route_unavailable)
                     AmeliaRouteCheck.Reason.BAD_INPUT -> stringResource(R.string.amelia_reason_bad_input)
                 } + (r.ip?.let { " · " + stringResource(R.string.amelia_route_resolved, it) } ?: ""),
                 color = Brand.Text,

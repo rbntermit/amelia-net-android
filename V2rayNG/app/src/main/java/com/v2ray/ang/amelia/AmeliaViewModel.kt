@@ -10,6 +10,7 @@ import com.v2ray.ang.R
 import com.v2ray.ang.core.LauncherManager
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.util.LogUtil
+import com.v2ray.ang.util.Utils
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -21,6 +22,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.net.InetAddress
+import java.net.UnknownHostException
 
 /** Opening the app checks every location in the background when the last check is older. */
 private const val BACKGROUND_CHECK_AFTER_MS = 5L * 60 * 1000
@@ -78,6 +82,7 @@ data class AmeliaUiState(
     val geoInfo: GeoInfo? = null,
     val routeChecking: Boolean = false,
     val routeCheck: AmeliaRouteCheck.Result? = null,
+    val sitePageError: AmeliaSite.Page? = null,
     /** For a direct route: how fast the site answered without the VPN, -1 = did not answer. */
     val routeDirectMs: Long? = null,
     val locations: List<AmeliaManager.Location> = emptyList(),
@@ -1117,31 +1122,24 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
     // Settings: what bypasses the VPN
     // ---------------------------------------------------------------------------------------
 
-    private var geoSite: AmeliaRouteCheck.GeoSite? = null
-    private var geoIp: AmeliaRouteCheck.CidrSet? = null
     private var routeJob: Job? = null
 
     /** Settings screen opened: geo base info and the last update check time. */
     fun loadSettingsInfo() {
         loadSiteRules()
-        _state.update { it.copy(lastUpdateCheck = AmeliaUpdater.lastCheck()) }
         viewModelScope.launch {
-            val app = getApplication<Application>()
-            withContext(Dispatchers.IO) { loadGeo(app) }
-            _state.update {
-                it.copy(geoInfo = GeoInfo(geoSite?.size ?: 0, geoIp?.size ?: 0, AmeliaGeoUpdater.lastUpdated()))
+            val (lastCheck, geoInfo) = withContext(Dispatchers.IO) {
+                val dir = File(Utils.userAssetPath(getApplication()))
+                val sites = runCatching {
+                    AmeliaRouteCheck.parseGeoSite(File(dir, AppConfig.GEOSITE_DAT).readBytes(), "CATEGORY-RU")?.size
+                }.getOrNull()
+                val ips = runCatching {
+                    AmeliaRouteCheck.parseGeoIp(File(dir, AppConfig.GEOIP_DAT).readBytes(), "RU")?.size
+                }.getOrNull()
+                AmeliaUpdater.lastCheck() to GeoInfo(sites ?: 0, ips ?: 0, AmeliaGeoUpdater.lastUpdated())
             }
+            _state.update { it.copy(lastUpdateCheck = lastCheck, geoInfo = geoInfo) }
         }
-    }
-
-    private fun loadGeo(app: Application) {
-        val dir = java.io.File(com.v2ray.ang.util.Utils.userAssetPath(app))
-        geoSite = runCatching {
-            AmeliaRouteCheck.parseGeoSite(java.io.File(dir, com.v2ray.ang.AppConfig.GEOSITE_DAT).readBytes(), "CATEGORY-RU")
-        }.getOrNull()
-        geoIp = runCatching {
-            AmeliaRouteCheck.parseGeoIp(java.io.File(dir, com.v2ray.ang.AppConfig.GEOIP_DAT).readBytes(), "RU")
-        }.getOrNull()
     }
 
     /** Where does [input] go — directly or through the VPN — and, if directly, does it open. */
@@ -1152,18 +1150,27 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             val app = getApplication<Application>()
             val result = try {
                 withContext(Dispatchers.IO) {
-                    if (geoSite == null && geoIp == null) loadGeo(app)
-                    // 1.10.0: "Российские сайты — напрямую" off: the Russian lists send nothing direct
-                    val ru = AmeliaRouting.ruDirect()
-                    AmeliaRouteCheck.classify(input, geoSite.takeIf { ru }, geoIp.takeIf { ru }, AmeliaRouting.loadSiteRules()) { host ->
-                        java.net.InetAddress.getAllByName(host).toList()
-                    }
+                    val rules = checkNotNull(MmkvManager.decodeRoutingRulesets()?.takeIf { it.isNotEmpty() })
+                    val dir = File(Utils.userAssetPath(app))
+                    val siteData by lazy { File(dir, AppConfig.GEOSITE_DAT).readBytes() }
+                    val ipData by lazy { File(dir, AppConfig.GEOIP_DAT).readBytes() }
+                    AmeliaRouteCheck.classify(
+                        input, rules,
+                        geoSite = { code -> AmeliaRouteCheck.parseGeoSite(siteData, code) },
+                        geoIp = { code -> AmeliaRouteCheck.parseGeoIp(ipData, code) },
+                        resolve = { host ->
+                            try {
+                                InetAddress.getAllByName(host).toList()
+                            } catch (_: UnknownHostException) {
+                                null
+                            }
+                        },
+                    )
                 }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 LogUtil.w(AppConfig.TAG, "Amelia: UI classify site route failed", e)
-                _state.update { it.copy(routeChecking = false, siteRulesReady = false, siteRulesError = R.string.amelia_sites_failed) }
-                return@launch
+                AmeliaRouteCheck.Result(input.trim(), null, AmeliaRouteCheck.Reason.UNAVAILABLE)
             }
             _state.update { it.copy(routeCheck = result) }
             val directMs = if (result.route == AmeliaRouteCheck.Route.DIRECT) {
@@ -1202,24 +1209,30 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
             _state.update { it.copy(siteRulesError = R.string.amelia_site_bad) }
             return
         }
+        if (viaVpn != null && AmeliaRouting.editableSiteDomain(domain) == null) {
+            _state.update { it.copy(siteRulesError = R.string.amelia_sites_protected) }
+            return
+        }
         if (AmeliaRouting.changeSiteRules(_state.value.siteRules, domain, viaVpn) == _state.value.siteRules) {
             _state.update { it.copy(siteRulesError = null) }
             return
         }
-        _state.update { it.copy(siteRulesBusy = true, siteRulesError = null) }
+        val checkedHost = _state.value.routeCheck?.host
         routeJob?.cancel()
-        _state.update { it.copy(routeCheck = null, routeChecking = false, routeDirectMs = null) }
+        _state.update { it.copy(siteRulesBusy = true, siteRulesError = null, routeChecking = false) }
         viewModelScope.launch {
             try {
                 val rules = withContext(siteRulesWriter) {
-                    AmeliaRouting.saveSiteRule(domain, viaVpn) { AmeliaRouting.apply(getApplication()) }
+                    AmeliaRouting.saveSiteRule(getApplication(), domain, viaVpn)
                 }
                 _state.update { it.copy(siteRules = rules) }
                 restartIfRunning()
+                if (checkedHost != null) checkRoute(checkedHost)
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 LogUtil.w(AppConfig.TAG, "Amelia: UI save or apply personal site rule failed", e)
                 _state.update { it.copy(siteRulesError = R.string.amelia_sites_failed) }
+                if (checkedHost != null) showMessage(R.string.amelia_sites_failed)
             } finally {
                 _state.update { it.copy(siteRulesBusy = false) }
             }
@@ -1541,6 +1554,8 @@ class AmeliaViewModel(app: Application) : AndroidViewModel(app) {
     fun messageShown() = _state.update { it.copy(message = null, messageText = null) }
 
     fun showMessage(@StringRes res: Int) = _state.update { it.copy(message = res) }
+
+    fun setSitePageError(page: AmeliaSite.Page?) = _state.update { it.copy(sitePageError = page) }
 
     private fun runLoad(silent: Boolean, isRefresh: Boolean, block: () -> AmeliaManager.Outcome) {
         loadJob?.cancel()

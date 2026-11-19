@@ -68,4 +68,61 @@ class AmeliaRouteCheckTest {
         // without the bases only the built-in lists apply
         assertEquals(Reason.DEFAULT, AmeliaRouteCheck.classify("yandex.ru", null, null, ::noDns).reason)
     }
+
+    @Test
+    fun generatedRulesIncludeSubscriptionDomainsAndKeepDomainPriority() {
+        val profile = AmeliaRouteProfile.Profile(
+            proxySites = listOf("full:secure.example.com", "regexp:^cdn[0-9]+[.]example[.]net$"),
+            proxyIp = listOf("203.0.113.0/24"),
+            directSites = listOf("example.com", "keyword:billing"),
+        )
+        val generated = AmeliaRouting.buildRulesets(false, profile)
+        fun check(host: String) = AmeliaRouteCheck.classify(host, generated, { null }, { null }) {
+            error("A domain rule already matched")
+        }
+        assertEquals(Route.DIRECT, check("www.example.com").route)
+        assertEquals("example.com", check("www.example.com").siteRuleDomain)
+        assertEquals(Route.VPN, check("secure.example.com").route)
+        assertEquals(Route.VPN, check("cdn4.example.net").route)
+        assertEquals(Route.DIRECT, check("my-billing.test").route)
+    }
+
+    @Test
+    fun allResolvedAddressesAreCheckedBeforeMovingToTheNextIpRule() {
+        val profile = AmeliaRouteProfile.Profile(
+            proxyIp = listOf("203.0.113.0/24"),
+            directIp = listOf("198.51.100.0/24"),
+        )
+        val generated = AmeliaRouting.buildRulesets(false, profile)
+        val result = AmeliaRouteCheck.classify("example.com", generated, { null }, { null }) {
+            listOf(InetAddress.getByName("198.51.100.1"), InetAddress.getByName("203.0.113.1"))
+        }
+        assertEquals(Route.VPN, result.route)
+        assertEquals(Reason.PROXY_IP, result.reason)
+        assertEquals("203.0.113.1", result.ip)
+        val direct = AmeliaRouteCheck.classify("198.51.100.1", generated, { null }, { null }, ::noDns)
+        assertEquals(Reason.DIRECT_IP, direct.reason)
+        assertNull(direct.siteRuleDomain)
+    }
+
+    @Test
+    fun unavailableDataIsReportedWithoutGuessingAndServiceHostIsProtected() {
+        val profile = AmeliaRouteProfile.Profile(proxySites = listOf("geosite:category-ru"))
+        val generated = AmeliaRouting.buildRulesets(true, profile)
+        val unknown = AmeliaRouteCheck.classify("example.net", generated, { null }, { null }, ::noDns)
+        assertEquals(Reason.UNAVAILABLE, unknown.reason)
+        assertNull(unknown.route)
+        assertEquals("example.net", unknown.siteRuleDomain)
+        val protected = AmeliaRouteCheck.classify(
+            "sub.ameliajustamelia.com", generated, { null }, { null }, ::noDns,
+        )
+        assertEquals(Route.VPN, protected.route)
+        assertNull(protected.siteRuleDomain)
+
+        val dnsFailure = AmeliaRouteCheck.classify(
+            "example.net", AmeliaRouting.buildRulesets(false), { null }, { null }, { null },
+        )
+        assertEquals(Reason.UNAVAILABLE, dnsFailure.reason)
+        assertEquals("example.net", dnsFailure.siteRuleDomain)
+    }
 }

@@ -39,6 +39,10 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 /** Runs on an emulator with its own app data; no subscription or live VPN is required. */
 @RunWith(AndroidJUnit4::class)
@@ -63,20 +67,20 @@ class AmeliaSiteRulesDeviceTest {
 
     @Test
     fun storedRulesSurviveRoutingRebuildAndDeletionRestoresDefaults() {
-        AmeliaRouting.saveSiteRule("kinopoisk.ru", true)
+        AmeliaRouting.saveSiteRule(context, "kinopoisk.ru", true)
         AmeliaRouting.apply(context)
         assertEquals(listOf(AmeliaRouting.SiteRule("kinopoisk.ru", true)), AmeliaRouting.loadSiteRules())
-        AmeliaRouting.saveSiteRule("kinopoisk.ru", false)
+        AmeliaRouting.saveSiteRule(context, "kinopoisk.ru", false)
         AmeliaRouting.apply(context)
         assertFalse(AmeliaRouting.loadSiteRules().single().viaVpn)
-        AmeliaRouting.saveSiteRule("kinopoisk.ru", null)
+        AmeliaRouting.saveSiteRule(context, "kinopoisk.ru", null)
         AmeliaRouting.apply(context)
         assertEquals(emptyList<AmeliaRouting.SiteRule>(), AmeliaRouting.loadSiteRules())
     }
 
     @Test
     fun failedRebuildRollsBackBothSavedAndGeneratedRules() {
-        AmeliaRouting.saveSiteRule("example.com", true) { AmeliaRouting.apply(context) }
+        AmeliaRouting.saveSiteRule(context, "example.com", true)
         val generated = MmkvManager.decodeSettingsString(AppConfig.PREF_ROUTING_RULESET)
         try {
             AmeliaRouting.saveSiteRule("example.com", false) {
@@ -87,6 +91,41 @@ class AmeliaSiteRulesDeviceTest {
         } catch (_: java.io.IOException) {
             assertEquals(listOf(AmeliaRouting.SiteRule("example.com", true)), AmeliaRouting.loadSiteRules())
             assertEquals(generated, MmkvManager.decodeSettingsString(AppConfig.PREF_ROUTING_RULESET))
+        }
+    }
+
+    @Test
+    fun backgroundRebuildWaitsForPendingSiteRuleWrite() {
+        val worker = Executors.newFixedThreadPool(2)
+        val saving = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val rebuilding = CountDownLatch(1)
+        try {
+            val save = worker.submit {
+                AmeliaRouting.saveSiteRule("example.com", false) {
+                    saving.countDown()
+                    check(release.await(10, TimeUnit.SECONDS))
+                }
+            }
+            check(saving.await(5, TimeUnit.SECONDS))
+            val rebuild = worker.submit {
+                rebuilding.countDown()
+                AmeliaRouting.apply(context)
+            }
+            check(rebuilding.await(5, TimeUnit.SECONDS))
+            try {
+                rebuild.get(300, TimeUnit.MILLISECONDS)
+                org.junit.Assert.fail("Background rebuild raced the pending rule write")
+            } catch (_: TimeoutException) {
+                release.countDown()
+            }
+            save.get(5, TimeUnit.SECONDS)
+            rebuild.get(5, TimeUnit.SECONDS)
+            val generated = MmkvManager.decodeRoutingRulesets().orEmpty()
+            assertEquals(AppConfig.TAG_DIRECT, generated.single { it.domain == listOf("domain:example.com") }.outboundTag)
+        } finally {
+            release.countDown()
+            worker.shutdownNow()
         }
     }
 
@@ -159,6 +198,41 @@ class AmeliaSiteRulesDeviceTest {
         compose.onNodeWithText(text(R.string.amelia_sites_direct)).assertIsFocused()
             .performKeyInput { pressKey(Key.DirectionCenter) }
         compose.onNodeWithText(text(R.string.amelia_sites_rule_direct, "example.com")).performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun actionsBelowTheRouteResultUseTheShownDomain() {
+        val chosen = mutableListOf<AmeliaRouting.SiteRule>()
+        ui = ui.copy(routeCheck = AmeliaRouteCheck.Result(
+            "www.example.com", AmeliaRouteCheck.Route.VPN, AmeliaRouteCheck.Reason.DEFAULT,
+            siteRuleDomain = "example.com",
+        ))
+        compose.setContent {
+            val inputMode = LocalInputModeManager.current
+            LaunchedEffect(Unit) { inputMode.requestInputMode(InputMode.Keyboard) }
+            MaterialTheme {
+                Column(Modifier.imePadding().verticalScroll(rememberScrollState())) {
+                    SettingsBypassSection(ui, SettingsCallbacks(
+                        onOpen = {},
+                        onCheckRoute = {},
+                        onRefreshSubscription = {},
+                        onSetSiteRule = { domain, viaVpn -> chosen += AmeliaRouting.SiteRule(domain, checkNotNull(viaVpn)) },
+                        onReloadSiteRules = {},
+                    ))
+                }
+            }
+        }
+        compose.onNodeWithText(text(R.string.amelia_route_set_vpn, "example.com")).performScrollTo().performClick()
+        compose.onNodeWithText(text(R.string.amelia_route_set_direct, "example.com")).performScrollTo()
+            .performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+        compose.onNodeWithText(text(R.string.amelia_route_set_direct, "example.com")).assertIsFocused()
+            .performKeyInput { pressKey(Key.DirectionCenter) }
+        compose.runOnIdle {
+            assertEquals(listOf(
+                AmeliaRouting.SiteRule("example.com", true),
+                AmeliaRouting.SiteRule("example.com", false),
+            ), chosen)
+        }
     }
 
     @Test

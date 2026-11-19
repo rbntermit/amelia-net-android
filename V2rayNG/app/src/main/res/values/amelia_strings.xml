@@ -120,7 +120,7 @@
     <string name="amelia_reason_ru_site">российский сайт (%1$s)</string>
     <string name="amelia_reason_local">адрес локальной сети (%1$s)</string>
     <string name="amelia_reason_ru_ip">российский адрес (%1$s)</string>
-    <string name="amelia_reason_default">не российский сайт</string>
+    <string name="amelia_reason_default" translatable="false">Для этого адреса действует маршрут по умолчанию</string>
     <string name="amelia_reason_bad_input">Это не похоже на адрес сайта</string>
     <string name="amelia_route_resolved">адрес %1$s</string>
     <string name="amelia_route_direct_ok">Без VPN открывается · %1$d мс</string>

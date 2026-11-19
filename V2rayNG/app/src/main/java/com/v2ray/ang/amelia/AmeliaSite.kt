@@ -10,7 +10,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 /**
@@ -18,9 +17,8 @@ import java.util.concurrent.TimeUnit
  * Telegram): "Личный кабинет", payment by card / СБП and gifts. Opened in the browser.
  * Only the person's key goes into the links, nothing else.
  *
- * 1.7.0: the cabinet and payment open with a one-time link ([token]): the key stays out of the
- * browser's history, its sync and the address checks some browsers send to their servers. No
- * token (no answer, an error, an older server): the page opens with the key as before.
+ * The cabinet and payment open with a one-time link ([token]) so the browser receives only
+ * the temporary token.
  */
 object AmeliaSite {
 
@@ -33,20 +31,13 @@ object AmeliaSite {
     /** The addresses must answer within this (all are asked at the same time), or the spare one is opened. */
     const val CHECK_TIMEOUT_MS = 5_000L
 
-    private fun enc(key: String): String = URLEncoder.encode(key, "UTF-8").replace("+", "%20")
-
-    /** "📊 Личный кабинет": term, devices connected now, traffic, renewal, gift, Telegram link. */
-    fun cabinetUrl(base: String, key: String): String = "$base/me/${enc(key)}"
-
-    /** Payment on the site (card or СБП). */
-    fun buyUrl(base: String, key: String): String = "$base/buy?sid=${enc(key)}"
-
     /** "🎁 Подарить подписку": no key, the gift is not for this subscription. */
     fun giftUrl(base: String): String = "$base/buy?gift=1"
 
-    /** "💳 Продлить": the bot when Telegram is installed (as before 1.5.7), otherwise the site. */
-    fun renewUrl(telegramInstalled: Boolean, base: String, key: String?): String =
-        if (telegramInstalled || key == null) AmeliaConfig.botUrl(AmeliaConfig.BotScreen.PAY) else buyUrl(base, key)
+    enum class Page(val botScreen: AmeliaConfig.BotScreen) {
+        CABINET(AmeliaConfig.BotScreen.MY_SUB),
+        PAYMENT(AmeliaConfig.BotScreen.PAY),
+    }
 
     /** 1.5.8: tariffs and payment for someone without a key yet; the key is shown on the page after paying. */
     fun shopUrl(base: String): String = "$base/shop"
@@ -105,9 +96,14 @@ object AmeliaSite {
     data class Token(val base: String, val me: String, val buy: String, val until: Long) {
         val cabinetUrl: String get() = base + me
         val buyUrl: String get() = base + buy
+        fun url(page: Page): String = when (page) {
+            Page.CABINET -> cabinetUrl
+            Page.PAYMENT -> buyUrl
+        }
     }
 
     private class Wire(val ok: Boolean? = null, val t: String? = null, val ttl: Long? = null, val me: String? = null, val buy: String? = null)
+    private val TOKEN_ID = Regex("""t\.[A-Za-z0-9._~-]+""")
 
     /** Pure: the request body. */
     fun tokenRequest(key: String): String = com.google.gson.JsonObject().apply { addProperty("key", key) }.toString()
@@ -118,12 +114,11 @@ object AmeliaSite {
      */
     fun parseToken(base: String, body: String?, now: Long): Token? {
         val w = body?.let { runCatching { com.google.gson.Gson().fromJson(it, Wire::class.java) }.getOrNull() } ?: return null
-        if (w.ok != true || w.t.isNullOrBlank()) return null
-        fun path(p: String?) = p?.takeIf { it.startsWith("/") && !it.startsWith("//") && it.none(Char::isWhitespace) }
-        val me = path(w.me) ?: return null
-        val buy = path(w.buy) ?: return null
-        val ttlMs = (w.ttl ?: 0L).coerceAtLeast(0L) * 1000
-        val keep = if (ttlMs > 0) minOf(ttlMs, TOKEN_MAX_CACHE_MS) else TOKEN_MAX_CACHE_MS
+        val id = w.t?.takeIf(TOKEN_ID::matches) ?: return null
+        if (w.ok != true) return null
+        val me = w.me?.takeIf { it == "/me/$id" } ?: return null
+        val buy = w.buy?.takeIf { it == "/buy?sid=$id" } ?: return null
+        val keep = w.ttl?.takeIf { it > 0 }?.coerceAtMost(TOKEN_MAX_CACHE_MS / 1000)?.times(1000) ?: TOKEN_MAX_CACHE_MS
         return Token(base, me, buy, now + keep)
     }
 
@@ -134,8 +129,7 @@ object AmeliaSite {
 
     /**
      * Blocking, any thread: a one-time link pair for [key] from msk2, then msk1, then spb1 (1.7.3;
-     * [BASES]), over the phone's own network (not the tunnel), 5 s in all. Null: no answer or an
-     * error → the caller opens the page with the key as before (better opened than not).
+     * [BASES]), over the phone's own network (not the tunnel), 5 s in all.
      */
     fun token(context: android.content.Context, key: String): Token? {
         val now = System.currentTimeMillis()

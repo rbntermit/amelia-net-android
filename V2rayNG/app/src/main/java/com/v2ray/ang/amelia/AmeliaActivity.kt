@@ -24,7 +24,9 @@ import com.v2ray.ang.ui.base.HelperBaseComponentActivity
 import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
@@ -35,6 +37,7 @@ import java.io.File
 class AmeliaActivity : HelperBaseComponentActivity() {
 
     private val viewModel: AmeliaViewModel by viewModels()
+    private var sitePageJob: Job? = null
 
     private val requestVpnPermission =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
@@ -87,7 +90,7 @@ class AmeliaActivity : HelperBaseComponentActivity() {
         viewModel.openSupport()
     }
 
-    /** 1.5.8: "Продлить" on the widget. */
+    /** "Продлить" from the widget or the subscription reminder. */
     private fun handleRenewRequest(intent: Intent?) {
         if (intent?.getBooleanExtra(AmeliaWidget.EXTRA_RENEW, false) != true) return
         intent.removeExtra(AmeliaWidget.EXTRA_RENEW)
@@ -126,6 +129,8 @@ class AmeliaActivity : HelperBaseComponentActivity() {
             onLogout = viewModel::logout,
             onOpenUrl = { Utils.openUri(this, it) },
             onMessageShown = viewModel::messageShown,
+            onRetrySitePage = ::openKeyPage,
+            onDismissSitePageError = { viewModel.setSitePageError(null) },
             updates = UpdateCallbacks(
                 onCheck = { viewModel.checkUpdate(manual = true) },
                 onDownload = viewModel::downloadUpdate,
@@ -157,9 +162,9 @@ class AmeliaActivity : HelperBaseComponentActivity() {
                 onConnectBest = { viewModel.connectBest(connect = ::toggle) },
                 onBackFromReserve = viewModel::backFromReserve,
                 onRenew = ::openRenew,
-                onPayOnSite = { openKeyPage(cabinet = false) },
-                onCabinet = { openKeyPage(cabinet = true) },
-                onGift = { openSite { base, _ -> AmeliaSite.giftUrl(base) } },
+                onPayOnSite = { openKeyPage(AmeliaSite.Page.PAYMENT) },
+                onCabinet = { openKeyPage(AmeliaSite.Page.CABINET) },
+                onGift = ::openGift,
                 onShop = ::openShop,
                 onMeasureSpeed = viewModel::measureSpeed,
                 onAllowBackground = ::openBatterySettings,
@@ -273,40 +278,30 @@ class AmeliaActivity : HelperBaseComponentActivity() {
         viewModel.showMessage(R.string.amelia_tgproxy_install)
     }
 
-    /**
-     * 1.5.7: a page of the site in the browser. The main address is checked first (up to 5 s);
-     * no answer → the spare one. Only the key goes into the link.
-     */
-    private fun openSite(url: (base: String, key: String) -> String) {
-        val key = AmeliaManager.getKey() ?: return
+    private fun openGift() {
         lifecycleScope.launch {
-            val base = AmeliaSite.base()
-            Utils.openUri(this@AmeliaActivity, url(base, key))
+            Utils.openUri(this@AmeliaActivity, AmeliaSite.giftUrl(AmeliaSite.base()))
         }
     }
 
-    /**
-     * 1.7.0: "Личный кабинет" and payment on the site with a one-time link, so the key is not in
-     * the browser's address. No link from the server: opened with the key as before ([openSite]).
-     */
-    private fun openKeyPage(cabinet: Boolean) {
-        val key = AmeliaManager.getKey() ?: return
-        lifecycleScope.launch {
-            val url = keyPageUrl(key, cabinet)
-            Utils.openUri(this@AmeliaActivity, url)
+    private fun openKeyPage(page: AmeliaSite.Page) {
+        if (sitePageJob?.isActive == true) return
+        viewModel.setSitePageError(null)
+        sitePageJob = lifecycleScope.launch {
+            val key = withContext(Dispatchers.IO) { AmeliaManager.getKey() } ?: return@launch
+            val token = withContext(Dispatchers.IO) { AmeliaSite.token(applicationContext, key) }
+            if (withContext(Dispatchers.IO) { AmeliaManager.getKey() } != key) return@launch
+            if (token == null) {
+                viewModel.setSitePageError(page)
+            } else {
+                Utils.openUri(this@AmeliaActivity, token.url(page))
+            }
         }
-    }
-
-    private suspend fun keyPageUrl(key: String, cabinet: Boolean): String {
-        val token = kotlinx.coroutines.withContext(Dispatchers.IO) { AmeliaSite.token(applicationContext, key) }
-        if (token != null) return if (cabinet) token.cabinetUrl else token.buyUrl
-        val base = AmeliaSite.base()
-        return if (cabinet) AmeliaSite.cabinetUrl(base, key) else AmeliaSite.buyUrl(base, key)
     }
 
     /**
      * 1.8.0 "🩺 Не работает?": with the VPN off and no Telegram (the bot cannot be reached) the
-     * service's state page on the site, the address chosen as in [openSite]; otherwise the check of
+     * service's state page on the site, the address chosen by [AmeliaSite.base]; otherwise the check of
      * every location and the report, as before.
      */
     private fun notWorking() {
@@ -325,7 +320,7 @@ class AmeliaActivity : HelperBaseComponentActivity() {
         }
     }
 
-    /** 1.5.8: the site's shop (no key yet), main address checked first as in [openSite]. */
+    /** 1.5.8: the site's shop (no key required). */
     private fun openShop() {
         lifecycleScope.launch {
             Utils.openUri(this@AmeliaActivity, AmeliaSite.shopUrl(AmeliaSite.base()))
@@ -335,15 +330,14 @@ class AmeliaActivity : HelperBaseComponentActivity() {
     /** 1.5.7 "💳 Продлить": the bot when Telegram is installed, otherwise payment on the site. */
     private fun openRenew() {
         lifecycleScope.launch {
-            val telegram = kotlinx.coroutines.withContext(Dispatchers.IO) { AmeliaPackages.telegram(packageManager) != null }
-            val key = AmeliaManager.getKey()
-            val url = if (telegram || key == null) {
-                AmeliaSite.renewUrl(telegram, AmeliaSite.BASES[0], key)
-            } else {
-                // 1.7.0: payment on the site with a one-time link (the key stays out of the address)
-                keyPageUrl(key, cabinet = false)
+            val useBot = withContext(Dispatchers.IO) {
+                AmeliaPackages.telegram(packageManager) != null || !AmeliaManager.hasKey()
             }
-            Utils.openUri(this@AmeliaActivity, url)
+            if (useBot) {
+                Utils.openUri(this@AmeliaActivity, AmeliaConfig.botUrl(AmeliaSite.Page.PAYMENT.botScreen))
+            } else {
+                openKeyPage(AmeliaSite.Page.PAYMENT)
+            }
         }
     }
 

@@ -8,7 +8,6 @@ import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import androidx.core.net.toUri
 import com.v2ray.ang.AppConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.handler.MmkvManager
@@ -122,14 +121,9 @@ object AmeliaExpiry {
         )
         val pay = PendingIntent.getActivity(
             context, 2,
-            // 1.5.7: the bot with Telegram, the site without (main address: a notice link is fixed)
-            Intent(
-                Intent.ACTION_VIEW,
-                AmeliaSite.renewUrl(
-                    AmeliaPackages.telegram(context.packageManager) != null, AmeliaSite.BASES[0], AmeliaManager.getKey(),
-                ).toUri(),
-            )
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            Intent(context, AmeliaActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                .putExtra(AmeliaWidget.EXTRA_RENEW, true),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)

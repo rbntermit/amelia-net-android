@@ -83,7 +83,9 @@ object AmeliaManager {
      */
     fun refreshDirect(direct: OkHttpClient, timeoutMs: Long): Outcome {
         val key = getKey() ?: return Outcome.INVALID_FORMAT
-        return load(key, saveKeyOnSuccess = false) { AmeliaSubscriptionClient.fetchDirect(key, direct, timeoutMs) }
+        return load(key, saveKeyOnSuccess = false) { accept ->
+            AmeliaSubscriptionClient.fetchDirect(key, direct, timeoutMs, accept)
+        }
     }
 
     private const val PREF_SUB_SOURCE = "amelia_sub_source"
@@ -115,12 +117,31 @@ object AmeliaManager {
     }
 
     private fun load(key: String, preferredBaseUrl: String?, saveKeyOnSuccess: Boolean): Outcome =
-        load(key, saveKeyOnSuccess) { AmeliaSubscriptionClient.fetch(key, preferredBaseUrl) }
+        load(key, saveKeyOnSuccess) { accept -> AmeliaSubscriptionClient.fetch(key, preferredBaseUrl, accept) }
 
-    private fun load(key: String, saveKeyOnSuccess: Boolean, fetch: () -> AmeliaSubscriptionClient.Result): Outcome {
-        val result = fetch()
-        if (result !is AmeliaSubscriptionClient.Result.Ok) {
-            return if (result is AmeliaSubscriptionClient.Result.UnknownKey) Outcome.UNKNOWN_KEY else Outcome.NETWORK_ERROR
+    private fun load(
+        key: String,
+        saveKeyOnSuccess: Boolean,
+        fetch: ((String) -> Boolean) -> AmeliaSubscriptionClient.Result,
+    ): Outcome {
+        val subId = AmeliaConfig.SUBSCRIPTION_ID
+        var previousName: String? = null
+        val result = fetch { body ->
+            // Import assigns new GUIDs. Remember the selection right before accepting a replacement.
+            val selected = getSelectedGuid()?.let { MmkvManager.decodeServerConfig(it)?.remarks }
+            val imported = AngConfigManager.importSubscriptionContent(body, subId) > 0
+            if (imported) {
+                previousName = selected
+            } else {
+                LogUtil.w(AppConfig.TAG, "Amelia: subscription body has no usable locations")
+            }
+            imported
+        }
+        when (result) {
+            AmeliaSubscriptionClient.Result.UnknownKey -> return Outcome.UNKNOWN_KEY
+            AmeliaSubscriptionClient.Result.Unusable -> return Outcome.EMPTY
+            AmeliaSubscriptionClient.Result.NetworkError -> return Outcome.NETWORK_ERROR
+            is AmeliaSubscriptionClient.Result.Ok -> Unit
         }
 
         val info = result.info
@@ -128,29 +149,16 @@ object AmeliaManager {
         // 1.7.0: upstream's periodic worker is off (autoUpdate = false; syncOne below cancels its task).
         // It downloaded the bare URL without the end date, routing or spare addresses. In the
         // background only AmeliaUpdateWorker refreshes, through this same function (refresh()).
-        val sub = (MmkvManager.decodeSubscription(AmeliaConfig.SUBSCRIPTION_ID) ?: SubscriptionItem()).apply {
+        val sub = (MmkvManager.decodeSubscription(subId) ?: SubscriptionItem()).apply {
             remarks = info.title ?: AmeliaConfig.SUBSCRIPTION_REMARKS
             url = AmeliaKey.subscriptionUrl(result.baseUrl, key)
             enabled = true
             autoUpdate = false
             updateInterval = hours * 60L
             userAgent = AmeliaSubscriptionClient.userAgent
+            lastUpdated = System.currentTimeMillis()
         }
-        MmkvManager.encodeSubscription(AmeliaConfig.SUBSCRIPTION_ID, sub)
-
-        // Import assigns new GUIDs to every location, so remember the choice by name.
-        val previousName = getSelectedGuid()?.let { MmkvManager.decodeServerConfig(it)?.remarks }
-        val count = AngConfigManager.importSubscriptionContent(result.body, AmeliaConfig.SUBSCRIPTION_ID)
-        if (count <= 0) {
-            LogUtil.w(AppConfig.TAG, "Amelia: subscription has no usable locations")
-            if (saveKeyOnSuccess && !hasKey()) {
-                MmkvManager.removeSubscription(AmeliaConfig.SUBSCRIPTION_ID)
-            }
-            return Outcome.EMPTY
-        }
-
-        sub.lastUpdated = System.currentTimeMillis()
-        MmkvManager.encodeSubscription(AmeliaConfig.SUBSCRIPTION_ID, sub)
+        MmkvManager.encodeSubscription(subId, sub)
         MmkvManager.encodeSettings(AmeliaConfig.PREF_SUB_INFO, JsonUtil.toJson(info))
         MmkvManager.encodeSettings(PREF_SUB_SOURCE, "${result.baseUrl} ${result.route.name}")
         // 1.7.3: which address it came from (msk1, msk2, spb1 or the spare one); a mirror that did not
